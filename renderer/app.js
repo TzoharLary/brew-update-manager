@@ -12,9 +12,14 @@ const updatedAtEl = document.getElementById('updatedAt');
 const msgEl = document.getElementById('message');
 const loaderEl = document.getElementById('loader');
 const loaderTextEl = document.getElementById('loaderText');
+const loaderPercentEl = document.getElementById('loaderPercent');
 const loaderProgressEl = document.getElementById('loaderProgress');
 const loaderProgressMetaEl = document.getElementById('loaderProgressMeta');
 const loaderProgressFillEl = document.getElementById('loaderProgressFill');
+const loaderPhaseValueEl = document.getElementById('loaderPhaseValue');
+const loaderCurrentValueEl = document.getElementById('loaderCurrentValue');
+const loaderEtaValueEl = document.getElementById('loaderEtaValue');
+const loaderStepEls = Array.from(document.querySelectorAll('#loaderSteps [data-step]'));
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
 const languageSelect = document.getElementById('languageSelect');
@@ -46,6 +51,18 @@ let appUpdateState = null;
 let appUpdateAutoCheckTimer = null;
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const LOADER_PHASE_ORDER = [
+  'idle',
+  'starting',
+  'preparing',
+  'brew_update',
+  'collecting_outdated',
+  'collecting_installed',
+  'resolving_dates',
+  'translating_descriptions',
+  'completed',
+  'error',
+];
 
 function renderAppUpdateStatus() {
   if (!appUpdateState) {
@@ -157,6 +174,9 @@ function ensureBrewConfiguredForActions() {
 function setLoading(on, messageKey = 'message.loadingState', params = {}) {
   busyLoading = !!on;
   loaderTextEl.textContent = i18n.t(messageKey, params);
+  if (on) {
+    resetLoaderProgress();
+  }
   loaderEl.style.display = on ? 'flex' : 'none';
   applyActionAvailability();
 
@@ -323,17 +343,27 @@ async function clearBrewPath() {
 }
 
 async function detectBrewPath() {
-  setInlineStatus(brewPathStatusEl, i18n.t('settings.loading'));
+  setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathScanning'));
 
   try {
     const payload = await window.brewApp.autoDetectBrewPath();
     const path = String(payload?.recommended_path || '');
+    const count = i18n.formatNumber((payload?.candidates || []).length);
+    const scanTime = payload?.scan_timestamp ? formatDate(payload.scan_timestamp) : i18n.t('common.unavailable');
+
     if (!path) {
-      setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathDetectNone'), true);
+      setInlineStatus(
+        brewPathStatusEl,
+        i18n.t('settings.brewPathDetectNone', { count, time: scanTime }),
+        true,
+      );
       return;
     }
 
-    setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathDetected', { path }));
+    setInlineStatus(
+      brewPathStatusEl,
+      `${i18n.t('settings.brewPathDetected', { path })}\n${i18n.t('settings.brewPathScanSummary', { count, time: scanTime })}`,
+    );
     if (confirm(i18n.t('settings.useDetectedConfirm', { path }))) {
       brewPathInputEl.value = path;
       await saveBrewPath();
@@ -347,6 +377,13 @@ function resetLoaderProgress() {
   loaderProgressEl.style.display = 'none';
   loaderProgressMetaEl.textContent = '';
   loaderProgressFillEl.style.width = '0%';
+  if (loaderPercentEl) loaderPercentEl.textContent = '0%';
+  if (loaderPhaseValueEl) loaderPhaseValueEl.textContent = i18n.t('progress.phase.idle');
+  if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = i18n.t('progress.currentNone');
+  if (loaderEtaValueEl) loaderEtaValueEl.textContent = i18n.t('common.dash');
+  loaderStepEls.forEach((stepEl) => {
+    stepEl.classList.remove('active', 'done');
+  });
 }
 
 function formatEta(seconds) {
@@ -373,6 +410,25 @@ function progressPhaseLabel(phase) {
   return translated === key ? i18n.t('progress.phase.idle') : translated;
 }
 
+function renderLoaderSteps(phase) {
+  const currentIndex = LOADER_PHASE_ORDER.indexOf(String(phase || 'idle'));
+  loaderStepEls.forEach((stepEl) => {
+    stepEl.classList.remove('active', 'done');
+    const step = String(stepEl.dataset.step || '').trim();
+    const stepIndex = LOADER_PHASE_ORDER.indexOf(step);
+    if (stepIndex === -1 || currentIndex === -1) return;
+
+    if (stepIndex < currentIndex) {
+      stepEl.classList.add('done');
+      return;
+    }
+
+    if (stepIndex === currentIndex) {
+      stepEl.classList.add('active');
+    }
+  });
+}
+
 function renderCheckProgress(progress) {
   if (!progress || !loaderEl || loaderEl.style.display !== 'flex') {
     return;
@@ -388,16 +444,26 @@ function renderCheckProgress(progress) {
 
   const phaseLabel = progressPhaseLabel(progress.phase);
   const countLabel = total > 0
-    ? `${i18n.formatNumber(done)}/${i18n.formatNumber(total)} (${i18n.formatNumber(clampedPercent)}%)`
-    : '';
+    ? i18n.t('progress.summary', {
+      done: i18n.formatNumber(done),
+      total: i18n.formatNumber(total),
+      percent: i18n.formatNumber(clampedPercent),
+    })
+    : i18n.t('progress.summaryUnknown');
   const etaText = typeof progress.eta_seconds === 'number' && progress.eta_seconds > 0
     ? i18n.t('progress.eta', { eta: formatEta(progress.eta_seconds) })
-    : (progress.running ? i18n.t('progress.noEta') : '');
+    : (progress.running ? i18n.t('progress.noEta') : i18n.t('progress.doneNow'));
   const current = String(progress.current_package || '').trim();
 
-  loaderProgressMetaEl.textContent = [phaseLabel, countLabel, etaText, current]
-    .filter((part) => String(part || '').trim())
-    .join(' • ');
+  loaderTextEl.textContent = progress.message || i18n.t('message.runningCheck');
+  if (loaderPercentEl) loaderPercentEl.textContent = `${clampedPercent}%`;
+  if (loaderPhaseValueEl) loaderPhaseValueEl.textContent = phaseLabel;
+  if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = current || i18n.t('progress.currentNone');
+  if (loaderEtaValueEl) loaderEtaValueEl.textContent = etaText;
+
+  renderLoaderSteps(progress.phase);
+
+  loaderProgressMetaEl.textContent = countLabel;
 }
 
 async function pollCheckProgress() {

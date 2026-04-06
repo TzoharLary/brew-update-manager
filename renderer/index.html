@@ -418,7 +418,66 @@
       font-weight: 650;
       box-shadow: var(--soft-shadow);
       min-width: 440px;
-      max-width: min(92vw, 620px);
+      max-width: min(92vw, 740px);
+    }
+
+    .loader-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+
+    .loader-title {
+      font-size: 0.98rem;
+      font-weight: 760;
+      color: var(--text);
+    }
+
+    .loader-percent {
+      font-size: 0.83rem;
+      color: var(--primary);
+      background: var(--primary-soft);
+      border: 1px solid #c8dafe;
+      border-radius: 999px;
+      padding: 2px 9px;
+      min-width: 58px;
+      text-align: center;
+    }
+
+    .loader-hint {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 10px;
+    }
+
+    .loader-status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .loader-status-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfdff;
+      padding: 8px 10px;
+      min-height: 58px;
+    }
+
+    .loader-status-k {
+      color: var(--muted);
+      font-size: 0.74rem;
+      margin-bottom: 4px;
+    }
+
+    .loader-status-v {
+      color: var(--text);
+      font-size: 0.83rem;
+      font-weight: 650;
+      word-break: break-word;
     }
 
     .loader-progress {
@@ -427,11 +486,9 @@
     }
 
     .loader-progress-meta {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
+      display: block;
       color: var(--muted);
-      font-size: 0.79rem;
+      font-size: 0.78rem;
       margin-bottom: 7px;
       line-height: 1.35;
     }
@@ -449,6 +506,36 @@
       border-radius: inherit;
       background: linear-gradient(90deg, #5f95ff, #2a6ff1);
       transition: width 160ms ease;
+    }
+
+    .loader-steps {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .loader-step {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: #f8fafc;
+      transition: all 120ms ease;
+    }
+
+    .loader-step.active {
+      border-color: #bfd5fb;
+      background: #edf4ff;
+      color: #1f5dc7;
+      font-weight: 700;
+    }
+
+    .loader-step.done {
+      border-color: #cce9dc;
+      background: #ecf9f2;
+      color: #1f8b5e;
     }
 
     .name-main {
@@ -469,6 +556,7 @@
       .cards { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
       th, td { padding: 10px 8px; }
       .loader .inner { min-width: 300px; }
+      .loader-status-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -487,7 +575,7 @@
             <option value="he">עברית</option>
           </select>
         </label>
-        <button id="checkNowBtn" class="btn-primary" data-i18n="actions.checkNow">Check Homebrew packages now</button>
+        <button id="checkNowBtn" class="btn-primary" data-i18n="actions.checkNow">Start check</button>
         <button id="updateAllBtn" class="btn-danger" data-i18n="actions.updateAll">Update all outdated Homebrew packages</button>
       </div>
     </div>
@@ -641,12 +729,39 @@
 
   <div class="loader" id="loader">
     <div class="inner">
-      <div id="loaderText">Working...</div>
+      <div class="loader-top">
+        <div class="loader-title" id="loaderText">Working...</div>
+        <div class="loader-percent" id="loaderPercent">0%</div>
+      </div>
+      <div class="loader-hint" data-i18n="progress.panelHint">This live view shows exactly what the check is doing right now.</div>
+      <div class="loader-status-grid">
+        <div class="loader-status-card">
+          <div class="loader-status-k" data-i18n="progress.phaseLabel">Phase</div>
+          <div class="loader-status-v" id="loaderPhaseValue">—</div>
+        </div>
+        <div class="loader-status-card">
+          <div class="loader-status-k" data-i18n="progress.currentLabel">Current item</div>
+          <div class="loader-status-v" id="loaderCurrentValue">—</div>
+        </div>
+        <div class="loader-status-card">
+          <div class="loader-status-k" data-i18n="progress.etaLabel">ETA</div>
+          <div class="loader-status-v" id="loaderEtaValue">—</div>
+        </div>
+      </div>
       <div class="loader-progress" id="loaderProgress">
         <div class="loader-progress-meta" id="loaderProgressMeta"></div>
         <div class="loader-progress-track">
           <div class="loader-progress-fill" id="loaderProgressFill"></div>
         </div>
+      </div>
+      <div class="loader-steps" id="loaderSteps">
+        <div class="loader-step" data-step="starting" data-i18n="progress.phase.starting">Starting</div>
+        <div class="loader-step" data-step="brew_update" data-i18n="progress.phase.brew_update">Running brew update</div>
+        <div class="loader-step" data-step="collecting_outdated" data-i18n="progress.phase.collecting_outdated">Collecting outdated packages</div>
+        <div class="loader-step" data-step="collecting_installed" data-i18n="progress.phase.collecting_installed">Collecting installed packages</div>
+        <div class="loader-step" data-step="resolving_dates" data-i18n="progress.phase.resolving_dates">Resolving release dates</div>
+        <div class="loader-step" data-step="translating_descriptions" data-i18n="progress.phase.translating_descriptions">Translating descriptions</div>
+        <div class="loader-step" data-step="completed" data-i18n="progress.phase.completed">Completed</div>
       </div>
     </div>
   </div>

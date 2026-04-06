@@ -7,7 +7,7 @@
       },
       actions: {
         languageLabel: 'Language',
-        checkNow: 'Check Homebrew packages now',
+        checkNow: 'Start check',
         updateAll: 'Update all outdated Homebrew packages',
         packageScope: 'These controls update Homebrew packages (formulae/casks), not the app version.',
       },
@@ -60,8 +60,10 @@
         brewPathSaved: 'Brew path saved.',
         brewPathCleared: 'Using automatic brew detection.',
         brewPathSaveFailed: 'Failed to save brew path: {{error}}',
-        brewPathDetected: 'Detected path: {{path}}',
-        brewPathDetectNone: 'No valid brew path detected automatically.',
+        brewPathScanning: 'Scanning this Mac for valid Homebrew paths...',
+        brewPathDetected: 'Detected and verified path: {{path}}',
+        brewPathScanSummary: 'Verified paths found: {{count}} • Scan time: {{time}}',
+        brewPathDetectNone: 'Scan completed: no valid Homebrew executable was found. Verified paths found: {{count}} • Scan time: {{time}}',
         useDetectedConfirm: 'Use detected brew path?\n{{path}}',
       },
       tabs: {
@@ -102,7 +104,7 @@
       },
       message: {
         loadingState: 'Loading package state...',
-        runningCheck: 'Running check now (brew update + scan)...',
+        runningCheck: 'Starting check (brew update + full scan)...',
         checkSuccess: 'Check completed successfully.',
         checkFailed: 'Check failed:\n{{error}}',
         loadFailed: 'Failed to load state:\n{{error}}',
@@ -116,6 +118,14 @@
         updateAllFailed: 'Update-all failed:\n{{error}}',
       },
       progress: {
+        panelHint: 'This live view shows exactly what the check is doing right now.',
+        phaseLabel: 'Phase',
+        currentLabel: 'Current item',
+        etaLabel: 'ETA',
+        summary: 'Progress {{done}} / {{total}} ({{percent}}%)',
+        summaryUnknown: 'Progress information is being prepared...',
+        currentNone: 'Preparing...',
+        doneNow: 'Done',
         eta: 'ETA {{eta}}',
         noEta: 'Estimating…',
         phase: {
@@ -149,7 +159,7 @@
       },
       actions: {
         languageLabel: 'שפה',
-        checkNow: 'בדוק עכשיו חבילות Homebrew',
+        checkNow: 'התחל בדיקה',
         updateAll: 'עדכן את כל חבילות Homebrew המיושנות',
         packageScope: 'הכפתורים כאן מעדכנים חבילות Homebrew (פורמולות/קאסקים), ולא את גרסת האפליקציה.',
       },
@@ -202,8 +212,10 @@
         brewPathSaved: 'נתיב brew נשמר.',
         brewPathCleared: 'המערכת תחפש brew אוטומטית.',
         brewPathSaveFailed: 'שמירת נתיב brew נכשלה: {{error}}',
-        brewPathDetected: 'נתיב שזוהה: {{path}}',
-        brewPathDetectNone: 'לא זוהה נתיב brew תקין באופן אוטומטי.',
+        brewPathScanning: 'מבצע סריקה במחשב כדי לאתר נתיבי Homebrew תקינים...',
+        brewPathDetected: 'נתיב שזוהה ואומת: {{path}}',
+        brewPathScanSummary: 'נמצאו נתיבים מאומתים: {{count}} • זמן סריקה: {{time}}',
+        brewPathDetectNone: 'הסריקה הסתיימה: לא נמצא קובץ Homebrew תקין להרצה. נמצאו נתיבים מאומתים: {{count}} • זמן סריקה: {{time}}',
         useDetectedConfirm: 'להשתמש בנתיב שזוהה?\n{{path}}',
       },
       tabs: {
@@ -244,7 +256,7 @@
       },
       message: {
         loadingState: 'טוען מצב חבילות...',
-        runningCheck: 'מבצע בדיקה עכשיו (brew update + סריקה)...',
+        runningCheck: 'מתחיל בדיקה (brew update + סריקה מלאה)...',
         checkSuccess: 'הבדיקה הסתיימה בהצלחה.',
         checkFailed: 'הבדיקה נכשלה:\n{{error}}',
         loadFailed: 'טעינת המצב נכשלה:\n{{error}}',
@@ -258,6 +270,14 @@
         updateAllFailed: 'עדכון כולל נכשל:\n{{error}}',
       },
       progress: {
+        panelHint: 'החלון הזה מציג בזמן אמת מה הבדיקה עושה כרגע.',
+        phaseLabel: 'שלב',
+        currentLabel: 'פריט נוכחי',
+        etaLabel: 'זמן משוער',
+        summary: 'התקדמות {{done}} / {{total}} ({{percent}}%)',
+        summaryUnknown: 'פרטי ההתקדמות עדיין נטענים...',
+        currentNone: 'מכין נתונים...',
+        doneNow: 'הושלם',
         eta: 'זמן משוער {{eta}}',
         noEta: 'מחשב זמן…',
         phase: {

@@ -38,6 +38,8 @@ GITHUB_COMMITS_PER_FILE = 80
 MAX_GITHUB_FALLBACK_PER_RUN = 25
 VERSION_SEARCH_COMMITS_LIMIT = 60
 GITHUB_PATH_CANDIDATES_LIMIT = 5
+BREW_SCAN_TIMEOUT_SECONDS = 20
+BREW_SCAN_MAX_RESULTS = 50
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if (PROJECT_ROOT / "package.json").exists():
@@ -360,23 +362,85 @@ def save_settings(settings: dict[str, Any]) -> None:
 
 
 def detect_brew_candidates() -> list[str]:
-    candidates = [
+    quick_hints = [
         os.environ.get("BREW_BIN") or "",
         "/opt/homebrew/bin/brew",
         "/usr/local/bin/brew",
         shutil.which("brew") or "",
     ]
 
-    out: list[str] = []
+    path_hints = []
+    for segment in str(process_env().get("PATH") or "").split(":"):
+        seg = str(segment or "").strip()
+        if seg:
+            path_hints.append(str(Path(seg) / "brew"))
+
+    which_hints: list[str] = []
+    which_all = run_cmd(["/usr/bin/which", "-a", "brew"], timeout=10)
+    if which_all.stdout:
+        which_hints.extend(line.strip() for line in which_all.stdout.splitlines() if line.strip())
+
+    scan_roots: list[Path] = [
+        Path("/opt/homebrew"),
+        Path("/usr/local"),
+        Path("/opt"),
+    ]
+    existing_roots = [root for root in scan_roots if root.exists()]
+
+    scanned_hints: list[str] = []
+    if existing_roots:
+        find_cmd = [
+            "/usr/bin/find",
+            *[str(root) for root in existing_roots],
+            "-type",
+            "f",
+            "-name",
+            "brew",
+        ]
+        find_res = run_cmd(find_cmd, timeout=BREW_SCAN_TIMEOUT_SECONDS)
+        scanned_hints = [
+            line.strip()
+            for line in (find_res.stdout or "").splitlines()
+            if line.strip()
+        ]
+        if find_res.code != 0 and find_res.stderr:
+            append_service_log(f"brew auto-detect find warning: {find_res.stderr}")
+
+    combined = quick_hints + path_hints + which_hints + scanned_hints
+
+    unique_candidates: list[str] = []
     seen: set[str] = set()
-    for item in candidates:
-        candidate = str(item or "").strip()
-        if not candidate or candidate in seen:
+    for item in combined:
+        raw = str(item or "").strip()
+        if not raw:
             continue
-        seen.add(candidate)
-        if Path(candidate).exists() and os.access(candidate, os.X_OK):
-            out.append(candidate)
-    return out
+        try:
+            normalized = str(Path(raw).expanduser().resolve())
+        except Exception:
+            normalized = str(Path(raw).expanduser())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_candidates.append(normalized)
+
+    verified: list[str] = []
+    for candidate in unique_candidates:
+        path_obj = Path(candidate)
+        if not path_obj.exists() or not os.access(candidate, os.X_OK):
+            continue
+        probe = run_cmd([candidate, "--version"], timeout=20)
+        text = f"{probe.stdout}\n{probe.stderr}".lower()
+        if probe.code == 0 and "homebrew" in text:
+            verified.append(candidate)
+        if len(verified) >= BREW_SCAN_MAX_RESULTS:
+            break
+
+    preferred_order = {
+        "/opt/homebrew/bin/brew": 0,
+        "/usr/local/bin/brew": 1,
+    }
+    verified.sort(key=lambda item: (preferred_order.get(item, 9), len(item), item))
+    return verified
 
 
 def normalize_brew_path(raw_path: Any) -> str:
@@ -1639,6 +1703,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         "ok": bool(candidates),
                         "recommended_path": candidates[0] if candidates else None,
                         "candidates": candidates,
+                        "scan_performed": True,
+                        "scan_timestamp": now_iso(),
                         "current_brew_path": str(settings.get("brew_path") or ""),
                     },
                 )
