@@ -1,0 +1,64 @@
+{
+  "name": "brew-update-manager",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Tzoharlary",
+  "license": "MIT",
+  "description": "macOS desktop app for Homebrew update management",
+  "main": "electron/main.js",
+  "scripts": {
+    "start-app": "electron .",
+    "generate-icon": "/usr/local/bin/python3 tools/generate_app_icon.py",
+    "pack": "electron-builder --dir --publish never",
+    "build": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "35.1.5",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.tzoharlary.brewupdatemanager",
+    "productName": "Homebrew Update Manager",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "backend/**/*",
+      "tools/**/*",
+      "package.json",
+      "README.md",
+      "LICENSE"
+    ],
+    "asarUnpack": [
+      "backend/**",
+      "tools/**"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "hardenedRuntime": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    }
+  }
+}

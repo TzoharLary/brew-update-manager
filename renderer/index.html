@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Homebrew Update Manager</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fc;
+      --bg-accent: #ebf2fe;
+      --panel: #ffffff;
+      --text: #152238;
+      --muted: #627287;
+      --border: #dde5ef;
+      --soft-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 36px rgba(15, 23, 42, 0.05);
+      --primary: #1f6feb;
+      --primary-soft: #e8f0ff;
+      --danger: #c72d3b;
+      --danger-soft: #fff1f3;
+      --ok: #1f8b5e;
+      --warn: #c47a00;
+      --focus: #7aa4ff;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, Helvetica, Arial;
+      background:
+        radial-gradient(1100px 720px at -5% -18%, var(--bg-accent), transparent 62%),
+        radial-gradient(900px 580px at 110% -12%, #f2f6ff, transparent 56%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    .wrap {
+      max-width: 1420px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .title h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .title .sub {
+      margin-top: 6px;
+      font-size: 0.94rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .lang-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding-inline: 10px;
+      height: 40px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--soft-shadow);
+      color: var(--muted);
+      font-size: 0.87rem;
+      font-weight: 600;
+    }
+
+    select {
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.9rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--text);
+      background: var(--panel);
+      padding: 10px 14px;
+      font-weight: 650;
+      cursor: pointer;
+      transition: 120ms ease;
+      box-shadow: var(--soft-shadow);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: #cad7e6;
+    }
+
+    button:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+
+    button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    .btn-primary {
+      background: var(--primary-soft);
+      color: var(--primary);
+      border-color: #c8dafe;
+    }
+
+    .btn-danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border-color: #f5ccd2;
+    }
+
+    .cards {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--soft-shadow);
+      transition: transform 140ms ease, box-shadow 140ms ease;
+    }
+
+    .card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(15, 23, 42, 0.05), 0 14px 34px rgba(15, 23, 42, 0.08);
+    }
+
+    .card .k {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .card .v {
+      margin-top: 6px;
+      font-size: 1.08rem;
+      font-weight: 720;
+    }
+
+    .tabs { display: flex; gap: 10px; margin-bottom: 14px; }
+
+    .scope-note {
+      margin: -2px 0 14px;
+      padding-inline: 2px;
+    }
+
+    .settings-panel {
+      margin-bottom: 16px;
+    }
+
+    .settings-body {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    }
+
+    .settings-group {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .settings-group h3 {
+      margin: 0 0 10px;
+      font-size: 0.98rem;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .field-row label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .field-row input,
+    .field-row select {
+      height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 7px 10px;
+      background: #fff;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+
+    .field-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+    }
+
+    .field-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .settings-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .settings-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 10px;
+      white-space: pre-wrap;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .tab {
+      border-radius: 999px;
+      padding: 8px 15px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .tab.active {
+      color: var(--primary);
+      border-color: #c8dafe;
+      background: var(--primary-soft);
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--soft-shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(248, 251, 255, 0.92);
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .muted { color: var(--muted); }
+    .small { font-size: 0.83rem; }
+
+    table {
+      width: 100%;
+      min-width: 1280px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      text-align: start;
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(248, 251, 255, 0.96);
+      backdrop-filter: blur(6px);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    th[data-col-key="package"] { width: 330px; min-width: 260px; }
+    th[data-col-key="type"] { width: 110px; min-width: 90px; }
+    th[data-col-key="currentVersion"] { width: 150px; min-width: 120px; }
+    th[data-col-key="latestVersion"] { width: 150px; min-width: 120px; }
+    th[data-col-key="currentDate"] { width: 170px; min-width: 140px; }
+    th[data-col-key="latestDate"] { width: 170px; min-width: 140px; }
+    th[data-col-key="daysOutdated"] { width: 150px; min-width: 120px; }
+    th[data-col-key="status"] { width: 130px; min-width: 110px; }
+    th[data-col-key="action"] { width: 130px; min-width: 110px; }
+
+    .th-label {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-inline-end: 10px;
+    }
+
+    .col-resizer {
+      position: absolute;
+      top: 0;
+      inset-inline-end: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      touch-action: none;
+      z-index: 3;
+    }
+
+    .col-resizer::after {
+      content: '';
+      position: absolute;
+      top: 22%;
+      bottom: 22%;
+      left: 50%;
+      width: 1px;
+      transform: translateX(-50%);
+      background: rgba(126, 146, 171, 0.45);
+      transition: background 120ms ease;
+    }
+
+    thead th:hover .col-resizer::after,
+    .col-resizer.dragging::after {
+      background: rgba(59, 119, 212, 0.95);
+    }
+
+    tbody tr:hover { background: #f8fbff; }
+
+    .kind {
+      display: inline-block;
+      font-size: 0.72rem;
+      border: 1px solid #cfd9e6;
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: #4f6279;
+      background: #f7fafd;
+    }
+
+    .status-ok { color: var(--ok); font-weight: 700; }
+    .status-warn { color: var(--warn); font-weight: 700; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+    .message {
+      margin-top: 14px;
+      border: 1px solid #cfdae8;
+      border-radius: 12px;
+      padding: 11px 13px;
+      font-size: 0.92rem;
+      background: var(--panel);
+      display: none;
+      white-space: pre-wrap;
+      box-shadow: var(--soft-shadow);
+    }
+
+    .message.error {
+      border-color: #f0c5cb;
+      background: #fff5f6;
+    }
+
+    .loader {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(11, 24, 40, 0.1);
+      backdrop-filter: blur(1px);
+      z-index: 999;
+    }
+
+    .loader .inner {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 18px 16px;
+      font-weight: 650;
+      box-shadow: var(--soft-shadow);
+      min-width: 440px;
+      max-width: min(92vw, 620px);
+    }
+
+    .loader-progress {
+      margin-top: 10px;
+      display: none;
+    }
+
+    .loader-progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 0.79rem;
+      margin-bottom: 7px;
+      line-height: 1.35;
+    }
+
+    .loader-progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: #e5edf8;
+      overflow: hidden;
+    }
+
+    .loader-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5f95ff, #2a6ff1);
+      transition: width 160ms ease;
+    }
+
+    .name-main {
+      font-weight: 700;
+      font-size: 0.94rem;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+
+    .name-sub {
+      font-size: 0.82rem;
+      color: var(--muted);
+      max-width: 360px;
+    }
+
+    @media (max-width: 980px) {
+      .wrap { padding: 16px; }
+      .cards { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+      th, td { padding: 10px 8px; }
+      .loader .inner { min-width: 300px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">
+        <h1 data-i18n="app.title">Homebrew Update Manager</h1>
+        <div class="sub" data-i18n="app.subtitle">Modern desktop manager for Homebrew packages</div>
+      </div>
+      <div class="actions">
+        <label class="lang-wrap" for="languageSelect">
+          <span data-i18n="actions.languageLabel">Language</span>
+          <select id="languageSelect" aria-label="language selector">
+            <option value="en">English</option>
+            <option value="he">עברית</option>
+          </select>
+        </label>
+        <button id="checkNowBtn" class="btn-primary" data-i18n="actions.checkNow">Check Homebrew packages now</button>
+        <button id="updateAllBtn" class="btn-danger" data-i18n="actions.updateAll">Update all outdated Homebrew packages</button>
+      </div>
+    </div>
+
+    <div class="small muted scope-note" data-i18n="actions.packageScope">These controls update Homebrew packages (formulae/casks), not the app version.</div>
+
+    <div class="cards" id="cards"></div>
+
+    <div class="panel settings-panel">
+      <div class="toolbar">
+        <div class="small muted" data-i18n="settings.title">Automation & Environment</div>
+        <div class="small muted" id="settingsSummary" data-i18n="settings.loading">Loading settings...</div>
+      </div>
+      <div class="settings-body">
+        <section class="settings-group">
+          <h3 data-i18n="updates.title">App version updates</h3>
+          <div class="settings-note" data-i18n="updates.scopeHelp">This section updates the Homebrew Update Manager app itself (from GitHub Releases).</div>
+
+          <div class="settings-actions">
+            <button id="checkAppUpdateBtn" data-i18n="updates.check">Check for app update</button>
+            <button id="installAppUpdateBtn" class="btn-primary" data-i18n="updates.install" disabled>Download app installer</button>
+          </div>
+
+          <div class="settings-note" id="appUpdateStatus"></div>
+        </section>
+
+        <section class="settings-group">
+          <h3 data-i18n="settings.schedulerTitle">Automatic checks</h3>
+
+          <div class="field-inline">
+            <input id="scheduleEnabled" type="checkbox" />
+            <label for="scheduleEnabled" data-i18n="settings.enableScheduler">Enable automatic checks</label>
+          </div>
+
+          <div class="field-row">
+            <label for="scheduleFrequency" data-i18n="settings.frequency">Frequency</label>
+            <select id="scheduleFrequency">
+              <option value="daily" data-i18n="settings.frequencyDaily">Daily</option>
+              <option value="weekly" data-i18n="settings.frequencyWeekly">Weekly</option>
+              <option value="interval" data-i18n="settings.frequencyInterval">Every X hours</option>
+            </select>
+          </div>
+
+          <div class="field-row" id="scheduleTimeRow">
+            <label for="scheduleTime" data-i18n="settings.time">Time</label>
+            <input id="scheduleTime" type="time" value="09:00" />
+          </div>
+
+          <div class="field-row hidden" id="scheduleWeekdayRow">
+            <label for="scheduleWeekday" data-i18n="settings.weekday">Weekday</label>
+            <select id="scheduleWeekday">
+              <option value="0" data-i18n="settings.daySunday">Sunday</option>
+              <option value="1" data-i18n="settings.dayMonday">Monday</option>
+              <option value="2" data-i18n="settings.dayTuesday">Tuesday</option>
+              <option value="3" data-i18n="settings.dayWednesday">Wednesday</option>
+              <option value="4" data-i18n="settings.dayThursday">Thursday</option>
+              <option value="5" data-i18n="settings.dayFriday">Friday</option>
+              <option value="6" data-i18n="settings.daySaturday">Saturday</option>
+            </select>
+          </div>
+
+          <div class="field-row hidden" id="scheduleIntervalRow">
+            <label for="scheduleIntervalHours" data-i18n="settings.intervalHours">Interval (hours)</label>
+            <input id="scheduleIntervalHours" type="number" min="1" max="168" step="1" value="24" />
+          </div>
+
+          <div class="settings-actions">
+            <button id="saveScheduleBtn" class="btn-primary" data-i18n="settings.saveScheduler">Save schedule</button>
+          </div>
+          <div class="settings-note" id="scheduleStatus"></div>
+        </section>
+
+        <section class="settings-group">
+          <h3 data-i18n="settings.brewTitle">Homebrew path</h3>
+
+          <div class="field-row">
+            <label for="brewPathInput" data-i18n="settings.brewPath">Custom brew path (optional)</label>
+            <input id="brewPathInput" type="text" placeholder="/opt/homebrew/bin/brew" />
+          </div>
+
+          <div class="settings-actions">
+            <button id="detectBrewPathBtn" data-i18n="settings.detectBrewPath">Auto-detect path</button>
+            <button id="saveBrewPathBtn" class="btn-primary" data-i18n="settings.saveBrewPath">Save path</button>
+            <button id="clearBrewPathBtn" data-i18n="settings.clearBrewPath">Use automatic only</button>
+          </div>
+
+          <div class="settings-note" id="brewPathStatus"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="outdated" data-i18n="tabs.outdated">Needs Update</button>
+      <button class="tab" data-tab="installed" data-i18n="tabs.installed">All Installed</button>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <div id="tableTitle" class="small muted" data-i18n="table.loading">Loading...</div>
+        <div id="updatedAt" class="small muted"></div>
+      </div>
+      <div style="max-height: 68vh; overflow: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th data-col-key="package" data-min-width="240">
+                <span class="th-label" data-i18n="table.package">Package</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="type" data-min-width="90">
+                <span class="th-label" data-i18n="table.type">Type</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="currentVersion" data-min-width="120">
+                <span class="th-label" data-i18n="table.currentVersion">Current Version</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="latestVersion" data-min-width="120">
+                <span class="th-label" data-i18n="table.latestVersion">Latest Version</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="currentDate" data-min-width="140">
+                <span class="th-label" data-i18n="table.currentReleaseDate">Current Version Date</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="latestDate" data-min-width="140">
+                <span class="th-label" data-i18n="table.latestReleaseDate">Latest Version Date</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="daysOutdated" data-min-width="120">
+                <span class="th-label" data-i18n="table.daysOutdated">Days Outdated</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="status" data-min-width="110">
+                <span class="th-label" data-i18n="table.status">Status</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="action" data-min-width="110">
+                <span class="th-label" data-i18n="table.action">Action</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="message" id="message"></div>
+  </div>
+
+  <div class="loader" id="loader">
+    <div class="inner">
+      <div id="loaderText">Working...</div>
+      <div class="loader-progress" id="loaderProgress">
+        <div class="loader-progress-meta" id="loaderProgressMeta"></div>
+        <div class="loader-progress-track">
+          <div class="loader-progress-fill" id="loaderProgressFill"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./i18n.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
