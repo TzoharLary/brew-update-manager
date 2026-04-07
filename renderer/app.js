@@ -44,6 +44,8 @@ const saveBrewPathBtn = document.getElementById('saveBrewPathBtn');
 const clearBrewPathBtn = document.getElementById('clearBrewPathBtn');
 const brewPathStatusEl = document.getElementById('brewPathStatus');
 const updateHistoryListEl = document.getElementById('updateHistoryList');
+const packageSearchInputEl = document.getElementById('packageSearchInput');
+const packageSearchClearBtnEl = document.getElementById('packageSearchClearBtn');
 
 let progressPollTimer = null;
 let progressPollInFlight = false;
@@ -53,6 +55,7 @@ let appUpdateState = null;
 let appUpdateAutoCheckTimer = null;
 let updateHistoryItems = [];
 let appUpdateMeta = loadAppUpdateMeta();
+let packageSearchTerm = '';
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -169,23 +172,28 @@ async function installAppUpdate() {
     return;
   }
 
-  if (!confirm(i18n.t('updates.confirmInstall', { latest: appUpdateState.latestVersion }))) {
-    return;
-  }
-
   checkAppUpdateBtn.disabled = true;
   installAppUpdateBtn.disabled = true;
+  installAppUpdateBtn.textContent = i18n.t('updates.installing');
   setInlineStatus(appUpdateStatusEl, i18n.t('updates.downloading'));
 
   try {
     const payload = await window.brewApp.downloadAndInstallAppUpdate();
     appUpdateState = payload;
+
+    if (payload?.restartScheduled) {
+      setInlineStatus(appUpdateStatusEl, i18n.t('updates.restartingSoon'));
+      showMessage(i18n.t('updates.restartingSoon'));
+      return;
+    }
+
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.downloaded', { path: payload.downloadedPath }));
     installAppUpdateBtn.disabled = false;
   } catch (err) {
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.downloadFailed', { error: err.message }), true);
     installAppUpdateBtn.disabled = !(appUpdateState?.updateAvailable && appUpdateState?.hasInstallAsset);
   } finally {
+    installAppUpdateBtn.textContent = i18n.t('updates.install');
     checkAppUpdateBtn.disabled = false;
   }
 }
@@ -566,6 +574,28 @@ function formatDate(value) {
   return i18n.formatDate(value);
 }
 
+function updateSearchControls() {
+  if (!packageSearchInputEl || !packageSearchClearBtnEl) return;
+  packageSearchInputEl.placeholder = i18n.t('table.searchPlaceholder');
+  packageSearchInputEl.setAttribute('aria-label', i18n.t('table.searchLabel'));
+  packageSearchClearBtnEl.disabled = !packageSearchTerm;
+}
+
+function packageMatchesSearch(pkg, normalizedTerm) {
+  if (!normalizedTerm) return true;
+  const text = [
+    pkg?.name,
+    pkg?.description,
+    pkg?.description_he,
+    pkg?.kind,
+    pkg?.installed_version,
+    pkg?.latest_version,
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  return text.includes(normalizedTerm);
+}
+
 function findPackageInSnapshot(name, kind) {
   const list = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   return list.find((pkg) => String(pkg?.name || '') === String(name || '') && String(pkg?.kind || '') === String(kind || ''));
@@ -694,23 +724,41 @@ function renderCards(data) {
 
 function getFilteredPackages() {
   const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
-  if (activeTab === 'outdated') {
-    return pkgs.filter((pkg) => pkg.outdated);
+  const byTab = activeTab === 'outdated'
+    ? pkgs.filter((pkg) => pkg.outdated)
+    : pkgs;
+
+  if (!packageSearchTerm) {
+    return byTab;
   }
-  return pkgs;
+
+  return byTab.filter((pkg) => packageMatchesSearch(pkg, packageSearchTerm));
 }
 
 function renderTable() {
   const all = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   const list = getFilteredPackages();
   const outdatedCount = all.filter((pkg) => pkg.outdated).length;
+  const searchRaw = String(packageSearchInputEl?.value || '').trim();
 
-  tableTitleEl.textContent = activeTab === 'outdated'
-    ? i18n.t('table.showingOutdated', { count: i18n.formatNumber(list.length) })
-    : i18n.t('table.showingAll', {
-      total: i18n.formatNumber(all.length),
-      outdated: i18n.formatNumber(outdatedCount),
-    });
+  if (packageSearchTerm) {
+    tableTitleEl.textContent = activeTab === 'outdated'
+      ? i18n.t('table.showingOutdatedSearch', {
+        count: i18n.formatNumber(list.length),
+        query: searchRaw,
+      })
+      : i18n.t('table.showingAllSearch', {
+        count: i18n.formatNumber(list.length),
+        query: searchRaw,
+      });
+  } else {
+    tableTitleEl.textContent = activeTab === 'outdated'
+      ? i18n.t('table.showingOutdated', { count: i18n.formatNumber(list.length) })
+      : i18n.t('table.showingAll', {
+        total: i18n.formatNumber(all.length),
+        outdated: i18n.formatNumber(outdatedCount),
+      });
+  }
 
   tbodyEl.innerHTML = '';
   if (!list.length) {
@@ -718,7 +766,11 @@ function renderTable() {
     const td = document.createElement('td');
     td.colSpan = TABLE_COLUMN_COUNT;
     td.className = 'muted';
-    td.textContent = activeTab === 'outdated' ? i18n.t('table.noUpdates') : i18n.t('table.noPackages');
+    if (packageSearchTerm) {
+      td.textContent = i18n.t('table.noSearchResults', { query: searchRaw || packageSearchTerm });
+    } else {
+      td.textContent = activeTab === 'outdated' ? i18n.t('table.noUpdates') : i18n.t('table.noPackages');
+    }
     tr.appendChild(td);
     tbodyEl.appendChild(tr);
     return;
@@ -766,7 +818,7 @@ function renderTable() {
       const btn = document.createElement('button');
       btn.className = 'row-update-btn';
       btn.textContent = i18n.t('buttons.update');
-      btn.addEventListener('click', () => updateOne(pkg.name, pkg.kind));
+      btn.addEventListener('click', () => updateOne(pkg.name, pkg.kind, btn));
       tdAction.appendChild(btn);
     } else {
       tdAction.innerHTML = `<span class="muted small">${i18n.t('common.dash')}</span>`;
@@ -800,6 +852,7 @@ function refreshStaticText() {
   renderSettings();
   renderUpdateHistory(updateHistoryItems);
   renderAppUpdateStatus();
+  updateSearchControls();
   applyActionAvailability();
 }
 
@@ -849,9 +902,13 @@ async function checkNow() {
   }
 }
 
-async function updateOne(name, kind) {
+async function updateOne(name, kind, sourceBtn = null) {
   if (!ensureBrewConfiguredForActions()) return;
   if (!confirm(i18n.t('confirm.updateOne', { name, kind: kindLabel(kind) }))) return;
+
+  if (sourceBtn) {
+    sourceBtn.textContent = i18n.t('buttons.updating');
+  }
 
   clearMessage();
   setLoading(true, 'message.updatingOne', { name });
@@ -884,12 +941,17 @@ async function updateOne(name, kind) {
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
+    if (sourceBtn) {
+      sourceBtn.textContent = i18n.t('buttons.update');
+    }
   }
 }
 
 async function updateAll() {
   if (!ensureBrewConfiguredForActions()) return;
   if (!confirm(i18n.t('confirm.updateAll'))) return;
+
+  updateAllBtn.textContent = i18n.t('buttons.updating');
 
   clearMessage();
   setLoading(true, 'message.updatingAll');
@@ -921,6 +983,7 @@ async function updateAll() {
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
+    updateAllBtn.textContent = i18n.t('actions.updateAll');
   }
 }
 
@@ -1009,6 +1072,25 @@ languageSelect.addEventListener('change', () => {
   refreshStaticText();
 });
 
+if (packageSearchInputEl) {
+  packageSearchInputEl.addEventListener('input', () => {
+    packageSearchTerm = String(packageSearchInputEl.value || '').trim().toLowerCase();
+    updateSearchControls();
+    renderTable();
+  });
+}
+
+if (packageSearchClearBtnEl) {
+  packageSearchClearBtnEl.addEventListener('click', () => {
+    if (!packageSearchInputEl) return;
+    packageSearchInputEl.value = '';
+    packageSearchTerm = '';
+    updateSearchControls();
+    renderTable();
+    packageSearchInputEl.focus();
+  });
+}
+
 checkNowBtn.addEventListener('click', checkNow);
 updateAllBtn.addEventListener('click', updateAll);
 checkAppUpdateBtn.addEventListener('click', () => checkAppUpdate({ silent: false }));
@@ -1023,6 +1105,7 @@ window.addEventListener('beforeunload', stopAutoAppUpdateChecks);
 
 initColumnResizing();
 updateSchedulerFieldVisibility();
+updateSearchControls();
 refreshStaticText();
 
 async function initializeApp() {

@@ -423,6 +423,52 @@
       flex-wrap: wrap;
     }
 
+    .toolbar-left,
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .table-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      padding: 6px 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .search-box input {
+      min-width: 200px;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.86rem;
+      font-weight: 500;
+    }
+
+    .btn-quiet {
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      border-radius: 9px;
+      background: #f6f9ff;
+      box-shadow: none;
+    }
+
     .muted { color: var(--muted); }
     .small { font-size: 0.83rem; }
 
@@ -690,6 +736,7 @@
       th, td { padding: 10px 8px; }
       .loader .inner { min-width: 300px; }
       .loader-status-grid { grid-template-columns: 1fr; }
+      .search-box input { min-width: 130px; }
     }
   </style>
 </head>
@@ -830,8 +877,17 @@
 
     <div class="panel">
       <div class="toolbar">
-        <div id="tableTitle" class="small muted" data-i18n="table.loading">Loading...</div>
-        <div id="updatedAt" class="small muted"></div>
+        <div class="toolbar-left">
+          <div id="tableTitle" class="small muted" data-i18n="table.loading">Loading...</div>
+        </div>
+        <div class="toolbar-right table-tools">
+          <label class="search-box" for="packageSearchInput">
+            <span data-i18n="table.searchLabel">Search</span>
+            <input id="packageSearchInput" type="search" />
+          </label>
+          <button id="packageSearchClearBtn" class="btn-quiet" data-i18n="table.clearSearch">Clear</button>
+          <div id="updatedAt" class="small muted"></div>
+        </div>
       </div>
       <div style="max-height: 68vh; overflow: auto;">
         <table>

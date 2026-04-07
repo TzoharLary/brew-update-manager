@@ -147,6 +147,106 @@ function downloadsDirPath() {
   }
 }
 
+function runCommandOrThrow(command, args, options = {}) {
+  const res = spawnSync(command, args, {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    ...options,
+  });
+  if (res.status !== 0) {
+    throw new Error(`${command} ${args.join(' ')} failed: ${(res.stderr || res.stdout || '').trim()}`);
+  }
+  return res;
+}
+
+function currentAppBundlePath() {
+  const bundlePath = path.resolve(process.execPath, '..', '..', '..');
+  if (bundlePath.endsWith('.app')) {
+    return bundlePath;
+  }
+  return null;
+}
+
+function findMountedAppBundle(mountPoint) {
+  const entries = fs.readdirSync(mountPoint, { withFileTypes: true });
+  const appDir = entries.find((entry) => entry.isDirectory() && entry.name.endsWith('.app'));
+  if (!appDir) {
+    throw new Error('Downloaded installer does not include a .app bundle');
+  }
+  return path.join(mountPoint, appDir.name);
+}
+
+function writeApplyUpdateScript() {
+  const scriptPath = path.join(os.tmpdir(), `bum-apply-update-${Date.now()}.sh`);
+  const script = `#!/bin/bash
+set -euo pipefail
+
+SOURCE_APP="$1"
+TARGET_APP="$2"
+MOUNT_POINT="$3"
+DMG_PATH="$4"
+CURRENT_PID="$5"
+
+while kill -0 "$CURRENT_PID" 2>/dev/null; do
+  sleep 0.5
+done
+
+if [[ -d "$TARGET_APP" ]]; then
+  rm -rf "$TARGET_APP"
+fi
+
+ditto "$SOURCE_APP" "$TARGET_APP"
+
+hdiutil detach "$MOUNT_POINT" -quiet || true
+rmdir "$MOUNT_POINT" 2>/dev/null || true
+rm -f "$DMG_PATH" || true
+
+open "$TARGET_APP"
+rm -f "$0" || true
+`;
+  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+  return scriptPath;
+}
+
+function scheduleAppUpdateAndRestart(downloadedPath) {
+  const targetApp = currentAppBundlePath();
+  if (!targetApp) {
+    throw new Error('Unable to locate current app bundle path for auto-update');
+  }
+
+  const mountPoint = fs.mkdtempSync(path.join(os.tmpdir(), 'bum-update-mount-'));
+  try {
+    runCommandOrThrow('hdiutil', ['attach', downloadedPath, '-nobrowse', '-mountpoint', mountPoint, '-quiet']);
+  } catch (error) {
+    fs.rmSync(mountPoint, { recursive: true, force: true });
+    throw error;
+  }
+
+  const sourceApp = findMountedAppBundle(mountPoint);
+  const scriptPath = writeApplyUpdateScript();
+  const helper = spawn('bash', [
+    scriptPath,
+    sourceApp,
+    targetApp,
+    mountPoint,
+    downloadedPath,
+    String(process.pid),
+  ], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  helper.unref();
+
+  setTimeout(() => {
+    app.quit();
+  }, 700);
+
+  return {
+    restartScheduled: true,
+    targetApp,
+  };
+}
+
 function executableExists(filePath) {
   if (!filePath) return false;
   try {
@@ -366,15 +466,22 @@ ipcMain.handle('app-update:download-install', async () => {
   const targetPath = path.join(downloadsDir, status.assetName);
   await downloadInstallerAsset(status.assetUrl, targetPath);
 
-  const openError = await shell.openPath(targetPath);
-  if (openError) {
-    throw new Error(`Installer downloaded but failed to open: ${openError}`);
+  let restartScheduled = false;
+  if (app.isPackaged) {
+    const updateResult = scheduleAppUpdateAndRestart(targetPath);
+    restartScheduled = !!updateResult.restartScheduled;
+  } else {
+    const openError = await shell.openPath(targetPath);
+    if (openError) {
+      throw new Error(`Installer downloaded but failed to open: ${openError}`);
+    }
   }
 
   return {
     ...status,
     ok: true,
     downloadedPath: targetPath,
+    restartScheduled,
   };
 });
 ipcMain.handle('check:run', async () => fetchJson(`${SERVICE_BASE}/api/check`, {

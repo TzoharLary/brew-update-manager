@@ -14,8 +14,9 @@
       updates: {
         title: 'App version updates',
         scopeHelp: 'This section updates the Homebrew Update Manager app itself (from GitHub Releases).',
-        check: 'Check for app update',
-        install: 'Download app installer',
+        check: 'Check version update',
+        install: 'Update version',
+        installing: 'Updating version...',
         ready: 'App update channel is connected. Ready to check for new versions.',
         checking: 'Checking for Homebrew Update Manager app updates...',
         upToDate: 'Homebrew Update Manager is up to date (v{{current}}).',
@@ -25,6 +26,7 @@
         confirmInstall: 'Download and open the app installer for v{{latest}} now?',
         downloading: 'Downloading app installer...',
         downloaded: 'Installer downloaded and opened: {{path}}',
+        restartingSoon: 'Update downloaded and being applied. The app will restart automatically in a few seconds.',
         downloadFailed: 'App update install step failed: {{error}}',
       },
       settings: {
@@ -100,6 +102,9 @@
       },
       table: {
         loading: 'Loading...',
+        searchLabel: 'Search packages',
+        searchPlaceholder: 'Search by name, type, description, or version',
+        clearSearch: 'Clear',
         package: 'Package',
         type: 'Type',
         currentVersion: 'Current Version',
@@ -112,8 +117,11 @@
         action: 'Action',
         noUpdates: 'No updates available 🎉',
         noPackages: 'No packages found.',
+        noSearchResults: 'No packages found for "{{query}}".',
         showingOutdated: 'Showing {{count}} package(s) that need updates',
         showingAll: 'Showing all {{total}} installed package(s) ({{outdated}} outdated)',
+        showingOutdatedSearch: 'Search "{{query}}": {{count}} package(s) need updates',
+        showingAllSearch: 'Search "{{query}}": {{count}} package(s) found',
       },
       status: {
         needsUpdate: 'Needs update',
@@ -121,6 +129,7 @@
       },
       buttons: {
         update: 'Update',
+        updating: 'Updating...',
       },
       message: {
         loadingState: 'Loading package state...',
@@ -188,8 +197,9 @@
       updates: {
         title: 'עדכוני גרסת אפליקציה',
         scopeHelp: 'החלק הזה מעדכן את אפליקציית Homebrew Update Manager עצמה (מ־GitHub Releases).',
-        check: 'בדוק אם יש עדכון לאפליקציה',
-        install: 'הורד מתקין אפליקציה',
+        check: 'בדוק עדכון גרסה',
+        install: 'עדכן גרסה',
+        installing: 'מעדכן גרסה...',
         ready: 'ערוץ עדכוני האפליקציה מחובר. אפשר לבדוק גרסאות חדשות.',
         checking: 'בודק עדכונים לאפליקציית Homebrew Update Manager...',
         upToDate: 'אפליקציית Homebrew Update Manager מעודכנת (v{{current}}).',
@@ -199,6 +209,7 @@
         confirmInstall: 'להוריד ולפתוח עכשיו מתקין אפליקציה לגרסה v{{latest}}?',
         downloading: 'מוריד מתקין אפליקציה...',
         downloaded: 'המתקין הורד ונפתח: {{path}}',
+        restartingSoon: 'העדכון ירד ומוחל עכשיו. האפליקציה תופעל מחדש אוטומטית בעוד כמה שניות.',
         downloadFailed: 'שלב התקנת עדכון האפליקציה נכשל: {{error}}',
       },
       settings: {
@@ -274,6 +285,9 @@
       },
       table: {
         loading: 'טוען...',
+        searchLabel: 'חיפוש חבילות',
+        searchPlaceholder: 'חפש לפי שם, סוג, תיאור או גרסה',
+        clearSearch: 'נקה',
         package: 'חבילה',
         type: 'סוג',
         currentVersion: 'גרסה נוכחית',
@@ -286,8 +300,11 @@
         action: 'פעולה',
         noUpdates: 'אין עדכונים זמינים 🎉',
         noPackages: 'לא נמצאו חבילות.',
+        noSearchResults: 'לא נמצאו חבילות עבור "{{query}}".',
         showingOutdated: 'מוצגות {{count}} חבילות שדורשות עדכון',
         showingAll: 'מוצגות כל {{total}} החבילות המותקנות ({{outdated}} מיושנות)',
+        showingOutdatedSearch: 'חיפוש "{{query}}": נמצאו {{count}} חבילות שדורשות עדכון',
+        showingAllSearch: 'חיפוש "{{query}}": נמצאו {{count}} חבילות',
       },
       status: {
         needsUpdate: 'דורש עדכון',
@@ -295,6 +312,7 @@
       },
       buttons: {
         update: 'עדכן',
+        updating: 'מעדכן...',
       },
       message: {
         loadingState: 'טוען מצב חבילות...',

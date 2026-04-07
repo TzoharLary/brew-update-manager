@@ -1,6 +1,6 @@
 {
   "name": "brew-update-manager",
-  "version": "1.0.5",
+  "version": "1.0.8",
   "private": true,
   "author": "Tzoharlary",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "generate-icon": "/usr/local/bin/python3 tools/generate_app_icon.py",
     "pack": "electron-builder --dir --publish never",
     "build": "node tools/run-quick-build.js",
-    "build:release": "electron-builder --publish never --mac dmg --x64 --arm64"
+    "build:release": "node tools/run-release-build.js"
   },
   "devDependencies": {
     "electron": "35.1.5",

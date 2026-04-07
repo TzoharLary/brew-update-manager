@@ -75,6 +75,8 @@ For a full release build (both architectures):
 
 - `npm run build:release`
 
+Both build commands automatically clean `dist/` first, so older version artifacts are removed before new ones are created.
+
 Release artifacts are created under `dist/` as `.dmg` for:
 
 - `x64` (Intel Macs)
