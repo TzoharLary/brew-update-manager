@@ -69,12 +69,18 @@ No installation-time prompt is required; this is configurable later from inside 
 ## Build installer artifacts (macOS)
 
 1. `npm install`
-2. `npm run build`
+2. `npm run build` (quick local build, current Mac architecture only, DMG)
 
-Artifacts are created under `dist/` (for example, `.dmg` and `.zip`) for:
+For a full release build (both architectures):
+
+- `npm run build:release`
+
+Release artifacts are created under `dist/` as `.dmg` for:
 
 - `x64` (Intel Macs)
 - `arm64` (Apple Silicon: M1/M2/M3)
+
+This project intentionally uses DMG-only release assets and does not rely on blockmap files.
 
 > Note: current build configuration is for MVP unsigned distribution. For broad public distribution, add Apple signing + notarization in the release pipeline.
 

@@ -32,11 +32,10 @@ jobs:
         run: npm ci
 
       - name: Build macOS artifacts
-        run: npm run build
+        run: npm run build:release
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.dmg
-            dist/*.zip

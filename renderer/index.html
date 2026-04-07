@@ -177,6 +177,38 @@
 
     .settings-panel {
       margin-bottom: 16px;
+      overflow: hidden;
+    }
+
+    .settings-accordion {
+      border: 0;
+    }
+
+    .settings-accordion > summary {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      padding-inline-start: 36px;
+    }
+
+    .settings-accordion > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .settings-accordion > summary::before {
+      content: '▸';
+      position: absolute;
+      inset-inline-start: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 0.95rem;
+      transition: transform 120ms ease;
+    }
+
+    .settings-accordion[open] > summary::before {
+      transform: translateY(-50%) rotate(90deg);
     }
 
     .settings-body {
@@ -184,6 +216,7 @@
       display: grid;
       gap: 12px;
       grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      border-top: 1px solid var(--border);
     }
 
     .settings-group {
@@ -193,9 +226,36 @@
       background: #fff;
     }
 
-    .settings-group h3 {
-      margin: 0 0 10px;
+    .settings-group > summary {
+      margin: 0;
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
       font-size: 0.98rem;
+      font-weight: 700;
+    }
+
+    .settings-group > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .settings-group > summary::before {
+      content: '▸';
+      color: var(--muted);
+      font-size: 0.88rem;
+      transition: transform 120ms ease;
+    }
+
+    .settings-group[open] > summary::before {
+      transform: rotate(90deg);
+    }
+
+    .settings-group-content {
+      margin-top: 10px;
     }
 
     .field-row {
@@ -658,92 +718,109 @@
     <div class="cards" id="cards"></div>
 
     <div class="panel settings-panel">
-      <div class="toolbar">
-        <div class="small muted" data-i18n="settings.title">Automation & Environment</div>
-        <div class="small muted" id="settingsSummary" data-i18n="settings.loading">Loading settings...</div>
-      </div>
-      <div class="settings-body">
-        <section class="settings-group">
-          <h3 data-i18n="updates.title">App version updates</h3>
-          <div class="settings-note" data-i18n="updates.scopeHelp">This section updates the Homebrew Update Manager app itself (from GitHub Releases).</div>
+      <details class="settings-accordion" open>
+        <summary class="toolbar">
+          <div class="small muted" data-i18n="settings.title">Automation & Environment</div>
+          <div class="small muted" id="settingsSummary" data-i18n="settings.loading">Loading settings...</div>
+        </summary>
 
-          <div class="settings-actions">
-            <button id="checkAppUpdateBtn" data-i18n="updates.check">Check for app update</button>
-            <button id="installAppUpdateBtn" class="btn-primary" data-i18n="updates.install" disabled>Download app installer</button>
-          </div>
+        <div class="settings-body">
+          <details class="settings-group" open>
+            <summary>
+              <span data-i18n="updates.title">App version updates</span>
+            </summary>
+            <div class="settings-group-content">
+              <div class="settings-note" data-i18n="updates.scopeHelp">This section updates the Homebrew Update Manager app itself (from GitHub Releases).</div>
 
-          <div class="settings-note" id="appUpdateStatus"></div>
-        </section>
+              <div class="settings-actions">
+                <button id="checkAppUpdateBtn" data-i18n="updates.check">Check for app update</button>
+                <button id="installAppUpdateBtn" class="btn-primary" data-i18n="updates.install" disabled>Download app installer</button>
+              </div>
 
-        <section class="settings-group">
-          <h3 data-i18n="settings.schedulerTitle">Automatic checks</h3>
+              <div class="settings-note" id="appUpdateStatus"></div>
+            </div>
+          </details>
 
-          <div class="field-inline">
-            <input id="scheduleEnabled" type="checkbox" />
-            <label for="scheduleEnabled" data-i18n="settings.enableScheduler">Enable automatic checks</label>
-          </div>
+          <details class="settings-group" open>
+            <summary>
+              <span data-i18n="settings.schedulerTitle">Automatic checks</span>
+            </summary>
+            <div class="settings-group-content">
+              <div class="field-inline">
+                <input id="scheduleEnabled" type="checkbox" />
+                <label for="scheduleEnabled" data-i18n="settings.enableScheduler">Enable automatic checks</label>
+              </div>
 
-          <div class="field-row">
-            <label for="scheduleFrequency" data-i18n="settings.frequency">Frequency</label>
-            <select id="scheduleFrequency">
-              <option value="daily" data-i18n="settings.frequencyDaily">Daily</option>
-              <option value="weekly" data-i18n="settings.frequencyWeekly">Weekly</option>
-              <option value="interval" data-i18n="settings.frequencyInterval">Every X hours</option>
-            </select>
-          </div>
+              <div class="field-row">
+                <label for="scheduleFrequency" data-i18n="settings.frequency">Frequency</label>
+                <select id="scheduleFrequency">
+                  <option value="daily" data-i18n="settings.frequencyDaily">Daily</option>
+                  <option value="weekly" data-i18n="settings.frequencyWeekly">Weekly</option>
+                  <option value="interval" data-i18n="settings.frequencyInterval">Every X hours</option>
+                </select>
+              </div>
 
-          <div class="field-row" id="scheduleTimeRow">
-            <label for="scheduleTime" data-i18n="settings.time">Time</label>
-            <input id="scheduleTime" type="time" value="09:00" />
-          </div>
+              <div class="field-row" id="scheduleTimeRow">
+                <label for="scheduleTime" data-i18n="settings.time">Time</label>
+                <input id="scheduleTime" type="time" value="09:00" />
+              </div>
 
-          <div class="field-row hidden" id="scheduleWeekdayRow">
-            <label for="scheduleWeekday" data-i18n="settings.weekday">Weekday</label>
-            <select id="scheduleWeekday">
-              <option value="0" data-i18n="settings.daySunday">Sunday</option>
-              <option value="1" data-i18n="settings.dayMonday">Monday</option>
-              <option value="2" data-i18n="settings.dayTuesday">Tuesday</option>
-              <option value="3" data-i18n="settings.dayWednesday">Wednesday</option>
-              <option value="4" data-i18n="settings.dayThursday">Thursday</option>
-              <option value="5" data-i18n="settings.dayFriday">Friday</option>
-              <option value="6" data-i18n="settings.daySaturday">Saturday</option>
-            </select>
-          </div>
+              <div class="field-row hidden" id="scheduleWeekdayRow">
+                <label for="scheduleWeekday" data-i18n="settings.weekday">Weekday</label>
+                <select id="scheduleWeekday">
+                  <option value="0" data-i18n="settings.daySunday">Sunday</option>
+                  <option value="1" data-i18n="settings.dayMonday">Monday</option>
+                  <option value="2" data-i18n="settings.dayTuesday">Tuesday</option>
+                  <option value="3" data-i18n="settings.dayWednesday">Wednesday</option>
+                  <option value="4" data-i18n="settings.dayThursday">Thursday</option>
+                  <option value="5" data-i18n="settings.dayFriday">Friday</option>
+                  <option value="6" data-i18n="settings.daySaturday">Saturday</option>
+                </select>
+              </div>
 
-          <div class="field-row hidden" id="scheduleIntervalRow">
-            <label for="scheduleIntervalHours" data-i18n="settings.intervalHours">Interval (hours)</label>
-            <input id="scheduleIntervalHours" type="number" min="1" max="168" step="1" value="24" />
-          </div>
+              <div class="field-row hidden" id="scheduleIntervalRow">
+                <label for="scheduleIntervalHours" data-i18n="settings.intervalHours">Interval (hours)</label>
+                <input id="scheduleIntervalHours" type="number" min="1" max="168" step="1" value="24" />
+              </div>
 
-          <div class="settings-actions">
-            <button id="saveScheduleBtn" class="btn-primary" data-i18n="settings.saveScheduler">Save schedule</button>
-          </div>
-          <div class="settings-note" id="scheduleStatus"></div>
-        </section>
+              <div class="settings-actions">
+                <button id="saveScheduleBtn" class="btn-primary" data-i18n="settings.saveScheduler">Save schedule</button>
+              </div>
+              <div class="settings-note" id="scheduleStatus"></div>
+            </div>
+          </details>
 
-        <section class="settings-group">
-          <h3 data-i18n="settings.brewTitle">Homebrew path</h3>
+          <details class="settings-group" open>
+            <summary>
+              <span data-i18n="settings.brewTitle">Homebrew path</span>
+            </summary>
+            <div class="settings-group-content">
+              <div class="field-row">
+                <label for="brewPathInput" data-i18n="settings.brewPath">Custom brew path (optional)</label>
+                <input id="brewPathInput" type="text" placeholder="/opt/homebrew/bin/brew" />
+              </div>
 
-          <div class="field-row">
-            <label for="brewPathInput" data-i18n="settings.brewPath">Custom brew path (optional)</label>
-            <input id="brewPathInput" type="text" placeholder="/opt/homebrew/bin/brew" />
-          </div>
+              <div class="settings-actions">
+                <button id="detectBrewPathBtn" data-i18n="settings.detectBrewPath">Auto-detect path</button>
+                <button id="saveBrewPathBtn" class="btn-primary" data-i18n="settings.saveBrewPath">Save path</button>
+                <button id="clearBrewPathBtn" data-i18n="settings.clearBrewPath">Use automatic only</button>
+              </div>
 
-          <div class="settings-actions">
-            <button id="detectBrewPathBtn" data-i18n="settings.detectBrewPath">Auto-detect path</button>
-            <button id="saveBrewPathBtn" class="btn-primary" data-i18n="settings.saveBrewPath">Save path</button>
-            <button id="clearBrewPathBtn" data-i18n="settings.clearBrewPath">Use automatic only</button>
-          </div>
+              <div class="settings-note" id="brewPathStatus"></div>
+            </div>
+          </details>
 
-          <div class="settings-note" id="brewPathStatus"></div>
-        </section>
-
-        <section class="settings-group">
-          <h3 data-i18n="history.title">Recent package updates</h3>
-          <div class="settings-note" data-i18n="history.help">Shows the latest package updates and when they were performed.</div>
-          <div class="history-list" id="updateHistoryList"></div>
-        </section>
-      </div>
+          <details class="settings-group" open>
+            <summary>
+              <span data-i18n="history.title">Recent package updates</span>
+            </summary>
+            <div class="settings-group-content">
+              <div class="settings-note" data-i18n="history.help">Shows the latest package updates and when they were performed.</div>
+              <div class="history-list" id="updateHistoryList"></div>
+            </div>
+          </details>
+        </div>
+      </details>
     </div>
 
     <div class="tabs">

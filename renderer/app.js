@@ -4,6 +4,7 @@ let snapshot = null;
 let activeTab = 'outdated';
 const TABLE_COLUMN_COUNT = 9;
 const COLUMN_WIDTH_STORAGE_KEY = 'bum_column_widths_v1';
+const APP_UPDATE_META_STORAGE_KEY = 'bum_app_update_meta_v1';
 
 const cardsEl = document.getElementById('cards');
 const tbodyEl = document.getElementById('tbody');
@@ -51,6 +52,7 @@ let busyLoading = false;
 let appUpdateState = null;
 let appUpdateAutoCheckTimer = null;
 let updateHistoryItems = [];
+let appUpdateMeta = loadAppUpdateMeta();
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -70,6 +72,7 @@ function renderAppUpdateStatus() {
   if (!appUpdateState) {
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.ready'));
     installAppUpdateBtn.disabled = true;
+    renderSettingsSummary();
     return;
   }
 
@@ -90,6 +93,36 @@ function renderAppUpdateStatus() {
     }));
     installAppUpdateBtn.disabled = true;
   }
+
+  renderSettingsSummary();
+}
+
+function loadAppUpdateMeta() {
+  try {
+    const raw = localStorage.getItem(APP_UPDATE_META_STORAGE_KEY);
+    if (!raw) {
+      return { status: 'unknown', checkedAt: '' };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      status: String(parsed?.status || 'unknown'),
+      checkedAt: String(parsed?.checkedAt || ''),
+    };
+  } catch {
+    return { status: 'unknown', checkedAt: '' };
+  }
+}
+
+function saveAppUpdateMeta() {
+  localStorage.setItem(APP_UPDATE_META_STORAGE_KEY, JSON.stringify(appUpdateMeta));
+}
+
+function markAppUpdateCheck(status) {
+  appUpdateMeta = {
+    status: String(status || 'unknown'),
+    checkedAt: new Date().toISOString(),
+  };
+  saveAppUpdateMeta();
 }
 
 async function checkAppUpdate({ silent = false } = {}) {
@@ -102,12 +135,15 @@ async function checkAppUpdate({ silent = false } = {}) {
   try {
     const payload = await window.brewApp.checkAppUpdate();
     appUpdateState = payload;
+    markAppUpdateCheck(payload?.updateAvailable ? 'update-available' : 'up-to-date');
     renderAppUpdateStatus();
   } catch (err) {
+    markAppUpdateCheck('error');
     if (!silent) {
       appUpdateState = null;
       setInlineStatus(appUpdateStatusEl, i18n.t('updates.failed', { error: err.message }), true);
     }
+    renderSettingsSummary();
   } finally {
     checkAppUpdateBtn.disabled = false;
   }
@@ -233,11 +269,40 @@ function schedulerPayloadFromForm() {
 
 function schedulerSummaryText(scheduler) {
   if (!scheduler) return i18n.t('settings.loading');
-  const status = scheduler.active ? i18n.t('settings.schedulerActive') : i18n.t('settings.schedulerInactive');
-  const path = scheduler.launch_agent_path
-    ? i18n.t('settings.launchAgentPath', { path: scheduler.launch_agent_path })
-    : '';
-  return [status, path].filter(Boolean).join(' • ');
+
+  const autoText = scheduler.active
+    ? i18n.t('settings.summaryAutoEnabled')
+    : i18n.t('settings.summaryAutoDisabled');
+  const brewText = isBrewPathConfigured()
+    ? i18n.t('settings.summaryBrewPathSet')
+    : i18n.t('settings.summaryBrewPathMissing');
+
+  let appStatusText = i18n.t('settings.summaryAppUnknown');
+  if (appUpdateMeta.status === 'up-to-date') {
+    appStatusText = i18n.t('settings.summaryAppUpToDate');
+  } else if (appUpdateMeta.status === 'update-available') {
+    appStatusText = i18n.t('settings.summaryAppUpdateAvailable');
+  } else if (appUpdateMeta.status === 'error') {
+    appStatusText = i18n.t('settings.summaryAppCheckFailed');
+  }
+
+  const checkedText = appUpdateMeta.checkedAt
+    ? i18n.t('settings.summaryAppUpdateCheckedAt', { date: formatDate(appUpdateMeta.checkedAt) })
+    : i18n.t('settings.summaryAppUpdateNeverChecked');
+
+  return [autoText, brewText, appStatusText, checkedText].join(' • ');
+}
+
+function renderSettingsSummary() {
+  const scheduler = settingsState?.scheduler;
+  if (!scheduler) {
+    settingsSummaryEl.style.color = 'var(--muted)';
+    settingsSummaryEl.textContent = i18n.t('settings.loading');
+    return;
+  }
+
+  settingsSummaryEl.style.color = 'var(--muted)';
+  settingsSummaryEl.textContent = schedulerSummaryText(scheduler);
 }
 
 function updateSchedulerFieldVisibility() {
@@ -272,8 +337,7 @@ function renderSettings() {
   scheduleIntervalHoursEl.value = String(Number(scheduler.interval_hours ?? 24));
 
   brewPathInputEl.value = brewPath;
-  settingsSummaryEl.style.color = 'var(--muted)';
-  settingsSummaryEl.textContent = schedulerSummaryText(scheduler);
+  renderSettingsSummary();
   updateSchedulerFieldVisibility();
   applyActionAvailability();
 }
@@ -325,6 +389,7 @@ async function saveBrewPath() {
     };
     brewPathInputEl.value = String(payload.brew_path || '');
     setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathSaved'));
+    renderSettingsSummary();
     applyActionAvailability();
     await loadState();
   } catch (err) {
