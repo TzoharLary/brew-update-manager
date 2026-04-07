@@ -42,6 +42,7 @@ const detectBrewPathBtn = document.getElementById('detectBrewPathBtn');
 const saveBrewPathBtn = document.getElementById('saveBrewPathBtn');
 const clearBrewPathBtn = document.getElementById('clearBrewPathBtn');
 const brewPathStatusEl = document.getElementById('brewPathStatus');
+const updateHistoryListEl = document.getElementById('updateHistoryList');
 
 let progressPollTimer = null;
 let progressPollInFlight = false;
@@ -49,6 +50,7 @@ let settingsState = null;
 let busyLoading = false;
 let appUpdateState = null;
 let appUpdateAutoCheckTimer = null;
+let updateHistoryItems = [];
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -499,6 +501,85 @@ function formatDate(value) {
   return i18n.formatDate(value);
 }
 
+function findPackageInSnapshot(name, kind) {
+  const list = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
+  return list.find((pkg) => String(pkg?.name || '') === String(name || '') && String(pkg?.kind || '') === String(kind || ''));
+}
+
+function historyStatusMeta(item) {
+  if (!item?.ok) {
+    return { text: i18n.t('history.statusFail'), className: 'fail' };
+  }
+  if (item?.verified_latest) {
+    return { text: i18n.t('history.statusLatest'), className: 'ok' };
+  }
+  return { text: i18n.t('history.statusOk'), className: 'warn' };
+}
+
+function renderUpdateHistory(items = []) {
+  if (!updateHistoryListEl) return;
+
+  updateHistoryListEl.innerHTML = '';
+  if (!Array.isArray(items) || items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'muted small';
+    empty.textContent = i18n.t('history.empty');
+    updateHistoryListEl.appendChild(empty);
+    return;
+  }
+
+  items.slice(0, 40).forEach((item) => {
+    const status = historyStatusMeta(item);
+
+    const root = document.createElement('div');
+    root.className = 'history-item';
+
+    const top = document.createElement('div');
+    top.className = 'history-top';
+
+    const name = document.createElement('div');
+    name.className = 'history-name';
+    name.textContent = String(item?.name || i18n.t('common.unknown'));
+
+    const when = document.createElement('div');
+    when.className = 'history-when';
+    when.textContent = formatDate(item?.timestamp);
+
+    top.appendChild(name);
+    top.appendChild(when);
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+
+    const info = document.createElement('div');
+    const kindText = i18n.t('history.kind', { kind: kindLabel(item?.kind) });
+    const version = String(item?.latest_version || item?.installed_version || i18n.t('common.unknown'));
+    const versionText = i18n.t('history.version', { version });
+    info.textContent = `${kindText} • ${versionText}`;
+
+    const badge = document.createElement('span');
+    badge.className = `history-badge ${status.className}`;
+    badge.textContent = status.text;
+
+    meta.appendChild(info);
+    meta.appendChild(badge);
+
+    root.appendChild(top);
+    root.appendChild(meta);
+    updateHistoryListEl.appendChild(root);
+  });
+}
+
+async function loadUpdateHistory() {
+  try {
+    const payload = await window.brewApp.getUpdateHistory();
+    updateHistoryItems = Array.isArray(payload?.items) ? payload.items : [];
+  } catch {
+    updateHistoryItems = [];
+  }
+  renderUpdateHistory(updateHistoryItems);
+}
+
 function formatDaysOutdated(pkg) {
   if (!pkg?.outdated) {
     return i18n.t('common.dash');
@@ -514,7 +595,7 @@ function kindLabel(kind) {
   if (i18n.lang !== 'he') {
     return value;
   }
-  return value === 'cask' ? 'קאסק' : 'פורמולה';
+  return value === 'cask' ? 'אפליקציית mac' : 'חבילת בנייה';
 }
 
 function packageDescription(pkg) {
@@ -652,6 +733,7 @@ function refreshStaticText() {
   renderCards(snapshot || { counts: {} });
   renderTable();
   renderSettings();
+  renderUpdateHistory(updateHistoryItems);
   renderAppUpdateStatus();
   applyActionAvailability();
 }
@@ -708,6 +790,7 @@ async function updateOne(name, kind) {
 
   clearMessage();
   setLoading(true, 'message.updatingOne', { name });
+  startProgressPolling();
 
   try {
     const res = await window.brewApp.updateOne(name, kind);
@@ -718,13 +801,23 @@ async function updateOne(name, kind) {
 
     if (res?.result?.ok) {
       showMessage(i18n.t('message.updateOneSuccess', { name }));
+
+      const pkg = findPackageInSnapshot(name, kind);
+      const verifiedLatest = !!(pkg && !pkg.outdated);
+      if (verifiedLatest) {
+        const version = pkg.latest_version || pkg.installed_version || i18n.t('common.unknown');
+        alert(i18n.t('message.updateOneLatestConfirmed', { name, version }));
+      }
     } else {
       const detail = res?.result?.stderr || res?.result?.stdout || i18n.t('common.unknown');
       showMessage(i18n.t('message.updateOneFailed', { name, error: detail }), true);
     }
+
+    await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateOneRequestFailed', { error: err.message }), true);
   } finally {
+    stopProgressPolling();
     setLoading(false, 'message.loadingState');
   }
 }
@@ -735,6 +828,7 @@ async function updateAll() {
 
   clearMessage();
   setLoading(true, 'message.updatingAll');
+  startProgressPolling();
   try {
     const res = await window.brewApp.updateAll();
     snapshot = res.snapshot;
@@ -745,9 +839,22 @@ async function updateAll() {
       success: i18n.formatNumber(res.updated_count || 0),
       failed: i18n.formatNumber(res.failed_count || 0),
     }));
+
+    const results = Array.isArray(res?.results) ? res.results : [];
+    const verifiedLatestCount = results.reduce((acc, result) => {
+      if (!result?.ok) return acc;
+      const pkg = findPackageInSnapshot(result?.name, result?.kind);
+      return pkg && !pkg.outdated ? acc + 1 : acc;
+    }, 0);
+    if (verifiedLatestCount > 0) {
+      alert(i18n.t('message.updateAllLatestConfirmed', { count: i18n.formatNumber(verifiedLatestCount) }));
+    }
+
+    await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateAllFailed', { error: err.message }), true);
   } finally {
+    stopProgressPolling();
     setLoading(false, 'message.loadingState');
   }
 }
@@ -855,6 +962,7 @@ refreshStaticText();
 
 async function initializeApp() {
   await loadSettings();
+  await loadUpdateHistory();
   applyActionAvailability();
   await loadState();
   renderAppUpdateStatus();

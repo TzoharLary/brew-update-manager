@@ -327,6 +327,7 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('state:get', async () => fetchJson(`${SERVICE_BASE}/api/state`));
 ipcMain.handle('progress:get', async () => fetchJson(`${SERVICE_BASE}/api/progress`));
+ipcMain.handle('updates:history:get', async () => fetchJson(`${SERVICE_BASE}/api/update-history`));
 ipcMain.handle('settings:get', async () => fetchJson(`${SERVICE_BASE}/api/settings`));
 ipcMain.handle('settings:scheduler:update', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/settings/scheduler`, {
   method: 'POST',

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('brewApp', {
   getState: () => ipcRenderer.invoke('state:get'),
   getProgress: () => ipcRenderer.invoke('progress:get'),
+  getUpdateHistory: () => ipcRenderer.invoke('updates:history:get'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateScheduler: (scheduler) => ipcRenderer.invoke('settings:scheduler:update', { scheduler }),
   updateBrewPath: (brewPath) => ipcRenderer.invoke('settings:brew-path:update', { brew_path: brewPath }),

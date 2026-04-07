@@ -55,6 +55,7 @@ SERVICE_LOG_FILE = LOG_DIR / "brew-service.log"
 RELEASE_CACHE_FILE = CACHE_DIR / "release-dates.json"
 DESCRIPTION_HE_CACHE_FILE = CACHE_DIR / "description-he.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+UPDATE_HISTORY_FILE = DATA_DIR / "update-history.json"
 OPEN_APP_SCRIPT = PROJECT_ROOT / "tools" / "open-brew-updates-app.sh"
 
 LAUNCH_AGENT_LABEL = "com.local.brew-outdated-check"
@@ -114,6 +115,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 VALID_SCHEDULER_FREQUENCIES = {"daily", "weekly", "interval"}
+MAX_UPDATE_HISTORY_ITEMS = 100
 
 
 @dataclass
@@ -359,6 +361,43 @@ def save_settings(settings: dict[str, Any]) -> None:
     normalized["brew_path"] = str(settings.get("brew_path") or "").strip()
     normalized["scheduler"] = normalize_scheduler_payload(settings.get("scheduler"))
     atomic_write_json(SETTINGS_FILE, normalized)
+
+
+def load_update_history() -> list[dict[str, Any]]:
+    raw = read_json(UPDATE_HISTORY_FILE) or {}
+    items = raw.get("items") if isinstance(raw, dict) else []
+    if not isinstance(items, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "timestamp": str(item.get("timestamp") or "").strip(),
+                "name": str(item.get("name") or "").strip(),
+                "kind": str(item.get("kind") or "").strip(),
+                "ok": bool(item.get("ok", False)),
+                "verified_latest": bool(item.get("verified_latest", False)),
+                "installed_version": str(item.get("installed_version") or "").strip(),
+                "latest_version": str(item.get("latest_version") or "").strip(),
+            }
+        )
+    return out
+
+
+def save_update_history(items: list[dict[str, Any]]) -> None:
+    ensure_dirs()
+    atomic_write_json(UPDATE_HISTORY_FILE, {"items": items[:MAX_UPDATE_HISTORY_ITEMS]})
+
+
+def append_update_history_entries(entries: list[dict[str, Any]]) -> None:
+    if not entries:
+        return
+    current = load_update_history()
+    merged = list(entries) + current
+    save_update_history(merged)
 
 
 def detect_brew_candidates() -> list[str]:
@@ -1570,15 +1609,113 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     }
 
 
-def run_update_all() -> dict[str, Any]:
+def package_from_snapshot(snapshot: dict[str, Any], name: str, kind: str) -> dict[str, Any] | None:
+    for pkg in snapshot.get("packages", []) if isinstance(snapshot, dict) else []:
+        if str(pkg.get("name") or "") == str(name or "") and str(pkg.get("kind") or "") == str(kind or ""):
+            return pkg
+    return None
+
+
+def history_entries_from_results(results: list[dict[str, Any]], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for item in results:
+        name = str(item.get("name") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+        if not name or not kind:
+            continue
+
+        pkg = package_from_snapshot(snapshot, name, kind) or {}
+        latest_version = str(pkg.get("latest_version") or "")
+        installed_version = str(pkg.get("installed_version") or "")
+        verified_latest = bool(item.get("ok") and pkg and not bool(pkg.get("outdated")))
+
+        entries.append(
+            {
+                "timestamp": now_iso(),
+                "name": name,
+                "kind": kind,
+                "ok": bool(item.get("ok", False)),
+                "verified_latest": verified_latest,
+                "installed_version": installed_version,
+                "latest_version": latest_version,
+            }
+        )
+
+    return entries
+
+
+def run_update_all(track_progress: bool = False) -> dict[str, Any]:
     state = read_json(STATE_FILE) or compute_snapshot(run_brew_update=False)
     outdated = [pkg for pkg in state.get("packages", []) if pkg.get("outdated")]
+    total = len(outdated)
+
+    if track_progress:
+        reset_check_progress_for_run()
+        set_check_progress(
+            phase="brew_update",
+            message="Starting package updates",
+            done=0,
+            total=total,
+            eta_seconds=None,
+            current_package="",
+        )
 
     results: list[dict[str, Any]] = []
-    for pkg in outdated:
-        results.append(run_upgrade(str(pkg.get("name")), str(pkg.get("kind"))))
+    started = read_check_progress().get("started_at") if track_progress else None
+
+    for idx, pkg in enumerate(outdated, start=1):
+        name = str(pkg.get("name") or "")
+        kind = str(pkg.get("kind") or "")
+
+        if track_progress:
+            eta = estimate_eta_seconds(started, idx - 1, total)
+            set_check_progress(
+                phase="brew_update",
+                message=f"Updating {name}",
+                done=idx - 1,
+                total=total,
+                eta_seconds=eta,
+                current_package=f"{kind}:{name}",
+            )
+
+        result = run_upgrade(name, kind)
+        results.append(result)
+
+        if track_progress:
+            eta = estimate_eta_seconds(started, idx, total)
+            set_check_progress(
+                done=idx,
+                total=total,
+                eta_seconds=eta,
+                current_package=f"{kind}:{name}",
+            )
+
+    if track_progress:
+        set_check_progress(
+            phase="preparing",
+            message="Refreshing package inventory",
+            eta_seconds=None,
+            current_package="",
+        )
 
     refreshed = compute_snapshot(run_brew_update=False)
+
+    entries = history_entries_from_results(results, refreshed)
+    append_update_history_entries(entries)
+
+    if track_progress:
+        set_check_progress(
+            running=False,
+            phase="completed",
+            message="All package updates completed",
+            done=total,
+            total=total,
+            eta_seconds=0,
+            current_package="",
+            error=None,
+            completed_at=now_iso(),
+        )
+
     return {
         "ok": all(item.get("ok") for item in results) if results else True,
         "updated_count": sum(1 for item in results if item.get("ok")),
@@ -1737,6 +1874,19 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.path == "/api/update-history":
+            try:
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "items": load_update_history(),
+                    },
+                )
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": "update_history_unavailable", "detail": str(exc)})
+            return
+
         self._send_json(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self):
@@ -1805,8 +1955,62 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
             try:
                 def _operation():
+                    reset_check_progress_for_run()
+                    set_check_progress(
+                        phase="brew_update",
+                        message=f"Updating {name}",
+                        done=0,
+                        total=1,
+                        eta_seconds=None,
+                        current_package=f"{kind}:{name}",
+                        error=None,
+                    )
+
                     result = run_upgrade(name, kind)
+
+                    set_check_progress(
+                        done=1,
+                        total=1,
+                        eta_seconds=0,
+                        current_package=f"{kind}:{name}",
+                    )
+
+                    set_check_progress(
+                        phase="preparing",
+                        message="Refreshing package inventory",
+                        current_package="",
+                    )
+
                     snapshot = compute_snapshot(run_brew_update=False)
+
+                    entries = history_entries_from_results([result], snapshot)
+                    append_update_history_entries(entries)
+
+                    if result.get("ok"):
+                        set_check_progress(
+                            running=False,
+                            phase="completed",
+                            message=f"Update completed for {name}",
+                            done=1,
+                            total=1,
+                            eta_seconds=0,
+                            current_package="",
+                            error=None,
+                            completed_at=now_iso(),
+                        )
+                    else:
+                        set_check_progress(
+                            running=False,
+                            phase="error",
+                            message=f"Update failed for {name}",
+                            done=1,
+                            total=1,
+                            eta_seconds=0,
+                            current_package="",
+                            error=str(result.get("stderr") or result.get("stdout") or "update failed"),
+                            completed_at=now_iso(),
+                        )
+
                     return {"result": result, "snapshot": snapshot}
 
                 payload = run_exclusive(f"update_one:{kind}:{name}", _operation)
@@ -1819,7 +2023,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/update-all":
             try:
-                payload = run_exclusive("update_all", run_update_all)
+                payload = run_exclusive("update_all", lambda: run_update_all(track_progress=True))
                 self._send_json(200, payload)
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": CURRENT_OPERATION})

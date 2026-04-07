@@ -251,6 +251,79 @@
       white-space: pre-wrap;
     }
 
+    .history-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+      max-height: 240px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .history-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfdff;
+      padding: 8px 10px;
+    }
+
+    .history-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+    }
+
+    .history-name {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .history-when {
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .history-meta {
+      color: var(--muted);
+      font-size: 0.76rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .history-badge {
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      border: 1px solid var(--border);
+      background: #f3f7fd;
+      color: #395377;
+      white-space: nowrap;
+    }
+
+    .history-badge.ok {
+      border-color: #c9e8d8;
+      background: #edf9f1;
+      color: #20784f;
+    }
+
+    .history-badge.warn {
+      border-color: #f0d7ad;
+      background: #fff7e7;
+      color: #9b6300;
+    }
+
+    .history-badge.fail {
+      border-color: #f3c7cf;
+      background: #fff1f4;
+      color: #b42836;
+    }
+
     .hidden {
       display: none !important;
     }
@@ -663,6 +736,12 @@
           </div>
 
           <div class="settings-note" id="brewPathStatus"></div>
+        </section>
+
+        <section class="settings-group">
+          <h3 data-i18n="history.title">Recent package updates</h3>
+          <div class="settings-note" data-i18n="history.help">Shows the latest package updates and when they were performed.</div>
+          <div class="history-list" id="updateHistoryList"></div>
         </section>
       </div>
     </div>
