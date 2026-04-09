@@ -97,6 +97,12 @@ Artifacts include:
 - `update-manifest.json`
 - `update-checksums.txt`
 
+Release builds now run strict delta round-trip validation by default (`STRICT_DELTA_VALIDATION=true`):
+
+- each generated delta is applied to the previous app bundle in a staging area
+- the resulting app bundle tree is compared to the new full bundle
+- if any architecture fails validation, the release build fails (instead of publishing a risky delta)
+
 > Note: current build configuration is for MVP unsigned distribution. For broad public distribution, add Apple signing + notarization in the release pipeline.
 
 ## Install from GitHub Release (for end users)

@@ -13,6 +13,9 @@ const DIST_DIR = path.join(ROOT, 'dist');
 const MANIFEST_NAME = 'update-manifest.json';
 const CHECKSUMS_NAME = 'update-checksums.txt';
 const REPO = process.env.UPDATE_REPO || 'tzoharlary/brew-update-manager';
+const STRICT_DELTA_VALIDATION = String(process.env.STRICT_DELTA_VALIDATION || 'true').toLowerCase() !== 'false';
+
+const { applyDeltaArchive } = require(path.join(ROOT, 'electron', 'app-updater'));
 
 function normalizeVersion(raw) {
   return String(raw || '').trim().replace(/^v/i, '').split('-')[0];
@@ -41,6 +44,24 @@ function safeDetach(mountPoint) {
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function ensureSafeRelativePath(rawPath, context = 'path') {
+  const normalizedInput = String(rawPath || '').trim().replace(/\\/g, '/');
+  if (!normalizedInput) {
+    throw new Error(`Delta ${context} is empty`);
+  }
+
+  if (path.posix.isAbsolute(normalizedInput)) {
+    throw new Error(`Delta ${context} must be relative: ${normalizedInput}`);
+  }
+
+  const normalized = path.posix.normalize(normalizedInput);
+  if (normalized === '.' || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw new Error(`Delta ${context} is unsafe: ${normalizedInput}`);
+  }
+
+  return normalized;
 }
 
 function readJson(filePath) {
@@ -205,7 +226,9 @@ function copyAppFromDmg(dmgPath, workRoot, arch) {
       throw new Error(`No .app bundle found inside ${path.basename(dmgPath)}`);
     }
 
-    const target = path.join(workRoot, `${arch}-current.app`);
+    const archWorkRoot = path.join(workRoot, `current-${arch}`);
+    ensureDir(archWorkRoot);
+    const target = path.join(archWorkRoot, path.basename(appPath));
     fs.rmSync(target, { recursive: true, force: true });
     fs.cpSync(appPath, target, { recursive: true, force: true, dereference: false });
     return target;
@@ -215,6 +238,40 @@ function copyAppFromDmg(dmgPath, workRoot, arch) {
     }
     fs.rmSync(mountPoint, { recursive: true, force: true });
   }
+}
+
+function copyAppBundle(sourceAppPath, workRoot, scopeLabel) {
+  if (!fs.existsSync(sourceAppPath)) {
+    throw new Error(`App bundle path does not exist: ${sourceAppPath}`);
+  }
+
+  const scopedRoot = path.join(workRoot, scopeLabel);
+  ensureDir(scopedRoot);
+
+  const target = path.join(scopedRoot, path.basename(sourceAppPath));
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.cpSync(sourceAppPath, target, { recursive: true, force: true, dereference: false });
+  return target;
+}
+
+function findCurrentBuildAppByArch(arch) {
+  const candidateDirs = arch === 'arm64'
+    ? ['mac-arm64', 'mac']
+    : ['mac', 'mac-arm64'];
+
+  for (const dirName of candidateDirs) {
+    const fullDir = path.join(DIST_DIR, dirName);
+    if (!fs.existsSync(fullDir) || !fs.lstatSync(fullDir).isDirectory()) {
+      continue;
+    }
+
+    const appPath = findFirstAppBundle(fullDir);
+    if (appPath) {
+      return appPath;
+    }
+  }
+
+  return null;
 }
 
 function createTarGz(sourcePath, destinationPath) {
@@ -263,9 +320,165 @@ async function collectTreeEntries(rootPath, rel = '', map = new Map()) {
   return map;
 }
 
+function describeEntry(entry) {
+  if (!entry) return 'missing';
+  if (entry.type === 'file') return `file(hash=${entry.hash})`;
+  if (entry.type === 'symlink') return `symlink(target=${entry.link})`;
+  return entry.type;
+}
+
+function toPosixPath(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
+function resolveSymlinkEndpoint(entriesMap, relPath, linkValue, maxDepth = 32) {
+  const relPosix = toPosixPath(relPath);
+  const linkPosix = toPosixPath(linkValue);
+
+  if (!linkPosix) {
+    return relPosix;
+  }
+
+  if (path.posix.isAbsolute(linkPosix)) {
+    return `abs:${path.posix.normalize(linkPosix)}`;
+  }
+
+  let current = path.posix.normalize(path.posix.join(path.posix.dirname(relPosix), linkPosix));
+  const visited = new Set([relPosix]);
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (visited.has(current)) {
+      return `cycle:${current}`;
+    }
+    visited.add(current);
+
+    const targetEntry = entriesMap.get(current);
+    if (!targetEntry || targetEntry.type !== 'symlink') {
+      return current;
+    }
+
+    const targetLink = toPosixPath(targetEntry.link || '');
+    if (!targetLink) {
+      return current;
+    }
+
+    if (path.posix.isAbsolute(targetLink)) {
+      return `abs:${path.posix.normalize(targetLink)}`;
+    }
+
+    current = path.posix.normalize(path.posix.join(path.posix.dirname(current), targetLink));
+  }
+
+  return `depth:${current}`;
+}
+
+function symlinkEntriesEquivalent(relPath, expectedEntry, actualEntry, expectedMap, actualMap) {
+  const expectedLink = toPosixPath(expectedEntry.link || '');
+  const actualLink = toPosixPath(actualEntry.link || '');
+  if (expectedLink === actualLink) {
+    return true;
+  }
+
+  const expectedEndpoint = resolveSymlinkEndpoint(expectedMap, relPath, expectedLink);
+  const actualEndpoint = resolveSymlinkEndpoint(actualMap, relPath, actualLink);
+  if (expectedEndpoint === actualEndpoint) {
+    return true;
+  }
+
+  const expectedTarget = expectedMap.get(expectedEndpoint);
+  const actualTarget = actualMap.get(actualEndpoint);
+  if (!expectedTarget || !actualTarget || expectedTarget.type !== actualTarget.type) {
+    return false;
+  }
+
+  if (expectedTarget.type === 'file') {
+    return expectedTarget.hash === actualTarget.hash;
+  }
+
+  if (expectedTarget.type === 'dir') {
+    return true;
+  }
+
+  if (expectedTarget.type === 'symlink') {
+    return toPosixPath(expectedTarget.link || '') === toPosixPath(actualTarget.link || '');
+  }
+
+  return false;
+}
+
+function compareEntryMaps(expectedMap, actualMap) {
+  const mismatches = [];
+
+  for (const [relPath, expected] of expectedMap.entries()) {
+    const actual = actualMap.get(relPath);
+    if (!actual) {
+      mismatches.push(`${relPath}: missing in applied output`);
+      continue;
+    }
+
+    if (expected.type !== actual.type) {
+      mismatches.push(`${relPath}: type mismatch expected=${describeEntry(expected)} actual=${describeEntry(actual)}`);
+      continue;
+    }
+
+    if (expected.type === 'file' && expected.hash !== actual.hash) {
+      mismatches.push(`${relPath}: file hash mismatch`);
+      continue;
+    }
+
+    if (expected.type === 'symlink' && !symlinkEntriesEquivalent(relPath, expected, actual, expectedMap, actualMap)) {
+      mismatches.push(`${relPath}: symlink target mismatch expected=${expected.link} actual=${actual.link}`);
+    }
+  }
+
+  for (const relPath of actualMap.keys()) {
+    if (!expectedMap.has(relPath)) {
+      mismatches.push(`${relPath}: unexpected entry in applied output`);
+    }
+  }
+
+  return mismatches;
+}
+
+async function validateDeltaRoundTrip({
+  fromVersion,
+  toVersion,
+  arch,
+  previousAppPath,
+  currentAppPath,
+  deltaArchivePath,
+  workspace,
+}) {
+  const validationRoot = path.join(workspace, `validation-${arch}`);
+  fs.rmSync(validationRoot, { recursive: true, force: true });
+  ensureDir(validationRoot);
+
+  const outputAppPath = path.join(validationRoot, path.basename(previousAppPath));
+  applyDeltaArchive({
+    sourceAppPath: previousAppPath,
+    deltaArchivePath,
+    outputAppPath,
+    workDir: path.join(validationRoot, 'work'),
+    expectedFromVersion: fromVersion,
+    expectedToVersion: toVersion,
+    expectedArch: arch,
+  });
+
+  const [expectedMap, actualMap] = await Promise.all([
+    collectTreeEntries(currentAppPath),
+    collectTreeEntries(outputAppPath),
+  ]);
+
+  const mismatches = compareEntryMaps(expectedMap, actualMap);
+  if (mismatches.length > 0) {
+    throw new Error(`Round-trip validation mismatch (${mismatches.length}): ${mismatches.slice(0, 5).join('; ')}`);
+  }
+}
+
 function copyDeltaEntry(sourceRoot, targetRoot, relPath, type) {
-  const src = path.join(sourceRoot, relPath);
-  const dst = path.join(targetRoot, relPath);
+  const safeRelPath = ensureSafeRelativePath(relPath, 'entry path');
+  const src = path.join(sourceRoot, safeRelPath);
+  const dst = path.join(targetRoot, safeRelPath);
   ensureDir(path.dirname(dst));
 
   if (type === 'dir') {
@@ -357,22 +570,38 @@ async function buildDeltaArchive({
     copyDeltaEntry(currentAppPath, filesDir, item.relPath, item.type);
   }
 
+  const normalizedRemovedPaths = removedPaths
+    .map((relPath) => ensureSafeRelativePath(relPath, 'removed path'))
+    .sort((a, b) => b.length - a.length);
+
   const meta = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     fromVersion,
     toVersion,
     arch,
-    removedPaths: removedPaths.sort((a, b) => b.length - a.length),
+    removedPaths: normalizedRemovedPaths,
     changedCount: seen.size,
   };
 
   fs.writeFileSync(path.join(stageDir, 'meta.json'), JSON.stringify(meta, null, 2));
   runOrThrow('tar', ['-czf', outputPath, '-C', stageDir, '.']);
 
+  if (STRICT_DELTA_VALIDATION) {
+    await validateDeltaRoundTrip({
+      fromVersion,
+      toVersion,
+      arch,
+      previousAppPath: resolvedPreviousAppPath,
+      currentAppPath,
+      deltaArchivePath: outputPath,
+      workspace,
+    });
+  }
+
   return {
     changedCount: seen.size,
-    removedCount: removedPaths.length,
+    removedCount: normalizedRemovedPaths.length,
   };
 }
 
@@ -414,10 +643,19 @@ async function main() {
   const dmgRecords = {};
 
   console.log(`[update-manifest] Building updater assets for v${version}`);
+  console.log(`[update-manifest] Strict delta validation: ${STRICT_DELTA_VALIDATION ? 'enabled' : 'disabled'}`);
 
   for (const arch of ['x64', 'arm64']) {
     const dmg = dmgByArch[arch];
-    const appPath = copyAppFromDmg(dmg.path, tempRoot, arch);
+    const buildAppPath = findCurrentBuildAppByArch(arch);
+    const appPath = buildAppPath
+      ? copyAppBundle(buildAppPath, tempRoot, `current-${arch}-build`)
+      : copyAppFromDmg(dmg.path, tempRoot, arch);
+
+    if (buildAppPath) {
+      console.log(`[update-manifest] ${arch}: using build app bundle ${path.relative(ROOT, buildAppPath)}`);
+    }
+
     currentApps[arch] = appPath;
 
     const fullName = canonicalAssetName(dmg.name.replace(/\.dmg$/i, '-full.tar.gz'));
@@ -473,6 +711,8 @@ async function main() {
   const deltaByArch = { x64: [], arm64: [] };
 
   if (previousLatest && previousLatest !== version) {
+    const deltaValidationErrors = [];
+
     for (const arch of ['x64', 'arm64']) {
       let sourceType = '';
       let sourceUrl = '';
@@ -494,6 +734,9 @@ async function main() {
 
       if (!sourceType || !sourceUrl) {
         console.log(`[update-manifest] ${arch}: no usable previous asset source, skipping delta`);
+        if (STRICT_DELTA_VALIDATION) {
+          deltaValidationErrors.push(`${arch}: no usable previous asset source`);
+        }
         continue;
       }
 
@@ -547,6 +790,7 @@ async function main() {
 
         const deltaRecord = {
           fromVersion: previousLatest,
+          toVersion: version,
           ...assetRecord(tag, deltaName, deltaSha, deltaSize, 'tar.gz'),
         };
 
@@ -556,7 +800,14 @@ async function main() {
         console.log(`[update-manifest] ${arch}: delta ${deltaName} (${deltaInfo.changedCount} changed, ${deltaInfo.removedCount} removed, source=${sourceType})`);
       } catch (error) {
         console.warn(`[update-manifest] ${arch}: delta generation skipped: ${error.message}`);
+        if (STRICT_DELTA_VALIDATION) {
+          deltaValidationErrors.push(`${arch}: ${error.message}`);
+        }
       }
+    }
+
+    if (STRICT_DELTA_VALIDATION && deltaValidationErrors.length > 0) {
+      throw new Error(`Strict delta validation failed for ${previousLatest} -> ${version}: ${deltaValidationErrors.join(' | ')}`);
     }
   } else {
     console.log('[update-manifest] No previous version found. Delta assets skipped for this release.');

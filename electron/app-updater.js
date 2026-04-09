@@ -8,6 +8,7 @@ const { spawn, spawnSync } = require('node:child_process');
 
 const UPDATE_MANIFEST_NAME = 'update-manifest.json';
 const DEFAULT_MIN_SUPPORTED_VERSION = '1.0.0';
+const DELTA_META_SCHEMA_VERSION = 1;
 
 function nowIso() {
   return new Date().toISOString();
@@ -73,6 +74,53 @@ function executableExists(filePath) {
   } catch {
     return false;
   }
+}
+
+function resolveBundleExecutableName(appBundlePath) {
+  const infoPlistPath = path.join(appBundlePath, 'Contents', 'Info.plist');
+  if (fs.existsSync(infoPlistPath)) {
+    try {
+      const plistRes = runCommandOrThrow('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleExecutable', infoPlistPath]);
+      const value = String(plistRes.stdout || '').trim();
+      if (value) {
+        return value;
+      }
+    } catch {
+      // Ignore plist lookup failure and fall back to bundle-name based detection.
+    }
+  }
+
+  return path.basename(appBundlePath, '.app');
+}
+
+function resolveBundleExecutablePath(appBundlePath) {
+  const macOsDir = path.join(appBundlePath, 'Contents', 'MacOS');
+  const preferredName = resolveBundleExecutableName(appBundlePath);
+  const preferredPath = path.join(macOsDir, preferredName);
+  if (executableExists(preferredPath)) {
+    return preferredPath;
+  }
+
+  if (!fs.existsSync(macOsDir)) {
+    return preferredPath;
+  }
+
+  const candidates = fs.readdirSync(macOsDir)
+    .map((name) => path.join(macOsDir, name))
+    .filter((candidate) => {
+      try {
+        const st = fs.lstatSync(candidate);
+        return st.isFile() && executableExists(candidate);
+      } catch {
+        return false;
+      }
+    });
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  return preferredPath;
 }
 
 function currentAppBundlePath() {
@@ -261,6 +309,64 @@ function loadJsonSafe(filePath) {
   }
 }
 
+function ensureSafeRelativePath(rawPath, context = 'path') {
+  const normalizedInput = String(rawPath || '').trim().replace(/\\/g, '/');
+  if (!normalizedInput) {
+    throw new Error(`Delta ${context} is empty`);
+  }
+
+  if (path.posix.isAbsolute(normalizedInput)) {
+    throw new Error(`Delta ${context} must be relative: ${normalizedInput}`);
+  }
+
+  const normalized = path.posix.normalize(normalizedInput);
+  if (normalized === '.' || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw new Error(`Delta ${context} is unsafe: ${normalizedInput}`);
+  }
+
+  return normalized;
+}
+
+function validateDeltaMeta(meta, {
+  expectedFromVersion = '',
+  expectedToVersion = '',
+  expectedArch = '',
+} = {}) {
+  if (!meta || typeof meta !== 'object') {
+    throw new Error('Delta package meta.json is missing or invalid');
+  }
+
+  const schemaVersion = Number(meta.schemaVersion);
+  if (!Number.isInteger(schemaVersion) || schemaVersion !== DELTA_META_SCHEMA_VERSION) {
+    throw new Error(`Unsupported delta schema version: ${meta.schemaVersion}`);
+  }
+
+  if (!Array.isArray(meta.removedPaths)) {
+    throw new Error('Delta package removedPaths is missing or invalid');
+  }
+
+  if (expectedFromVersion) {
+    const fromVersion = normalizeVersion(meta.fromVersion || '');
+    if (fromVersion !== normalizeVersion(expectedFromVersion)) {
+      throw new Error(`Delta fromVersion mismatch (expected ${expectedFromVersion}, got ${meta.fromVersion || 'unknown'})`);
+    }
+  }
+
+  if (expectedToVersion) {
+    const toVersion = normalizeVersion(meta.toVersion || '');
+    if (toVersion && toVersion !== normalizeVersion(expectedToVersion)) {
+      throw new Error(`Delta toVersion mismatch (expected ${expectedToVersion}, got ${meta.toVersion || 'unknown'})`);
+    }
+  }
+
+  if (expectedArch) {
+    const metaArch = String(meta.arch || '').trim().toLowerCase();
+    if (metaArch && metaArch !== String(expectedArch).trim().toLowerCase()) {
+      throw new Error(`Delta arch mismatch (expected ${expectedArch}, got ${meta.arch || 'unknown'})`);
+    }
+  }
+}
+
 function findFirstAppBundle(rootDir) {
   const entries = fs.readdirSync(rootDir, { withFileTypes: true });
   const appEntry = entries.find((entry) => entry.isDirectory() && entry.name.endsWith('.app'));
@@ -337,7 +443,15 @@ function mergeDeltaTree(sourceRoot, targetRoot) {
   }
 }
 
-function applyDeltaArchive({ sourceAppPath, deltaArchivePath, outputAppPath, workDir }) {
+function applyDeltaArchive({
+  sourceAppPath,
+  deltaArchivePath,
+  outputAppPath,
+  workDir,
+  expectedFromVersion = '',
+  expectedToVersion = '',
+  expectedArch = '',
+}) {
   if (!fs.existsSync(sourceAppPath)) {
     throw new Error(`Current app bundle not found at ${sourceAppPath}`);
   }
@@ -352,9 +466,11 @@ function applyDeltaArchive({ sourceAppPath, deltaArchivePath, outputAppPath, wor
   const metaPath = path.join(deltaExtractDir, 'meta.json');
   const filesRoot = path.join(deltaExtractDir, 'files');
   const meta = loadJsonSafe(metaPath);
-  if (!meta || !Array.isArray(meta.removedPaths)) {
-    throw new Error('Delta package meta.json is missing or invalid');
-  }
+  validateDeltaMeta(meta, {
+    expectedFromVersion,
+    expectedToVersion,
+    expectedArch,
+  });
 
   if (fs.existsSync(filesRoot)) {
     mergeDeltaTree(filesRoot, outputAppPath);
@@ -362,13 +478,14 @@ function applyDeltaArchive({ sourceAppPath, deltaArchivePath, outputAppPath, wor
 
   const removed = [...meta.removedPaths].sort((a, b) => String(b).length - String(a).length);
   for (const relPath of removed) {
-    const target = path.join(outputAppPath, relPath);
+    const safeRelPath = ensureSafeRelativePath(relPath, 'removed path');
+    const target = path.join(outputAppPath, safeRelPath);
     if (fs.existsSync(target)) {
       fs.rmSync(target, { recursive: true, force: true });
     }
   }
 
-  const executablePath = path.join(outputAppPath, 'Contents', 'MacOS', path.basename(outputAppPath, '.app'));
+  const executablePath = resolveBundleExecutablePath(outputAppPath);
   if (!executableExists(executablePath)) {
     throw new Error('Delta apply completed but resulting app bundle executable is missing');
   }
@@ -674,7 +791,14 @@ function createAppUpdater({ app, repo }) {
     return stagedApp;
   }
 
-  async function prepareDeltaStagedApp({ deltaAsset, stageRoot, onProgress }) {
+  async function prepareDeltaStagedApp({
+    deltaAsset,
+    stageRoot,
+    onProgress,
+    expectedFromVersion = '',
+    expectedToVersion = '',
+    expectedArch = '',
+  }) {
     const sourceAppPath = currentAppBundlePath();
     if (!sourceAppPath) {
       throw new Error('Current app bundle path is unavailable for delta apply');
@@ -712,6 +836,9 @@ function createAppUpdater({ app, repo }) {
       deltaArchivePath,
       outputAppPath: stagedAppPath,
       workDir: path.join(stageRoot, 'delta-work'),
+      expectedFromVersion,
+      expectedToVersion,
+      expectedArch,
     });
 
     if (onProgress) {
@@ -737,6 +864,9 @@ function createAppUpdater({ app, repo }) {
             deltaAsset: checkPayload.deltaAsset,
             stageRoot,
             onProgress,
+            expectedFromVersion: checkPayload.currentVersion,
+            expectedToVersion: checkPayload.latestVersion,
+            expectedArch: checkPayload.arch,
           });
           modeUsed = 'delta';
           log('delta_apply_success', {
@@ -924,6 +1054,7 @@ function createAppUpdater({ app, repo }) {
 }
 
 module.exports = {
+  applyDeltaArchive,
   createAppUpdater,
   normalizeVersion,
   parseSemver,

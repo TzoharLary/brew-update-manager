@@ -36,6 +36,7 @@ jobs:
         env:
           UPDATE_REPO: tzoharlary/brew-update-manager
           UPDATE_TAG: ${{ github.ref_name }}
+          STRICT_DELTA_VALIDATION: 'true'
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
