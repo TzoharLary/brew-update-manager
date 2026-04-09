@@ -311,6 +311,63 @@
       white-space: pre-wrap;
     }
 
+    .app-update-progress {
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfdff;
+      padding: 9px 10px;
+      display: none;
+      gap: 8px;
+    }
+
+    .app-update-progress.visible {
+      display: grid;
+    }
+
+    .app-update-progress-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .app-update-progress-phase {
+      color: var(--text);
+      font-weight: 640;
+    }
+
+    .app-update-progress-percent {
+      font-variant-numeric: tabular-nums;
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    .app-update-progress-track {
+      height: 7px;
+      border-radius: 999px;
+      background: #e5edf8;
+      overflow: hidden;
+    }
+
+    .app-update-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6fa0ff, #2e72f0);
+      transition: width 140ms ease;
+    }
+
+    .app-update-progress-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
     .history-list {
       display: grid;
       gap: 8px;
@@ -515,6 +572,37 @@
       overflow: hidden;
       text-overflow: ellipsis;
       padding-inline-end: 10px;
+    }
+
+    thead th.sortable {
+      cursor: pointer;
+    }
+
+    thead th.sortable .th-label {
+      padding-inline-end: 18px;
+    }
+
+    thead th.sortable .th-label::after {
+      content: attr(data-sort-indicator);
+      color: #7b8da5;
+      font-size: 0.7rem;
+      font-weight: 700;
+    }
+
+    thead th.sortable:hover {
+      color: #425670;
+      background: rgba(240, 246, 255, 0.96);
+    }
+
+    thead th.sorted-asc,
+    thead th.sorted-desc {
+      color: var(--primary);
+      background: rgba(233, 242, 255, 0.98);
+    }
+
+    thead th.sorted-asc .th-label::after,
+    thead th.sorted-desc .th-label::after {
+      color: var(--primary);
     }
 
     .col-resizer {
@@ -785,6 +873,17 @@
               </div>
 
               <div class="settings-note" id="appUpdateStatus"></div>
+
+              <div class="app-update-progress" id="appUpdateProgressBox">
+                <div class="app-update-progress-top">
+                  <span class="app-update-progress-phase" id="appUpdateProgressPhase">—</span>
+                  <span class="app-update-progress-percent" id="appUpdateProgressPercent">0%</span>
+                </div>
+                <div class="app-update-progress-track">
+                  <div class="app-update-progress-fill" id="appUpdateProgressFill"></div>
+                </div>
+                <div class="app-update-progress-meta" id="appUpdateProgressMeta"></div>
+              </div>
             </div>
           </details>
 

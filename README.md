@@ -4,7 +4,12 @@ Electron desktop app for managing Homebrew updates locally on macOS.
 
 ## Distribution goal
 
-The project is prepared to be published as a GitHub repository with downloadable macOS installer artifacts (`.dmg`) from Releases.
+The project is prepared to be published as a GitHub repository with downloadable macOS installer artifacts from Releases, including:
+
+- macOS installers (`.dmg`) for manual install
+- full in-app updater packages (`-full.tar.gz`)
+- optional differential updater packages (`-delta.tar.gz`)
+- `update-manifest.json` + `update-checksums.txt`
 
 ## Highlights
 
@@ -71,18 +76,24 @@ No installation-time prompt is required; this is configurable later from inside 
 1. `npm install`
 2. `npm run build` (quick local build, current Mac architecture only, DMG)
 
-For a full release build (both architectures):
+For a full release build (both architectures + updater assets):
 
 - `npm run build:release`
 
 Both build commands automatically clean `dist/` first, so older version artifacts are removed before new ones are created.
 
-Release artifacts are created under `dist/` as `.dmg` for:
+Release artifacts are created under `dist/` for:
 
 - `x64` (Intel Macs)
 - `arm64` (Apple Silicon: M1/M2/M3)
 
-This project intentionally uses DMG-only release assets and does not rely on blockmap files.
+Artifacts include:
+
+- `Homebrew Update Manager-<version>-<arch>.dmg`
+- `Homebrew Update Manager-<version>-<arch>-full.tar.gz`
+- `Homebrew Update Manager-<prev>-to-<version>-<arch>-delta.tar.gz` (when previous manifest + full package are available)
+- `update-manifest.json`
+- `update-checksums.txt`
 
 > Note: current build configuration is for MVP unsigned distribution. For broad public distribution, add Apple signing + notarization in the release pipeline.
 
@@ -104,15 +115,31 @@ The app includes an **App updates** section under **Automation & Environment**:
 1. The app is already connected to the official release repo (`tzoharlary/brew-update-manager`).
 2. On startup, the app automatically checks for a newer app version.
 3. While the app is open, it re-checks periodically.
-4. You can manually trigger the check using **Check for app update**.
-5. If a newer release exists, click **Download app installer**.
-6. macOS opens the downloaded `.dmg`; replace the app in Applications.
+4. You can manually trigger metadata-only check using **Check version update**.
+5. If a newer release exists, click **Update version** to explicitly start download/install.
+6. The updater prefers a differential package when available for your current version, and automatically falls back to full package if needed.
+7. The app shows live update progress (percent, speed, ETA), verifies SHA-256 checksums, stages the update, then restarts with apply-on-quit.
 
 Notes:
 
 - This updates the **desktop app itself** (from GitHub Releases).
 - The existing **Check Homebrew packages now** / **Update all outdated Homebrew packages** buttons update Homebrew packages only (formulae/casks), not the app binary.
-- Release assets must include architecture-specific DMG files (for `x64` and/or `arm64`).
+- Differential updates are architecture-aware (`x64` vs `arm64`) and include rollback marker handling if restart validation fails.
+
+## Release workflow expectations (for updater)
+
+When publishing a new tag release:
+
+1. Run `npm run build:release`
+2. Verify `dist/` contains DMG/full/manifest artifacts (and delta artifacts when available)
+3. Publish all updater assets to the GitHub Release:
+	- `dist/*.dmg`
+	- `dist/*-full.tar.gz`
+	- `dist/*-delta.tar.gz` (if generated)
+	- `dist/update-manifest.json`
+	- `dist/update-checksums.txt`
+
+The release CI workflow already uploads these assets automatically.
 
 ## Security and legal notice
 

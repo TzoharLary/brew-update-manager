@@ -10,6 +10,14 @@ contextBridge.exposeInMainWorld('brewApp', {
   autoDetectBrewPath: () => ipcRenderer.invoke('settings:brew-path:auto-detect'),
   checkAppUpdate: () => ipcRenderer.invoke('app-update:check'),
   downloadAndInstallAppUpdate: () => ipcRenderer.invoke('app-update:download-install'),
+  onAppUpdateProgress: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('app-update:progress', listener);
+    return () => ipcRenderer.removeListener('app-update:progress', listener);
+  },
   runCheckNow: () => ipcRenderer.invoke('check:run'),
   updateOne: (name, kind) => ipcRenderer.invoke('update:one', { name, kind }),
   updateAll: () => ipcRenderer.invoke('update:all'),

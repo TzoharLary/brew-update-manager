@@ -9,8 +9,28 @@ const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const args = ['electron-builder', '--publish', 'never', '--mac', 'dmg', `--${arch}`];
 const distPath = path.join(__dirname, '..', 'dist');
 
+function cleanDist(target) {
+  if (!fs.existsSync(target)) return;
+
+  for (const name of fs.readdirSync(target)) {
+    fs.rmSync(path.join(target, name), {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 120,
+    });
+  }
+
+  fs.rmSync(target, {
+    recursive: true,
+    force: true,
+    maxRetries: 8,
+    retryDelay: 120,
+  });
+}
+
 if (fs.existsSync(distPath)) {
-  fs.rmSync(distPath, { recursive: true, force: true });
+  cleanDist(distPath);
 }
 fs.mkdirSync(distPath, { recursive: true });
 

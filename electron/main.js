@@ -1,10 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Readable } = require('node:stream');
-const { pipeline } = require('node:stream/promises');
 const { spawn, spawnSync } = require('node:child_process');
+const { createAppUpdater } = require('./app-updater');
 
 const DEV_APP_ROOT = path.join(__dirname, '..');
 const PACKAGED_ASAR_ROOT = path.join(process.resourcesPath, 'app.asar');
@@ -28,223 +27,14 @@ const FIXED_UPDATE_REPO = 'tzoharlary/brew-update-manager';
 let resolvedPythonBin = null;
 
 let mainWindow = null;
+let appUpdater = null;
 
-function normalizeVersion(raw) {
-  return String(raw || '').trim().replace(/^v/i, '').split('-')[0];
-}
-
-function parseSemver(raw) {
-  const normalized = normalizeVersion(raw);
-  const parts = normalized.split('.').map((part) => Number.parseInt(part, 10));
-  const safe = [
-    Number.isFinite(parts[0]) ? parts[0] : 0,
-    Number.isFinite(parts[1]) ? parts[1] : 0,
-    Number.isFinite(parts[2]) ? parts[2] : 0,
-  ];
-  return safe;
-}
-
-function isVersionGreater(latest, current) {
-  const l = parseSemver(latest);
-  const c = parseSemver(current);
-  for (let i = 0; i < 3; i += 1) {
-    if (l[i] > c[i]) return true;
-    if (l[i] < c[i]) return false;
+function broadcastAppUpdateProgress(payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('app-update:progress', payload);
+    }
   }
-  return false;
-}
-
-function targetArchLabel() {
-  return process.arch === 'arm64' ? 'arm64' : 'x64';
-}
-
-function pickInstallerAsset(assets = []) {
-  const dmgAssets = assets.filter((asset) => asset?.name && /\.dmg$/i.test(asset.name));
-  if (!dmgAssets.length) return null;
-
-  const arch = targetArchLabel();
-  const archPattern = new RegExp(`-${arch}\\.dmg$`, 'i');
-  return dmgAssets.find((asset) => archPattern.test(asset.name))
-    || dmgAssets.find((asset) => String(asset.name).includes(arch))
-    || dmgAssets[0];
-}
-
-async function fetchLatestRelease() {
-  const repo = FIXED_UPDATE_REPO;
-  const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: {
-      'User-Agent': 'homebrew-update-manager',
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`GitHub release check failed (${response.status}): ${detail || 'No details'}`);
-  }
-
-  const release = await response.json();
-  const assets = Array.isArray(release?.assets) ? release.assets : [];
-  const installerAsset = pickInstallerAsset(assets);
-
-  const latestVersion = normalizeVersion(release?.tag_name || release?.name || '');
-  if (!latestVersion) {
-    throw new Error('Latest GitHub release does not include a valid version tag');
-  }
-
-  return {
-    repo,
-    latestVersion,
-    tagName: String(release?.tag_name || ''),
-    releasePageUrl: String(release?.html_url || ''),
-    installerAsset,
-  };
-}
-
-function updateCheckPayloadFromRelease(release) {
-  const currentVersion = normalizeVersion(app.getVersion());
-  const updateAvailable = isVersionGreater(release.latestVersion, currentVersion);
-  return {
-    repo: release.repo,
-    currentVersion,
-    latestVersion: release.latestVersion,
-    updateAvailable,
-    releasePageUrl: release.releasePageUrl,
-    hasInstallAsset: !!release.installerAsset,
-    assetName: release.installerAsset?.name || null,
-    assetUrl: release.installerAsset?.browser_download_url || null,
-    arch: targetArchLabel(),
-    checkedAt: new Date().toISOString(),
-  };
-}
-
-async function downloadInstallerAsset(assetUrl, targetPath) {
-  const response = await fetch(assetUrl, {
-    headers: {
-      'User-Agent': 'homebrew-update-manager',
-      Accept: 'application/octet-stream',
-    },
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Failed downloading installer (${response.status}): ${detail || 'No details'}`);
-  }
-
-  if (!response.body) {
-    throw new Error('Installer download stream is empty');
-  }
-
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(targetPath));
-}
-
-function downloadsDirPath() {
-  try {
-    return app.getPath('downloads');
-  } catch {
-    return path.join(os.homedir(), 'Downloads');
-  }
-}
-
-function runCommandOrThrow(command, args, options = {}) {
-  const res = spawnSync(command, args, {
-    stdio: 'pipe',
-    encoding: 'utf8',
-    ...options,
-  });
-  if (res.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed: ${(res.stderr || res.stdout || '').trim()}`);
-  }
-  return res;
-}
-
-function currentAppBundlePath() {
-  const bundlePath = path.resolve(process.execPath, '..', '..', '..');
-  if (bundlePath.endsWith('.app')) {
-    return bundlePath;
-  }
-  return null;
-}
-
-function findMountedAppBundle(mountPoint) {
-  const entries = fs.readdirSync(mountPoint, { withFileTypes: true });
-  const appDir = entries.find((entry) => entry.isDirectory() && entry.name.endsWith('.app'));
-  if (!appDir) {
-    throw new Error('Downloaded installer does not include a .app bundle');
-  }
-  return path.join(mountPoint, appDir.name);
-}
-
-function writeApplyUpdateScript() {
-  const scriptPath = path.join(os.tmpdir(), `bum-apply-update-${Date.now()}.sh`);
-  const script = `#!/bin/bash
-set -euo pipefail
-
-SOURCE_APP="$1"
-TARGET_APP="$2"
-MOUNT_POINT="$3"
-DMG_PATH="$4"
-CURRENT_PID="$5"
-
-while kill -0 "$CURRENT_PID" 2>/dev/null; do
-  sleep 0.5
-done
-
-if [[ -d "$TARGET_APP" ]]; then
-  rm -rf "$TARGET_APP"
-fi
-
-ditto "$SOURCE_APP" "$TARGET_APP"
-
-hdiutil detach "$MOUNT_POINT" -quiet || true
-rmdir "$MOUNT_POINT" 2>/dev/null || true
-rm -f "$DMG_PATH" || true
-
-open "$TARGET_APP"
-rm -f "$0" || true
-`;
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  return scriptPath;
-}
-
-function scheduleAppUpdateAndRestart(downloadedPath) {
-  const targetApp = currentAppBundlePath();
-  if (!targetApp) {
-    throw new Error('Unable to locate current app bundle path for auto-update');
-  }
-
-  const mountPoint = fs.mkdtempSync(path.join(os.tmpdir(), 'bum-update-mount-'));
-  try {
-    runCommandOrThrow('hdiutil', ['attach', downloadedPath, '-nobrowse', '-mountpoint', mountPoint, '-quiet']);
-  } catch (error) {
-    fs.rmSync(mountPoint, { recursive: true, force: true });
-    throw error;
-  }
-
-  const sourceApp = findMountedAppBundle(mountPoint);
-  const scriptPath = writeApplyUpdateScript();
-  const helper = spawn('bash', [
-    scriptPath,
-    sourceApp,
-    targetApp,
-    mountPoint,
-    downloadedPath,
-    String(process.pid),
-  ], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  helper.unref();
-
-  setTimeout(() => {
-    app.quit();
-  }, 700);
-
-  return {
-    restartScheduled: true,
-    targetApp,
-  };
 }
 
 function executableExists(filePath) {
@@ -403,6 +193,19 @@ if (!gotLock) {
 
 app.whenReady().then(async () => {
   try {
+    appUpdater = createAppUpdater({
+      app,
+      repo: FIXED_UPDATE_REPO,
+    });
+
+    const marker = appUpdater.readAndConsumeUpdateMarker();
+    if (marker?.status === 'rolled_back') {
+      dialog.showErrorBox(
+        'Homebrew Update Manager',
+        'The previous app update failed to start correctly and was rolled back to the last working version.',
+      );
+    }
+
     await bootstrap();
   } catch (error) {
     dialog.showErrorBox('Homebrew Update Manager', `Failed to start backend service:\n${error.message}`);
@@ -441,48 +244,22 @@ ipcMain.handle('settings:brew-path:update', async (_event, payload) => fetchJson
 }));
 ipcMain.handle('settings:brew-path:auto-detect', async () => fetchJson(`${SERVICE_BASE}/api/brew/auto-detect`));
 ipcMain.handle('app-update:check', async () => {
-  const release = await fetchLatestRelease();
-  return updateCheckPayloadFromRelease(release);
+  if (!appUpdater) {
+    throw new Error('App updater is not initialized');
+  }
+
+  return appUpdater.checkForUpdate({
+    onProgress: broadcastAppUpdateProgress,
+  });
 });
 ipcMain.handle('app-update:download-install', async () => {
-  const release = await fetchLatestRelease();
-  const status = updateCheckPayloadFromRelease(release);
-
-  if (!status.updateAvailable) {
-    return {
-      ...status,
-      ok: false,
-      reason: 'up-to-date',
-    };
+  if (!appUpdater) {
+    throw new Error('App updater is not initialized');
   }
 
-  if (!status.hasInstallAsset || !status.assetUrl || !status.assetName) {
-    throw new Error('No matching installer asset was found for this Mac architecture');
-  }
-
-  const downloadsDir = downloadsDirPath();
-  fs.mkdirSync(downloadsDir, { recursive: true });
-
-  const targetPath = path.join(downloadsDir, status.assetName);
-  await downloadInstallerAsset(status.assetUrl, targetPath);
-
-  let restartScheduled = false;
-  if (app.isPackaged) {
-    const updateResult = scheduleAppUpdateAndRestart(targetPath);
-    restartScheduled = !!updateResult.restartScheduled;
-  } else {
-    const openError = await shell.openPath(targetPath);
-    if (openError) {
-      throw new Error(`Installer downloaded but failed to open: ${openError}`);
-    }
-  }
-
-  return {
-    ...status,
-    ok: true,
-    downloadedPath: targetPath,
-    restartScheduled,
-  };
+  return appUpdater.downloadAndInstallUpdate({
+    onProgress: broadcastAppUpdateProgress,
+  });
 });
 ipcMain.handle('check:run', async () => fetchJson(`${SERVICE_BASE}/api/check`, {
   method: 'POST',

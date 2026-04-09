@@ -5,6 +5,17 @@ let activeTab = 'outdated';
 const TABLE_COLUMN_COUNT = 9;
 const COLUMN_WIDTH_STORAGE_KEY = 'bum_column_widths_v1';
 const APP_UPDATE_META_STORAGE_KEY = 'bum_app_update_meta_v1';
+const TABLE_SORT_STORAGE_KEY = 'bum_table_sort_v1';
+const SORTABLE_COLUMN_KEYS = new Set([
+  'package',
+  'type',
+  'currentVersion',
+  'latestVersion',
+  'currentDate',
+  'latestDate',
+  'daysOutdated',
+  'status',
+]);
 
 const cardsEl = document.getElementById('cards');
 const tbodyEl = document.getElementById('tbody');
@@ -27,6 +38,11 @@ const languageSelect = document.getElementById('languageSelect');
 const checkAppUpdateBtn = document.getElementById('checkAppUpdateBtn');
 const installAppUpdateBtn = document.getElementById('installAppUpdateBtn');
 const appUpdateStatusEl = document.getElementById('appUpdateStatus');
+const appUpdateProgressBoxEl = document.getElementById('appUpdateProgressBox');
+const appUpdateProgressPhaseEl = document.getElementById('appUpdateProgressPhase');
+const appUpdateProgressPercentEl = document.getElementById('appUpdateProgressPercent');
+const appUpdateProgressFillEl = document.getElementById('appUpdateProgressFill');
+const appUpdateProgressMetaEl = document.getElementById('appUpdateProgressMeta');
 const settingsSummaryEl = document.getElementById('settingsSummary');
 const scheduleEnabledEl = document.getElementById('scheduleEnabled');
 const scheduleFrequencyEl = document.getElementById('scheduleFrequency');
@@ -56,6 +72,10 @@ let appUpdateAutoCheckTimer = null;
 let updateHistoryItems = [];
 let appUpdateMeta = loadAppUpdateMeta();
 let packageSearchTerm = '';
+let appUpdateProgressState = null;
+let appUpdateProgressEnabled = false;
+let disposeAppUpdateProgress = null;
+let tableSortState = loadSavedTableSort();
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -71,20 +91,141 @@ const LOADER_PHASE_ORDER = [
   'error',
 ];
 
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  const digits = size >= 100 || idx === 0 ? 0 : 1;
+  return `${i18n.formatNumber(Number(size.toFixed(digits)))} ${units[idx]}`;
+}
+
+function appUpdatePhaseLabel(phase) {
+  const map = {
+    check_metadata: i18n.t('updates.phaseCheckMetadata'),
+    check_done: i18n.t('updates.phaseCheckDone'),
+    download_delta: i18n.t('updates.phaseDownloadDelta'),
+    verify_delta: i18n.t('updates.phaseVerifyDelta'),
+    apply_delta: i18n.t('updates.phaseApplyDelta'),
+    fallback_full: i18n.t('updates.phaseFallbackFull'),
+    download_full: i18n.t('updates.phaseDownloadFull'),
+    verify_full: i18n.t('updates.phaseVerifyFull'),
+    schedule_restart: i18n.t('updates.phaseScheduleRestart'),
+    error: i18n.t('updates.phaseError'),
+  };
+  return map[String(phase || '')] || i18n.t('updates.progressUnknown');
+}
+
+function clearAppUpdateProgress() {
+  appUpdateProgressState = null;
+  if (appUpdateProgressBoxEl) appUpdateProgressBoxEl.classList.remove('visible');
+  if (appUpdateProgressPercentEl) appUpdateProgressPercentEl.textContent = '0%';
+  if (appUpdateProgressFillEl) appUpdateProgressFillEl.style.width = '0%';
+  if (appUpdateProgressPhaseEl) appUpdateProgressPhaseEl.textContent = i18n.t('updates.progressUnknown');
+  if (appUpdateProgressMetaEl) appUpdateProgressMetaEl.textContent = '';
+}
+
+function renderAppUpdateProgress() {
+  if (!appUpdateProgressBoxEl) return;
+  if (!appUpdateProgressEnabled || !appUpdateProgressState) {
+    appUpdateProgressBoxEl.classList.remove('visible');
+    return;
+  }
+
+  appUpdateProgressBoxEl.classList.add('visible');
+  const rawPercent = Number(appUpdateProgressState.percent || 0);
+  const percent = Math.max(0, Math.min(100, Math.round(rawPercent)));
+  const phase = String(appUpdateProgressState.phase || '');
+
+  if (appUpdateProgressPercentEl) appUpdateProgressPercentEl.textContent = `${percent}%`;
+  if (appUpdateProgressFillEl) appUpdateProgressFillEl.style.width = `${percent}%`;
+  if (appUpdateProgressPhaseEl) appUpdateProgressPhaseEl.textContent = appUpdatePhaseLabel(phase);
+
+  const meta = [];
+  const downloadedBytes = Number(appUpdateProgressState.downloadedBytes ?? appUpdateProgressState.transferred ?? 0);
+  const totalBytes = Number(appUpdateProgressState.totalBytes ?? appUpdateProgressState.total ?? 0);
+  if (totalBytes > 0) {
+    meta.push(`${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`);
+  }
+
+  const speedBps = Number(appUpdateProgressState.speedBps || 0);
+  if (speedBps > 0) {
+    meta.push(i18n.t('updates.progressSpeed', { value: formatBytes(speedBps) }));
+  }
+
+  const etaSeconds = Number(appUpdateProgressState.etaSeconds || 0);
+  if (etaSeconds > 0) {
+    meta.push(i18n.t('updates.progressEta', { value: formatEta(Math.round(etaSeconds)) }));
+  } else if (phase === 'download_delta' || phase === 'download_full') {
+    meta.push(i18n.t('updates.progressNoEta'));
+  }
+
+  const mode = String(appUpdateProgressState.mode || appUpdateProgressState.modeUsed || '');
+  if (mode === 'delta') {
+    meta.push(i18n.t('updates.modeDelta'));
+  } else if (mode === 'full') {
+    meta.push(i18n.t('updates.modeFull'));
+  }
+
+  if (appUpdateProgressMetaEl) {
+    appUpdateProgressMetaEl.textContent = meta.join(' • ');
+  }
+}
+
+function shouldAllowInstall(state) {
+  if (!state?.updateAvailable) return false;
+  return !!(state.canInstall ?? state.hasInstallAsset);
+}
+
+function handleAppUpdateProgress(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  if (!appUpdateProgressEnabled && payload.phase !== 'error') return;
+  appUpdateProgressState = payload;
+
+  if (payload.phase === 'fallback_full' && payload.fallbackReason) {
+    setInlineStatus(appUpdateStatusEl, i18n.t('updates.fallbackToFull', {
+      reason: String(payload.fallbackReason),
+    }));
+  }
+
+  renderAppUpdateProgress();
+}
+
+function initAppUpdateProgressBridge() {
+  if (disposeAppUpdateProgress || !window.brewApp?.onAppUpdateProgress) return;
+  disposeAppUpdateProgress = window.brewApp.onAppUpdateProgress(handleAppUpdateProgress);
+}
+
 function renderAppUpdateStatus() {
   if (!appUpdateState) {
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.ready'));
     installAppUpdateBtn.disabled = true;
     renderSettingsSummary();
+    renderAppUpdateProgress();
     return;
   }
 
   if (appUpdateState.updateAvailable) {
-    if (appUpdateState.hasInstallAsset) {
-      setInlineStatus(appUpdateStatusEl, i18n.t('updates.available', {
-        latest: appUpdateState.latestVersion,
-        current: appUpdateState.currentVersion,
-      }));
+    if (shouldAllowInstall(appUpdateState)) {
+      const lines = [
+        i18n.t('updates.available', {
+          latest: appUpdateState.latestVersion,
+          current: appUpdateState.currentVersion,
+        }),
+      ];
+
+      if (appUpdateState.supportsDelta) {
+        lines.push(i18n.t('updates.availableDelta'));
+      } else {
+        lines.push(i18n.t('updates.availableFullOnly'));
+      }
+
+      setInlineStatus(appUpdateStatusEl, lines.join('\n'));
       installAppUpdateBtn.disabled = false;
     } else {
       setInlineStatus(appUpdateStatusEl, i18n.t('updates.noInstallAsset'), true);
@@ -98,6 +239,7 @@ function renderAppUpdateStatus() {
   }
 
   renderSettingsSummary();
+  renderAppUpdateProgress();
 }
 
 function loadAppUpdateMeta() {
@@ -130,6 +272,11 @@ function markAppUpdateCheck(status) {
 
 async function checkAppUpdate({ silent = false } = {}) {
   checkAppUpdateBtn.disabled = true;
+  appUpdateProgressEnabled = !silent;
+  if (!silent) {
+    clearAppUpdateProgress();
+  }
+
   if (!silent) {
     installAppUpdateBtn.disabled = true;
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.checking'));
@@ -148,6 +295,8 @@ async function checkAppUpdate({ silent = false } = {}) {
     }
     renderSettingsSummary();
   } finally {
+    appUpdateProgressEnabled = false;
+    clearAppUpdateProgress();
     checkAppUpdateBtn.disabled = false;
   }
 }
@@ -168,10 +317,12 @@ function stopAutoAppUpdateChecks() {
 }
 
 async function installAppUpdate() {
-  if (!appUpdateState?.updateAvailable || !appUpdateState?.hasInstallAsset) {
+  if (!shouldAllowInstall(appUpdateState)) {
     return;
   }
 
+  appUpdateProgressEnabled = true;
+  clearAppUpdateProgress();
   checkAppUpdateBtn.disabled = true;
   installAppUpdateBtn.disabled = true;
   installAppUpdateBtn.textContent = i18n.t('updates.installing');
@@ -187,14 +338,22 @@ async function installAppUpdate() {
       return;
     }
 
-    setInlineStatus(appUpdateStatusEl, i18n.t('updates.downloaded', { path: payload.downloadedPath }));
-    installAppUpdateBtn.disabled = false;
+    const modeUsed = String(payload?.modeUsed || payload?.mode || '').toLowerCase();
+    const modeText = modeUsed === 'delta' ? i18n.t('updates.modeDelta') : i18n.t('updates.modeFull');
+    setInlineStatus(
+      appUpdateStatusEl,
+      `${i18n.t('updates.downloaded', { path: payload.downloadedPath })}\n${modeText}`,
+    );
+    installAppUpdateBtn.disabled = !shouldAllowInstall(appUpdateState);
+    appUpdateProgressEnabled = false;
   } catch (err) {
     setInlineStatus(appUpdateStatusEl, i18n.t('updates.downloadFailed', { error: err.message }), true);
-    installAppUpdateBtn.disabled = !(appUpdateState?.updateAvailable && appUpdateState?.hasInstallAsset);
+    installAppUpdateBtn.disabled = !shouldAllowInstall(appUpdateState);
+    appUpdateProgressEnabled = false;
   } finally {
     installAppUpdateBtn.textContent = i18n.t('updates.install');
     checkAppUpdateBtn.disabled = false;
+    renderAppUpdateProgress();
   }
 }
 
@@ -596,6 +755,223 @@ function packageMatchesSearch(pkg, normalizedTerm) {
   return text.includes(normalizedTerm);
 }
 
+function isSortableColumnKey(key) {
+  return SORTABLE_COLUMN_KEYS.has(String(key || '').trim());
+}
+
+function normalizeSortText(value) {
+  return String(value || '').trim();
+}
+
+function parseSortDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const stamp = Date.parse(raw);
+  return Number.isFinite(stamp) ? stamp : null;
+}
+
+function compareTextValues(left, right, direction = 'asc') {
+  const a = normalizeSortText(left);
+  const b = normalizeSortText(right);
+  const cmp = a.localeCompare(b, i18n.lang === 'he' ? 'he' : 'en', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  return direction === 'desc' ? -cmp : cmp;
+}
+
+function compareNumberValues(left, right, direction = 'asc') {
+  const hasLeft = Number.isFinite(left);
+  const hasRight = Number.isFinite(right);
+
+  if (!hasLeft && !hasRight) return 0;
+  if (!hasLeft) return 1;
+  if (!hasRight) return -1;
+
+  const cmp = left === right ? 0 : (left > right ? 1 : -1);
+  return direction === 'desc' ? -cmp : cmp;
+}
+
+function comparePackagesByColumn(a, b, key, direction) {
+  let cmp = 0;
+
+  switch (key) {
+    case 'package':
+      cmp = compareTextValues(a?.name, b?.name, direction);
+      break;
+    case 'type':
+      cmp = compareTextValues(a?.kind, b?.kind, direction);
+      break;
+    case 'currentVersion':
+      cmp = compareTextValues(a?.installed_version, b?.installed_version, direction);
+      break;
+    case 'latestVersion':
+      cmp = compareTextValues(a?.latest_version, b?.latest_version, direction);
+      break;
+    case 'currentDate':
+      cmp = compareNumberValues(parseSortDate(a?.current_release_date), parseSortDate(b?.current_release_date), direction);
+      break;
+    case 'latestDate':
+      cmp = compareNumberValues(
+        parseSortDate(a?.latest_release_date || a?.release_date),
+        parseSortDate(b?.latest_release_date || b?.release_date),
+        direction,
+      );
+      break;
+    case 'daysOutdated': {
+      const daysA = Number(a?.days_since_outdated);
+      const daysB = Number(b?.days_since_outdated);
+      cmp = compareNumberValues(
+        Number.isFinite(daysA) ? daysA : null,
+        Number.isFinite(daysB) ? daysB : null,
+        direction,
+      );
+      break;
+    }
+    case 'status':
+      cmp = compareNumberValues(a?.outdated ? 0 : 1, b?.outdated ? 0 : 1, direction);
+      break;
+    default:
+      cmp = 0;
+      break;
+  }
+
+  if (cmp !== 0) return cmp;
+  return compareTextValues(a?.name, b?.name, 'asc');
+}
+
+function applyTableSort(list) {
+  const key = String(tableSortState?.key || '').trim();
+  const direction = tableSortState?.direction === 'desc' ? 'desc' : 'asc';
+
+  if (!key || !isSortableColumnKey(key)) {
+    return list;
+  }
+
+  return [...list].sort((a, b) => comparePackagesByColumn(a, b, key, direction));
+}
+
+function loadSavedTableSort() {
+  try {
+    const raw = localStorage.getItem(TABLE_SORT_STORAGE_KEY);
+    if (!raw) {
+      return { key: '', direction: 'asc' };
+    }
+
+    const parsed = JSON.parse(raw);
+    const key = String(parsed?.key || '').trim();
+    const direction = parsed?.direction === 'desc' ? 'desc' : 'asc';
+
+    if (!isSortableColumnKey(key)) {
+      return { key: '', direction };
+    }
+
+    return { key, direction };
+  } catch {
+    return { key: '', direction: 'asc' };
+  }
+}
+
+function saveTableSort() {
+  localStorage.setItem(TABLE_SORT_STORAGE_KEY, JSON.stringify({
+    key: String(tableSortState?.key || '').trim(),
+    direction: tableSortState?.direction === 'desc' ? 'desc' : 'asc',
+  }));
+}
+
+function toggleTableSort(key) {
+  if (!isSortableColumnKey(key)) {
+    return;
+  }
+
+  const normalizedKey = String(key);
+  if (tableSortState?.key === normalizedKey) {
+    tableSortState = {
+      key: normalizedKey,
+      direction: tableSortState.direction === 'asc' ? 'desc' : 'asc',
+    };
+  } else {
+    tableSortState = {
+      key: normalizedKey,
+      direction: 'asc',
+    };
+  }
+
+  saveTableSort();
+}
+
+function renderTableSortIndicators() {
+  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));
+
+  headers.forEach((th) => {
+    const key = String(th.dataset.colKey || '').trim();
+    const label = th.querySelector('.th-label');
+    const sortable = isSortableColumnKey(key);
+
+    th.classList.remove('sortable', 'sorted-asc', 'sorted-desc');
+
+    if (!sortable) {
+      th.removeAttribute('aria-sort');
+      if (label) {
+        label.dataset.sortIndicator = '';
+      }
+      return;
+    }
+
+    th.classList.add('sortable');
+    const isActive = tableSortState?.key === key;
+    const direction = tableSortState?.direction === 'desc' ? 'desc' : 'asc';
+
+    if (isActive) {
+      th.classList.add(direction === 'desc' ? 'sorted-desc' : 'sorted-asc');
+      th.setAttribute('aria-sort', direction === 'desc' ? 'descending' : 'ascending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
+    }
+
+    if (label) {
+      label.dataset.sortIndicator = isActive
+        ? (direction === 'desc' ? ' ▼' : ' ▲')
+        : '';
+    }
+  });
+}
+
+function initTableSorting() {
+  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));
+
+  headers.forEach((th) => {
+    const key = String(th.dataset.colKey || '').trim();
+    if (!isSortableColumnKey(key)) {
+      return;
+    }
+
+    th.setAttribute('tabindex', '0');
+
+    const onSort = () => {
+      toggleTableSort(key);
+      renderTable();
+    };
+
+    th.addEventListener('click', (event) => {
+      if (event.target.closest('[data-resizer]')) {
+        return;
+      }
+      onSort();
+    });
+
+    th.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+      event.preventDefault();
+      onSort();
+    });
+  });
+
+  renderTableSortIndicators();
+}
+
 function findPackageInSnapshot(name, kind) {
   const list = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   return list.find((pkg) => String(pkg?.name || '') === String(name || '') && String(pkg?.kind || '') === String(kind || ''));
@@ -728,14 +1104,16 @@ function getFilteredPackages() {
     ? pkgs.filter((pkg) => pkg.outdated)
     : pkgs;
 
-  if (!packageSearchTerm) {
-    return byTab;
-  }
+  const filtered = packageSearchTerm
+    ? byTab.filter((pkg) => packageMatchesSearch(pkg, packageSearchTerm))
+    : byTab;
 
-  return byTab.filter((pkg) => packageMatchesSearch(pkg, packageSearchTerm));
+  return applyTableSort(filtered);
 }
 
 function renderTable() {
+  renderTableSortIndicators();
+
   const all = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   const list = getFilteredPackages();
   const outdatedCount = all.filter((pkg) => pkg.outdated).length;
@@ -911,8 +1289,9 @@ async function updateOne(name, kind, sourceBtn = null) {
   }
 
   clearMessage();
-  setLoading(true, 'message.updatingOne', { name });
-  startProgressPolling();
+  showMessage(i18n.t('message.updatingOne', { name }));
+  busyLoading = true;
+  applyActionAvailability();
 
   try {
     const res = await window.brewApp.updateOne(name, kind);
@@ -939,8 +1318,8 @@ async function updateOne(name, kind, sourceBtn = null) {
   } catch (err) {
     showMessage(i18n.t('message.updateOneRequestFailed', { error: err.message }), true);
   } finally {
-    stopProgressPolling();
-    setLoading(false, 'message.loadingState');
+    busyLoading = false;
+    applyActionAvailability();
     if (sourceBtn) {
       sourceBtn.textContent = i18n.t('buttons.update');
     }
@@ -954,8 +1333,9 @@ async function updateAll() {
   updateAllBtn.textContent = i18n.t('buttons.updating');
 
   clearMessage();
-  setLoading(true, 'message.updatingAll');
-  startProgressPolling();
+  showMessage(i18n.t('message.updatingAll'));
+  busyLoading = true;
+  applyActionAvailability();
   try {
     const res = await window.brewApp.updateAll();
     snapshot = res.snapshot;
@@ -981,8 +1361,8 @@ async function updateAll() {
   } catch (err) {
     showMessage(i18n.t('message.updateAllFailed', { error: err.message }), true);
   } finally {
-    stopProgressPolling();
-    setLoading(false, 'message.loadingState');
+    busyLoading = false;
+    applyActionAvailability();
     updateAllBtn.textContent = i18n.t('actions.updateAll');
   }
 }
@@ -1101,12 +1481,20 @@ saveScheduleBtn.addEventListener('click', saveScheduler);
 detectBrewPathBtn.addEventListener('click', detectBrewPath);
 saveBrewPathBtn.addEventListener('click', saveBrewPath);
 clearBrewPathBtn.addEventListener('click', clearBrewPath);
-window.addEventListener('beforeunload', stopAutoAppUpdateChecks);
+window.addEventListener('beforeunload', () => {
+  stopAutoAppUpdateChecks();
+  if (typeof disposeAppUpdateProgress === 'function') {
+    disposeAppUpdateProgress();
+    disposeAppUpdateProgress = null;
+  }
+});
 
 initColumnResizing();
+initTableSorting();
 updateSchedulerFieldVisibility();
 updateSearchControls();
 refreshStaticText();
+initAppUpdateProgressBridge();
 
 async function initializeApp() {
   await loadSettings();
