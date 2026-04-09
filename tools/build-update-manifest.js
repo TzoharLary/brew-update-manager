@@ -55,6 +55,10 @@ function releaseAssetUrl(tag, fileName) {
   return `https://github.com/${REPO}/releases/download/${tag}/${encodeAssetName(fileName)}`;
 }
 
+function canonicalAssetName(name) {
+  return String(name || '').trim().replace(/\s+/g, '.');
+}
+
 async function sha256OfFile(filePath) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
@@ -113,7 +117,7 @@ function buildApiHeaders() {
   };
 }
 
-async function loadPreviousManifest(currentVersion) {
+async function loadPreviousReleaseBundle(currentVersion) {
   const apiHeaders = buildApiHeaders();
   const releases = await fetchJson(`https://api.github.com/repos/${REPO}/releases?per_page=8`, apiHeaders);
   const previousRelease = (Array.isArray(releases) ? releases : []).find((release) => {
@@ -125,18 +129,29 @@ async function loadPreviousManifest(currentVersion) {
     return null;
   }
 
+  let manifest = null;
+
   const manifestAsset = (Array.isArray(previousRelease.assets) ? previousRelease.assets : [])
     .find((asset) => String(asset?.name || '') === MANIFEST_NAME);
 
-  if (!manifestAsset?.browser_download_url) {
-    return null;
+  if (manifestAsset?.browser_download_url) {
+    manifest = await fetchJson(manifestAsset.browser_download_url, {});
   }
 
-  const manifest = await fetchJson(manifestAsset.browser_download_url, {});
   return {
     release: previousRelease,
     manifest,
   };
+}
+
+function findReleaseDmgAssetByArch(assets = [], arch) {
+  const list = (Array.isArray(assets) ? assets : []).filter((asset) => /\.dmg$/i.test(String(asset?.name || '')));
+  if (!list.length) return null;
+
+  const archPattern = new RegExp(`[-_. ]${arch}\\.dmg$`, 'i');
+  return list.find((asset) => archPattern.test(String(asset?.name || '')))
+    || list.find((asset) => String(asset?.name || '').toLowerCase().includes(String(arch || '').toLowerCase()))
+    || null;
 }
 
 function findCurrentDmgByArch(version) {
@@ -258,6 +273,13 @@ function copyDeltaEntry(sourceRoot, targetRoot, relPath, type) {
     return;
   }
 
+  if (type === 'symlink') {
+    const linkTarget = fs.readlinkSync(src);
+    fs.rmSync(dst, { recursive: true, force: true });
+    fs.symlinkSync(linkTarget, dst);
+    return;
+  }
+
   fs.cpSync(src, dst, { recursive: true, force: true, dereference: false });
 }
 
@@ -266,21 +288,30 @@ async function buildDeltaArchive({
   toVersion,
   arch,
   previousFullArchive,
+  previousAppPath,
   currentAppPath,
   outputPath,
   workspace,
 }) {
-  const prevExtractDir = path.join(workspace, `prev-${arch}`);
-  fs.rmSync(prevExtractDir, { recursive: true, force: true });
-  ensureDir(prevExtractDir);
+  let resolvedPreviousAppPath = previousAppPath;
 
-  extractTarGz(previousFullArchive, prevExtractDir);
-  const previousAppPath = findFirstAppBundle(prevExtractDir);
-  if (!previousAppPath) {
-    throw new Error(`Previous full archive for ${arch} does not contain an app bundle`);
+  if (!resolvedPreviousAppPath) {
+    const prevExtractDir = path.join(workspace, `prev-${arch}`);
+    fs.rmSync(prevExtractDir, { recursive: true, force: true });
+    ensureDir(prevExtractDir);
+
+    extractTarGz(previousFullArchive, prevExtractDir);
+    resolvedPreviousAppPath = findFirstAppBundle(prevExtractDir);
+    if (!resolvedPreviousAppPath) {
+      throw new Error(`Previous full archive for ${arch} does not contain an app bundle`);
+    }
   }
 
-  const prevEntries = await collectTreeEntries(previousAppPath);
+  if (!fs.existsSync(resolvedPreviousAppPath)) {
+    throw new Error(`Previous app bundle path is invalid for ${arch}`);
+  }
+
+  const prevEntries = await collectTreeEntries(resolvedPreviousAppPath);
   const currEntries = await collectTreeEntries(currentAppPath);
 
   const removedPaths = [];
@@ -389,7 +420,7 @@ async function main() {
     const appPath = copyAppFromDmg(dmg.path, tempRoot, arch);
     currentApps[arch] = appPath;
 
-    const fullName = dmg.name.replace(/\.dmg$/i, '-full.tar.gz');
+    const fullName = canonicalAssetName(dmg.name.replace(/\.dmg$/i, '-full.tar.gz'));
     const fullPath = path.join(DIST_DIR, fullName);
     createTarGz(appPath, fullPath);
 
@@ -402,7 +433,7 @@ async function main() {
     const dmgSize = fs.statSync(dmg.path).size;
 
     const fullRecord = assetRecord(tag, fullName, fullSha, fullSize, 'tar.gz');
-    const dmgRecord = assetRecord(tag, dmg.name, dmgSha, dmgSize, 'dmg');
+    const dmgRecord = assetRecord(tag, canonicalAssetName(dmg.name), dmgSha, dmgSize, 'dmg');
 
     fullByArch[arch] = {
       ...fullRecord,
@@ -414,56 +445,102 @@ async function main() {
     console.log(`[update-manifest] ${arch}: full package ${fullName}`);
   }
 
-  let previousManifestBundle = null;
+  let previousBundle = null;
   try {
-    previousManifestBundle = await loadPreviousManifest(version);
-    if (previousManifestBundle?.manifest) {
-      console.log(`[update-manifest] Found previous manifest from ${previousManifestBundle.release.tag_name}`);
+    previousBundle = await loadPreviousReleaseBundle(version);
+    if (previousBundle?.manifest) {
+      console.log(`[update-manifest] Found previous manifest from ${previousBundle.release.tag_name}`);
+    } else if (previousBundle?.release) {
+      console.log(`[update-manifest] Previous release found without manifest: ${previousBundle.release.tag_name}`);
     }
   } catch (error) {
     console.warn(`[update-manifest] Could not load previous manifest: ${error.message}`);
-    previousManifestBundle = null;
+    previousBundle = null;
   }
 
-  const previousManifest = previousManifestBundle?.manifest || null;
-  const previousLatest = normalizeVersion(previousManifest?.latestVersion || '');
+  const previousRelease = previousBundle?.release || null;
+  const previousManifest = previousBundle?.manifest || null;
+  const previousLatest = normalizeVersion(
+    previousManifest?.latestVersion
+      || previousRelease?.tag_name
+      || previousRelease?.name
+      || '',
+  );
   const previousVersions = previousManifest && typeof previousManifest.versions === 'object'
     ? previousManifest.versions
     : {};
 
   const deltaByArch = { x64: [], arm64: [] };
 
-  if (previousManifest && previousLatest && previousLatest !== version) {
+  if (previousLatest && previousLatest !== version) {
     for (const arch of ['x64', 'arm64']) {
+      let sourceType = '';
+      let sourceUrl = '';
+      let sourceSha256 = '';
+
       const prevFull = previousVersions?.[previousLatest]?.assets?.[arch]?.full;
-      if (!prevFull?.url) {
-        console.log(`[update-manifest] ${arch}: no previous full asset, skipping delta`);
+      if (prevFull?.url) {
+        sourceType = 'manifest-full';
+        sourceUrl = String(prevFull.url);
+        sourceSha256 = String(prevFull.sha256 || '');
+      } else {
+        const prevDmgAsset = findReleaseDmgAssetByArch(previousRelease?.assets, arch);
+        if (prevDmgAsset?.browser_download_url) {
+          sourceType = 'legacy-dmg';
+          sourceUrl = String(prevDmgAsset.browser_download_url);
+          sourceSha256 = '';
+        }
+      }
+
+      if (!sourceType || !sourceUrl) {
+        console.log(`[update-manifest] ${arch}: no usable previous asset source, skipping delta`);
         continue;
       }
 
-      const prevArchivePath = path.join(tempRoot, `prev-${previousLatest}-${arch}-full.tar.gz`);
       try {
-        await downloadFile(prevFull.url, prevArchivePath);
-
-        if (prevFull.sha256) {
-          const actual = await sha256OfFile(prevArchivePath);
-          if (String(actual).toLowerCase() !== String(prevFull.sha256).toLowerCase()) {
-            throw new Error(`Previous full archive checksum mismatch (${actual})`);
-          }
-        }
-
-        const deltaName = `${pkg.build?.productName || 'Homebrew Update Manager'}-${previousLatest}-to-${version}-${arch}-delta.tar.gz`;
+        const deltaName = canonicalAssetName(`${pkg.build?.productName || 'Homebrew Update Manager'}-${previousLatest}-to-${version}-${arch}-delta.tar.gz`);
         const deltaPath = path.join(DIST_DIR, deltaName);
 
-        const deltaInfo = await buildDeltaArchive({
-          fromVersion: previousLatest,
-          toVersion: version,
-          arch,
-          previousFullArchive: prevArchivePath,
-          currentAppPath: currentApps[arch],
-          outputPath: deltaPath,
-          workspace: path.join(tempRoot, `delta-work-${arch}`),
-        });
+        let deltaInfo = null;
+
+        if (sourceType === 'manifest-full') {
+          const prevArchivePath = path.join(tempRoot, `prev-${previousLatest}-${arch}-full.tar.gz`);
+          await downloadFile(sourceUrl, prevArchivePath);
+
+          if (sourceSha256) {
+            const actual = await sha256OfFile(prevArchivePath);
+            if (String(actual).toLowerCase() !== String(sourceSha256).toLowerCase()) {
+              throw new Error(`Previous full archive checksum mismatch (${actual})`);
+            }
+          }
+
+          deltaInfo = await buildDeltaArchive({
+            fromVersion: previousLatest,
+            toVersion: version,
+            arch,
+            previousFullArchive: prevArchivePath,
+            currentAppPath: currentApps[arch],
+            outputPath: deltaPath,
+            workspace: path.join(tempRoot, `delta-work-${arch}`),
+          });
+        } else {
+          const prevDmgPath = path.join(tempRoot, `prev-${previousLatest}-${arch}.dmg`);
+          await downloadFile(sourceUrl, prevDmgPath);
+
+          const legacyWorkRoot = path.join(tempRoot, `legacy-prev-${arch}`);
+          ensureDir(legacyWorkRoot);
+          const prevAppPath = copyAppFromDmg(prevDmgPath, legacyWorkRoot, arch);
+
+          deltaInfo = await buildDeltaArchive({
+            fromVersion: previousLatest,
+            toVersion: version,
+            arch,
+            previousAppPath: prevAppPath,
+            currentAppPath: currentApps[arch],
+            outputPath: deltaPath,
+            workspace: path.join(tempRoot, `delta-work-${arch}`),
+          });
+        }
 
         const deltaSha = await sha256OfFile(deltaPath);
         const deltaSize = fs.statSync(deltaPath).size;
@@ -476,13 +553,13 @@ async function main() {
         deltaByArch[arch].push(deltaRecord);
         releaseAssets.push(deltaRecord);
 
-        console.log(`[update-manifest] ${arch}: delta ${deltaName} (${deltaInfo.changedCount} changed, ${deltaInfo.removedCount} removed)`);
+        console.log(`[update-manifest] ${arch}: delta ${deltaName} (${deltaInfo.changedCount} changed, ${deltaInfo.removedCount} removed, source=${sourceType})`);
       } catch (error) {
         console.warn(`[update-manifest] ${arch}: delta generation skipped: ${error.message}`);
       }
     }
   } else {
-    console.log('[update-manifest] No previous manifest/version found. Delta assets skipped for this release.');
+    console.log('[update-manifest] No previous version found. Delta assets skipped for this release.');
   }
 
   const mergedVersions = {
