@@ -100,6 +100,9 @@
       history: {
         title: 'Recent package updates',
         help: 'Shows the latest package updates and when they were performed.',
+        loading: 'Loading update history…',
+        loadFailed: 'Failed to refresh update history: {{error}}',
+        loadTimeout: 'History request timed out. Please try again.',
         empty: 'No package updates have been recorded yet.',
         emptyFiltered: 'No history items match the selected filters.',
         searchLabel: 'Search history',
@@ -196,6 +199,7 @@
         updateAllSuccess: 'Update all complete. success={{success}}, failed={{failed}}',
         updateAllLatestConfirmed: 'Done! {{count}} package(s) were verified as fully up to date.',
         updateAllFailed: 'Update-all failed:\n{{error}}',
+        inventoryRefreshWarning: 'Packages were updated, but inventory refresh had a warning: {{error}}',
       },
       progress: {
         panelHint: 'This live view shows exactly what the check is doing right now.',
@@ -332,6 +336,9 @@
       history: {
         title: 'חבילות שעודכנו לאחרונה',
         help: 'כאן אפשר לראות אילו חבילות עודכנו לאחרונה ומתי זה קרה.',
+        loading: 'טוען היסטוריית עדכונים…',
+        loadFailed: 'רענון היסטוריית העדכונים נכשל: {{error}}',
+        loadTimeout: 'בקשת היסטוריה חרגה מזמן ההמתנה. אפשר לנסות שוב.',
         empty: 'עדיין לא נרשמו עדכוני חבילות.',
         emptyFiltered: 'לא נמצאו פריטי היסטוריה לפי הסינון שנבחר.',
         searchLabel: 'חיפוש היסטוריה',
@@ -428,6 +435,7 @@
         updateAllSuccess: 'עדכון כולל הסתיים. הצליחו={{success}}, נכשלו={{failed}}',
         updateAllLatestConfirmed: 'עדכון הושלם! אומתו {{count}} חבילות כמעודכנות לגרסה הכי חדשה.',
         updateAllFailed: 'עדכון כולל נכשל:\n{{error}}',
+        inventoryRefreshWarning: 'החבילות עודכנו, אבל רענון המלאי הסתיים עם אזהרה: {{error}}',
       },
       progress: {
         panelHint: 'החלון הזה מציג בזמן אמת מה הבדיקה עושה כרגע.',

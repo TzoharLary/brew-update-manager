@@ -60,6 +60,7 @@ const saveBrewPathBtn = document.getElementById('saveBrewPathBtn');
 const clearBrewPathBtn = document.getElementById('clearBrewPathBtn');
 const brewPathStatusEl = document.getElementById('brewPathStatus');
 const updateHistoryListEl = document.getElementById('updateHistoryList');
+const updateHistoryStatusEl = document.getElementById('updateHistoryStatus');
 const packageSearchInputEl = document.getElementById('packageSearchInput');
 const packageSearchClearBtnEl = document.getElementById('packageSearchClearBtn');
 const packageTypeFilterEl = document.getElementById('packageTypeFilter');
@@ -78,6 +79,8 @@ let busyLoading = false;
 let appUpdateState = null;
 let appUpdateAutoCheckTimer = null;
 let updateHistoryItems = [];
+let historyLoadInFlight = false;
+let historyLoadError = '';
 let appUpdateMeta = loadAppUpdateMeta();
 let packageSearchTerm = '';
 let packageTypeFilter = 'all';
@@ -420,6 +423,31 @@ function setInlineStatus(el, text, isError = false) {
   if (!el) return;
   el.textContent = String(text || '').trim();
   el.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+}
+
+function setUpdateHistoryStatus(text, isError = false) {
+  if (!updateHistoryStatusEl) return;
+  const value = String(text || '').trim();
+  updateHistoryStatusEl.style.display = value ? 'block' : 'none';
+  setInlineStatus(updateHistoryStatusEl, value, isError);
+}
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 }
 
 function parseTimeValue(value) {
@@ -1187,19 +1215,39 @@ function renderHistoryPanel() {
     || historyKindFilter !== 'all'
     || historyStatusFilter !== 'all'
     || historySortBy !== 'newest';
+
   const items = getFilteredHistoryItems();
   renderUpdateHistory(items, { filtered: hasFilters });
+
+  if (historyLoadInFlight) {
+    setUpdateHistoryStatus(i18n.t('history.loading'));
+  } else if (historyLoadError) {
+    setUpdateHistoryStatus(i18n.t('history.loadFailed', { error: historyLoadError }), true);
+  } else {
+    setUpdateHistoryStatus('');
+  }
+
   updateHistoryFilterControls();
 }
 
 async function loadUpdateHistory() {
-  try {
-    const payload = await window.brewApp.getUpdateHistory();
-    updateHistoryItems = Array.isArray(payload?.items) ? payload.items : [];
-  } catch {
-    updateHistoryItems = [];
-  }
+  historyLoadInFlight = true;
+  historyLoadError = '';
   renderHistoryPanel();
+
+  try {
+    const payload = await withTimeout(
+      window.brewApp.getUpdateHistory(),
+      5000,
+      i18n.t('history.loadTimeout'),
+    );
+    updateHistoryItems = Array.isArray(payload?.items) ? payload.items : [];
+  } catch (err) {
+    historyLoadError = String(err?.message || i18n.t('common.unknown'));
+  } finally {
+    historyLoadInFlight = false;
+    renderHistoryPanel();
+  }
 }
 
 function formatDaysOutdated(pkg) {
@@ -1462,7 +1510,13 @@ async function updateOne(name, kind, sourceBtn = null) {
     updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
 
     if (res?.result?.ok) {
-      showMessage(i18n.t('message.updateOneSuccess', { name }));
+      let messageText = i18n.t('message.updateOneSuccess', { name });
+      if (res?.inventory_refresh_error) {
+        messageText = `${messageText}\n${i18n.t('message.inventoryRefreshWarning', {
+          error: res.inventory_refresh_error,
+        })}`;
+      }
+      showMessage(messageText);
 
       const pkg = findPackageInSnapshot(name, kind);
       const verifiedLatest = !!(pkg && !pkg.outdated);
@@ -1507,6 +1561,12 @@ async function updateAll() {
       success: i18n.formatNumber(res.updated_count || 0),
       failed: i18n.formatNumber(res.failed_count || 0),
     }));
+
+    if (res?.inventory_refresh_error) {
+      showMessage(`${msgEl.textContent}\n${i18n.t('message.inventoryRefreshWarning', {
+        error: res.inventory_refresh_error,
+      })}`);
+    }
 
     const results = Array.isArray(res?.results) ? res.results : [];
     const verifiedLatestCount = results.reduce((acc, result) => {

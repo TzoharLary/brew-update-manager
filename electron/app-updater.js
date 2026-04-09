@@ -15,27 +15,89 @@ function nowIso() {
 }
 
 function normalizeVersion(raw) {
-  return String(raw || '').trim().replace(/^v/i, '').split('-')[0];
+  const normalized = String(raw || '').trim().replace(/^v/i, '');
+  return normalized.split(/\s+/)[0];
+}
+
+function parseSemverDetailed(raw) {
+  const normalized = normalizeVersion(raw);
+  const withoutBuild = normalized.split('+')[0];
+  const [coreRaw, prereleaseRaw = ''] = withoutBuild.split('-', 2);
+  const core = coreRaw.split('.').map((part) => Number.parseInt(part, 10));
+
+  const major = Number.isFinite(core[0]) ? core[0] : 0;
+  const minor = Number.isFinite(core[1]) ? core[1] : 0;
+  const patch = Number.isFinite(core[2]) ? core[2] : 0;
+  const prerelease = prereleaseRaw
+    ? prereleaseRaw.split('.').map((part) => String(part || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    major,
+    minor,
+    patch,
+    prerelease,
+  };
 }
 
 function parseSemver(raw) {
-  const normalized = normalizeVersion(raw);
-  const parts = normalized.split('.').map((part) => Number.parseInt(part, 10));
-  return [
-    Number.isFinite(parts[0]) ? parts[0] : 0,
-    Number.isFinite(parts[1]) ? parts[1] : 0,
-    Number.isFinite(parts[2]) ? parts[2] : 0,
-  ];
+  const parsed = parseSemverDetailed(raw);
+  return [parsed.major, parsed.minor, parsed.patch];
+}
+
+function isNumericSemverIdentifier(value) {
+  return /^\d+$/.test(String(value || ''));
+}
+
+function comparePrereleaseIdentifiers(left, right) {
+  const max = Math.max(left.length, right.length);
+
+  for (let i = 0; i < max; i += 1) {
+    const leftPart = left[i];
+    const rightPart = right[i];
+
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+
+    const leftNumeric = isNumericSemverIdentifier(leftPart);
+    const rightNumeric = isNumericSemverIdentifier(rightPart);
+
+    if (leftNumeric && rightNumeric) {
+      const leftNum = Number.parseInt(leftPart, 10);
+      const rightNum = Number.parseInt(rightPart, 10);
+      if (leftNum > rightNum) return 1;
+      if (leftNum < rightNum) return -1;
+      continue;
+    }
+
+    if (leftNumeric && !rightNumeric) return -1;
+    if (!leftNumeric && rightNumeric) return 1;
+
+    if (leftPart > rightPart) return 1;
+    if (leftPart < rightPart) return -1;
+  }
+
+  return 0;
 }
 
 function compareVersions(a, b) {
-  const left = parseSemver(a);
-  const right = parseSemver(b);
-  for (let i = 0; i < 3; i += 1) {
-    if (left[i] > right[i]) return 1;
-    if (left[i] < right[i]) return -1;
+  const left = parseSemverDetailed(a);
+  const right = parseSemverDetailed(b);
+
+  const coreFields = ['major', 'minor', 'patch'];
+  for (const field of coreFields) {
+    if (left[field] > right[field]) return 1;
+    if (left[field] < right[field]) return -1;
   }
-  return 0;
+
+  const leftHasPre = left.prerelease.length > 0;
+  const rightHasPre = right.prerelease.length > 0;
+
+  if (!leftHasPre && !rightHasPre) return 0;
+  if (!leftHasPre) return 1;
+  if (!rightHasPre) return -1;
+
+  return comparePrereleaseIdentifiers(left.prerelease, right.prerelease);
 }
 
 function isVersionGreater(latest, current) {
@@ -74,6 +136,19 @@ function executableExists(filePath) {
   } catch {
     return false;
   }
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeMinimumSupportedVersion(raw) {
+  return normalizeVersion(raw || DEFAULT_MIN_SUPPORTED_VERSION) || DEFAULT_MIN_SUPPORTED_VERSION;
+}
+
+function isManifestVersionMismatch(manifestVersion, releaseVersion) {
+  if (!manifestVersion || !releaseVersion) return false;
+  return compareVersions(manifestVersion, releaseVersion) !== 0;
 }
 
 function resolveBundleExecutableName(appBundlePath) {
@@ -529,14 +604,29 @@ fi
 
 mv "$STAGED_APP" "$TARGET_APP"
 open "$TARGET_APP" || true
-sleep 20
 
-if pgrep -f "$TARGET_EXEC" >/dev/null 2>&1; then
-  rm -rf "$BACKUP_APP" 2>/dev/null || true
-  echo "{\"status\":\"ok\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
-  rm -f "$0" || true
-  exit 0
-fi
+is_target_running() {
+  if pgrep -f "$TARGET_EXEC" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  TARGET_BASENAME="$(basename "$TARGET_EXEC")"
+  if [[ -n "$TARGET_BASENAME" ]] && pgrep -x "$TARGET_BASENAME" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+for _ in 1 2 3 4 5 6; do
+  sleep 5
+  if is_target_running; then
+    rm -rf "$BACKUP_APP" 2>/dev/null || true
+    echo "{\"status\":\"ok\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
+    rm -f "$0" || true
+    exit 0
+  fi
+done
 
 rm -rf "$TARGET_APP" 2>/dev/null || true
 if [[ -d "$BACKUP_APP" ]]; then
@@ -558,7 +648,7 @@ function scheduleApplyOnQuit({ app, stagedAppPath, markerFile }) {
   }
 
   const backupApp = `${targetApp}.rollback`;
-  const targetExec = path.join(targetApp, 'Contents', 'MacOS', path.basename(targetApp, '.app'));
+  const targetExec = resolveBundleExecutablePath(targetApp);
   const applyScript = writeApplyScript();
 
   const helper = spawn('bash', [
@@ -668,17 +758,35 @@ function createAppUpdater({ app, repo }) {
 
     if (manifestBundle?.manifest) {
       const manifest = manifestBundle.manifest;
-      const latestVersion = normalizeVersion(manifest.latestVersion || latestVersionFromTag);
-      const versions = manifest.versions && typeof manifest.versions === 'object' ? manifest.versions : {};
-      const latestEntry = versions[latestVersion] || null;
+      const versions = isPlainObject(manifest.versions) ? manifest.versions : {};
+      const manifestLatestVersion = normalizeVersion(manifest.latestVersion || '');
+      const versionMismatch = isManifestVersionMismatch(manifestLatestVersion, latestVersionFromTag);
+      const minimumSupportedVersion = normalizeMinimumSupportedVersion(manifest.minimumSupportedVersion);
+
+      let latestVersion = manifestLatestVersion || latestVersionFromTag;
+      if (versionMismatch && latestVersionFromTag) {
+        latestVersion = latestVersionFromTag;
+        log('manifest_version_mismatch', {
+          manifestLatestVersion,
+          releaseLatestVersion: latestVersionFromTag,
+          currentVersion,
+          arch,
+        });
+      }
+
+      let latestEntry = latestVersion ? versions[latestVersion] || null : null;
+      if (!latestEntry && manifestLatestVersion && versions[manifestLatestVersion]) {
+        latestEntry = versions[manifestLatestVersion];
+        latestVersion = manifestLatestVersion;
+      }
+
       const archAssets = latestEntry?.assets?.[arch] || null;
       const fullAsset = archAssets?.full || null;
       const deltaAsset = Array.isArray(archAssets?.deltas)
         ? archAssets.deltas.find((item) => normalizeVersion(item.fromVersion) === currentVersion)
         : null;
 
-      const updateAvailable = isVersionGreater(latestVersion, currentVersion);
-      const minimumSupportedVersion = normalizeVersion(manifest.minimumSupportedVersion || DEFAULT_MIN_SUPPORTED_VERSION);
+      const updateAvailable = !!latestVersion && isVersionGreater(latestVersion, currentVersion);
       const withinSupport = compareVersions(currentVersion, minimumSupportedVersion) >= 0;
 
       if (fullAsset) {
@@ -693,6 +801,7 @@ function createAppUpdater({ app, repo }) {
           manifestUrl: String(manifestBundle.manifestAsset?.browser_download_url || ''),
           minimumSupportedVersion,
           withinSupport,
+          manifestVersionMismatch: versionMismatch,
           hasInstallAsset: true,
           canInstall: true,
           fullAsset,
@@ -722,6 +831,7 @@ function createAppUpdater({ app, repo }) {
         currentVersion,
         latestVersion,
         arch,
+        versionMismatch,
       });
     }
 

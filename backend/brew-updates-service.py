@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import json
 import os
@@ -21,12 +22,18 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+try:
+    import fcntl
+except Exception:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 APP_NAME = "Homebrew Update Manager"
 REQUIRED_PYTHON = (3, 14)
@@ -56,6 +63,8 @@ RELEASE_CACHE_FILE = CACHE_DIR / "release-dates.json"
 DESCRIPTION_HE_CACHE_FILE = CACHE_DIR / "description-he.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 UPDATE_HISTORY_FILE = DATA_DIR / "update-history.json"
+UPDATE_HISTORY_LOCK_FILE = UPDATE_HISTORY_FILE.with_suffix(UPDATE_HISTORY_FILE.suffix + ".lock")
+UPDATE_HISTORY_LOCK_TIMEOUT_SECONDS = 8.0
 OPEN_APP_SCRIPT = PROJECT_ROOT / "tools" / "open-brew-updates-app.sh"
 
 LAUNCH_AGENT_LABEL = "com.local.brew-outdated-check"
@@ -364,7 +373,17 @@ def save_settings(settings: dict[str, Any]) -> None:
 
 
 def load_update_history() -> list[dict[str, Any]]:
-    raw = read_json(UPDATE_HISTORY_FILE) or {}
+    with acquire_file_lock(UPDATE_HISTORY_LOCK_FILE):
+        return load_update_history_unlocked()
+
+
+def load_update_history_unlocked() -> list[dict[str, Any]]:
+    raw = read_json(UPDATE_HISTORY_FILE)
+    if raw is None:
+        if UPDATE_HISTORY_FILE.exists():
+            quarantine_corrupted_json_file(UPDATE_HISTORY_FILE, reason="invalid_json")
+        return []
+
     items = raw.get("items") if isinstance(raw, dict) else []
     if not isinstance(items, list):
         return []
@@ -382,22 +401,72 @@ def load_update_history() -> list[dict[str, Any]]:
                 "verified_latest": bool(item.get("verified_latest", False)),
                 "installed_version": str(item.get("installed_version") or "").strip(),
                 "latest_version": str(item.get("latest_version") or "").strip(),
+                "note": str(item.get("note") or "").strip(),
             }
         )
     return out
 
 
-def save_update_history(items: list[dict[str, Any]]) -> None:
+def save_update_history(items: list[dict[str, Any]], *, lock: bool = True) -> None:
     ensure_dirs()
-    atomic_write_json(UPDATE_HISTORY_FILE, {"items": items[:MAX_UPDATE_HISTORY_ITEMS]})
+    payload = {"items": items[:MAX_UPDATE_HISTORY_ITEMS]}
+    if lock:
+        with acquire_file_lock(UPDATE_HISTORY_LOCK_FILE):
+            atomic_write_json(UPDATE_HISTORY_FILE, payload)
+        return
+    atomic_write_json(UPDATE_HISTORY_FILE, payload)
 
 
 def append_update_history_entries(entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
-    current = load_update_history()
-    merged = list(entries) + current
-    save_update_history(merged)
+    with acquire_file_lock(UPDATE_HISTORY_LOCK_FILE):
+        current = load_update_history_unlocked()
+        merged = list(entries) + current
+        save_update_history(merged, lock=False)
+
+
+@contextmanager
+def acquire_file_lock(lock_path: Path, timeout_seconds: float = UPDATE_HISTORY_LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+    ensure_dirs()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_fp:
+        if fcntl is None:
+            yield
+            return
+
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        while True:
+            try:
+                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Timed out acquiring lock for {lock_path}")
+                time.sleep(0.05)
+
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+
+
+def quarantine_corrupted_json_file(path: Path, *, reason: str) -> None:
+    if not path.exists():
+        return
+
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    quarantine_path = path.with_suffix(path.suffix + f".corrupt-{stamp}")
+
+    try:
+        path.replace(quarantine_path)
+        append_service_log(
+            f"Corrupted JSON moved to quarantine ({reason}): {path} -> {quarantine_path}"
+        )
+    except Exception as exc:
+        append_service_log(
+            f"Failed to quarantine corrupted JSON ({reason}) for {path}: {exc}"
+        )
 
 
 def detect_brew_candidates() -> list[str]:
@@ -1616,7 +1685,13 @@ def package_from_snapshot(snapshot: dict[str, Any], name: str, kind: str) -> dic
     return None
 
 
-def history_entries_from_results(results: list[dict[str, Any]], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def history_entries_from_results(
+    results: list[dict[str, Any]],
+    snapshot: dict[str, Any],
+    *,
+    snapshot_verified: bool = True,
+    snapshot_error: str | None = None,
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for item in results:
         name = str(item.get("name") or "").strip()
@@ -1627,7 +1702,13 @@ def history_entries_from_results(results: list[dict[str, Any]], snapshot: dict[s
         pkg = package_from_snapshot(snapshot, name, kind) or {}
         latest_version = str(pkg.get("latest_version") or "")
         installed_version = str(pkg.get("installed_version") or "")
-        verified_latest = bool(item.get("ok") and pkg and not bool(pkg.get("outdated")))
+        verified_latest = bool(
+            item.get("ok") and snapshot_verified and pkg and not bool(pkg.get("outdated"))
+        )
+
+        note = ""
+        if snapshot_error:
+            note = f"inventory_refresh_failed: {snapshot_error}"
 
         entries.append(
             {
@@ -1638,10 +1719,45 @@ def history_entries_from_results(results: list[dict[str, Any]], snapshot: dict[s
                 "verified_latest": verified_latest,
                 "installed_version": installed_version,
                 "latest_version": latest_version,
+                "note": note,
             }
         )
 
     return entries
+
+
+def fallback_snapshot_with_error(previous_snapshot: dict[str, Any] | None, error: str) -> dict[str, Any]:
+    payload = dict(previous_snapshot) if isinstance(previous_snapshot, dict) else {}
+
+    packages = payload.get("packages")
+    if not isinstance(packages, list):
+        packages = []
+    payload["packages"] = packages
+
+    counts = payload.get("counts")
+    if not isinstance(counts, dict):
+        counts = summarize_counts(packages)
+    payload["counts"] = counts
+
+    existing_errors = payload.get("errors")
+    errors_list = list(existing_errors) if isinstance(existing_errors, list) else []
+    errors_list.append(f"snapshot refresh failed: {error}")
+    payload["errors"] = errors_list
+
+    payload["app"] = str(payload.get("app") or APP_NAME)
+    payload["updated_at"] = now_iso()
+    return payload
+
+
+def safe_refresh_snapshot(previous_snapshot: dict[str, Any] | None = None) -> tuple[dict[str, Any], str | None]:
+    try:
+        refreshed = compute_snapshot(run_brew_update=False)
+        return refreshed, None
+    except Exception as exc:
+        detail = str(exc)
+        append_check_log(f"Warning: package inventory refresh failed after update: {detail}")
+        append_service_log(f"Warning: package inventory refresh failed after update: {detail}")
+        return fallback_snapshot_with_error(previous_snapshot, detail), detail
 
 
 def run_update_all(track_progress: bool = False) -> dict[str, Any]:
@@ -1698,16 +1814,24 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
             current_package="",
         )
 
-    refreshed = compute_snapshot(run_brew_update=False)
+    refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
 
-    entries = history_entries_from_results(results, refreshed)
+    entries = history_entries_from_results(
+        results,
+        refreshed,
+        snapshot_verified=refresh_error is None,
+        snapshot_error=refresh_error,
+    )
     append_update_history_entries(entries)
 
     if track_progress:
+        completion_message = "All package updates completed"
+        if refresh_error:
+            completion_message = "All package updates completed (inventory refresh warning)"
         set_check_progress(
             running=False,
             phase="completed",
-            message="All package updates completed",
+            message=completion_message,
             done=total,
             total=total,
             eta_seconds=0,
@@ -1721,6 +1845,7 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
         "updated_count": sum(1 for item in results if item.get("ok")),
         "failed_count": sum(1 for item in results if not item.get("ok")),
         "results": results,
+        "inventory_refresh_error": refresh_error,
         "snapshot": refreshed,
     }
 
@@ -1954,6 +2079,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             kind = str(body.get("kind") or "").strip()
 
             try:
+                previous_snapshot = read_json(STATE_FILE) or {}
+
                 def _operation():
                     reset_check_progress_for_run()
                     set_check_progress(
@@ -1981,16 +2108,24 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         current_package="",
                     )
 
-                    snapshot = compute_snapshot(run_brew_update=False)
+                    snapshot, refresh_error = safe_refresh_snapshot(previous_snapshot=previous_snapshot)
 
-                    entries = history_entries_from_results([result], snapshot)
+                    entries = history_entries_from_results(
+                        [result],
+                        snapshot,
+                        snapshot_verified=refresh_error is None,
+                        snapshot_error=refresh_error,
+                    )
                     append_update_history_entries(entries)
 
                     if result.get("ok"):
+                        completed_message = f"Update completed for {name}"
+                        if refresh_error:
+                            completed_message = f"Update completed for {name} (inventory refresh warning)"
                         set_check_progress(
                             running=False,
                             phase="completed",
-                            message=f"Update completed for {name}",
+                            message=completed_message,
                             done=1,
                             total=1,
                             eta_seconds=0,
@@ -2011,7 +2146,11 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             completed_at=now_iso(),
                         )
 
-                    return {"result": result, "snapshot": snapshot}
+                    return {
+                        "result": result,
+                        "snapshot": snapshot,
+                        "inventory_refresh_error": refresh_error,
+                    }
 
                 payload = run_exclusive(f"update_one:{kind}:{name}", _operation)
                 self._send_json(200, {"ok": True, **payload})
