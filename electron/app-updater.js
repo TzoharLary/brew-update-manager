@@ -270,11 +270,79 @@ function findFirstAppBundle(rootDir) {
   return path.join(rootDir, appEntry.name);
 }
 
+function fsEntryType(filePath) {
+  try {
+    const stats = fs.lstatSync(filePath);
+    if (stats.isSymbolicLink()) return 'symlink';
+    if (stats.isDirectory()) return 'dir';
+    if (stats.isFile()) return 'file';
+    return 'other';
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return 'missing';
+    }
+    throw error;
+  }
+}
+
+function removePathIfExists(filePath) {
+  fs.rmSync(filePath, { recursive: true, force: true });
+}
+
+function mergeDeltaNode(sourcePath, targetPath) {
+  const sourceType = fsEntryType(sourcePath);
+  const targetType = fsEntryType(targetPath);
+
+  if (sourceType === 'dir') {
+    if (targetType !== 'missing' && targetType !== 'dir') {
+      removePathIfExists(targetPath);
+    }
+    ensureDir(targetPath);
+
+    const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+    for (const entry of entries) {
+      mergeDeltaNode(path.join(sourcePath, entry.name), path.join(targetPath, entry.name));
+    }
+    return;
+  }
+
+  ensureDir(path.dirname(targetPath));
+
+  if (sourceType === 'symlink') {
+    removePathIfExists(targetPath);
+    const linkTarget = fs.readlinkSync(sourcePath);
+    fs.symlinkSync(linkTarget, targetPath);
+    return;
+  }
+
+  if (targetType !== 'missing' && targetType !== 'file') {
+    removePathIfExists(targetPath);
+  }
+
+  fs.cpSync(sourcePath, targetPath, {
+    recursive: false,
+    force: true,
+    dereference: false,
+  });
+}
+
+function mergeDeltaTree(sourceRoot, targetRoot) {
+  if (!fs.existsSync(sourceRoot)) {
+    return;
+  }
+
+  const entries = fs.readdirSync(sourceRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    mergeDeltaNode(path.join(sourceRoot, entry.name), path.join(targetRoot, entry.name));
+  }
+}
+
 function applyDeltaArchive({ sourceAppPath, deltaArchivePath, outputAppPath, workDir }) {
   if (!fs.existsSync(sourceAppPath)) {
     throw new Error(`Current app bundle not found at ${sourceAppPath}`);
   }
 
+  fs.rmSync(outputAppPath, { recursive: true, force: true });
   fs.cpSync(sourceAppPath, outputAppPath, { recursive: true, force: true, dereference: false });
 
   const deltaExtractDir = path.join(workDir, 'delta-extract');
@@ -289,7 +357,7 @@ function applyDeltaArchive({ sourceAppPath, deltaArchivePath, outputAppPath, wor
   }
 
   if (fs.existsSync(filesRoot)) {
-    fs.cpSync(filesRoot, outputAppPath, { recursive: true, force: true, dereference: false });
+    mergeDeltaTree(filesRoot, outputAppPath);
   }
 
   const removed = [...meta.removedPaths].sort((a, b) => String(b).length - String(a).length);
