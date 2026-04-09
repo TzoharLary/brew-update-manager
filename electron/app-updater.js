@@ -9,6 +9,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const UPDATE_MANIFEST_NAME = 'update-manifest.json';
 const DEFAULT_MIN_SUPPORTED_VERSION = '1.0.0';
 const DELTA_META_SCHEMA_VERSION = 1;
+const MAX_STAGE_DIRS_TO_KEEP = 2;
 
 function nowIso() {
   return new Date().toISOString();
@@ -196,6 +197,48 @@ function resolveBundleExecutablePath(appBundlePath) {
   }
 
   return preferredPath;
+}
+
+function resolveElectronFrameworkBinaryPath(appBundlePath) {
+  return path.join(appBundlePath, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework');
+}
+
+function validateAppBundleLayout(appBundlePath) {
+  const executablePath = resolveBundleExecutablePath(appBundlePath);
+  const frameworkPath = resolveElectronFrameworkBinaryPath(appBundlePath);
+
+  if (!executableExists(executablePath)) {
+    throw new Error(`App bundle is missing executable: ${executablePath}`);
+  }
+
+  if (!fs.existsSync(frameworkPath)) {
+    throw new Error(`App bundle is missing Electron framework binary: ${frameworkPath}`);
+  }
+
+  return {
+    executablePath,
+    frameworkPath,
+  };
+}
+
+function pruneUpdateStageDirs(updatesRoot, { keep = MAX_STAGE_DIRS_TO_KEEP } = {}) {
+  ensureDir(updatesRoot);
+
+  const entries = fs.readdirSync(updatesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('stage-'))
+    .map((entry) => {
+      const fullPath = path.join(updatesRoot, entry.name);
+      const stats = fs.lstatSync(fullPath);
+      return {
+        path: fullPath,
+        mtimeMs: Number(stats.mtimeMs || 0),
+      };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const stale of entries.slice(Math.max(keep, 0))) {
+    fs.rmSync(stale.path, { recursive: true, force: true });
+  }
 }
 
 function currentAppBundlePath() {
@@ -589,13 +632,96 @@ BACKUP_APP="$3"
 MARKER_FILE="$4"
 CURRENT_PID="$5"
 TARGET_EXEC="$6"
+STAGE_ROOT="$7"
+TARGET_FRAMEWORK="$8"
+
+FINALIZED="0"
 
 mkdir -p "$(dirname "$MARKER_FILE")"
-echo "{\"status\":\"pending\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
+
+write_marker() {
+  local status="$1"
+  echo "{\"status\":\"$status\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
+}
+
+cleanup_stage_root() {
+  if [[ -n "$STAGE_ROOT" && -d "$STAGE_ROOT" ]]; then
+    rm -rf "$STAGE_ROOT" 2>/dev/null || true
+  fi
+}
+
+restore_backup() {
+  if [[ "$FINALIZED" == "1" ]]; then
+    return
+  fi
+
+  rm -rf "$TARGET_APP" 2>/dev/null || true
+  if [[ -d "$BACKUP_APP" ]]; then
+    mv "$BACKUP_APP" "$TARGET_APP" 2>/dev/null || true
+    open "$TARGET_APP" >/dev/null 2>&1 || true
+  fi
+
+  write_marker "rolled_back"
+  cleanup_stage_root
+}
+
+trap restore_backup ERR
+trap restore_backup EXIT
+
+is_bundle_layout_valid() {
+  if [[ ! -d "$TARGET_APP" ]]; then
+    return 1
+  fi
+  if [[ ! -x "$TARGET_EXEC" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$TARGET_FRAMEWORK" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+staged_layout_valid() {
+  local staged_exec="$STAGED_APP/Contents/MacOS/$(basename "$TARGET_EXEC")"
+  local staged_framework="$STAGED_APP/Contents/Frameworks/Electron Framework.framework/Electron Framework"
+
+  if [[ ! -x "$staged_exec" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$staged_framework" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+current_target_pid() {
+  local pid=""
+  pid="$(pgrep -f "$TARGET_EXEC" | head -n 1 || true)"
+  if [[ -z "$pid" ]]; then
+    local target_basename
+    target_basename="$(basename "$TARGET_EXEC")"
+    if [[ -n "$target_basename" ]]; then
+      pid="$(pgrep -x "$target_basename" | head -n 1 || true)"
+    fi
+  fi
+  echo "$pid"
+}
+
+write_marker "pending"
 
 while kill -0 "$CURRENT_PID" 2>/dev/null; do
   sleep 0.5
 done
+
+if [[ ! -d "$STAGED_APP" ]]; then
+  write_marker "failed_staged_missing"
+  exit 1
+fi
+
+if ! staged_layout_valid; then
+  write_marker "failed_staged_layout"
+  exit 1
+fi
 
 rm -rf "$BACKUP_APP" 2>/dev/null || true
 if [[ -d "$TARGET_APP" ]]; then
@@ -603,52 +729,63 @@ if [[ -d "$TARGET_APP" ]]; then
 fi
 
 mv "$STAGED_APP" "$TARGET_APP"
-open "$TARGET_APP" || true
 
-is_target_running() {
-  if pgrep -f "$TARGET_EXEC" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  TARGET_BASENAME="$(basename "$TARGET_EXEC")"
-  if [[ -n "$TARGET_BASENAME" ]] && pgrep -x "$TARGET_BASENAME" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  return 1
-}
-
-for _ in 1 2 3 4 5 6; do
-  sleep 5
-  if is_target_running; then
-    rm -rf "$BACKUP_APP" 2>/dev/null || true
-    echo "{\"status\":\"ok\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
-    rm -f "$0" || true
-    exit 0
-  fi
-done
-
-rm -rf "$TARGET_APP" 2>/dev/null || true
-if [[ -d "$BACKUP_APP" ]]; then
-  mv "$BACKUP_APP" "$TARGET_APP"
-  open "$TARGET_APP" || true
+if ! is_bundle_layout_valid; then
+  write_marker "failed_target_layout"
+  exit 1
 fi
 
-echo "{\"status\":\"rolled_back\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$MARKER_FILE"
-rm -f "$0" || true
+open "$TARGET_APP" >/dev/null 2>&1 || true
+
+stable_pid=""
+stable_hits=0
+
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  sleep 5
+  if ! is_bundle_layout_valid; then
+    stable_pid=""
+    stable_hits=0
+    continue
+  fi
+
+  pid="$(current_target_pid)"
+  if [[ -n "$pid" ]]; then
+    if [[ "$pid" == "$stable_pid" ]]; then
+      stable_hits=$((stable_hits + 1))
+    else
+      stable_pid="$pid"
+      stable_hits=1
+    fi
+    if [[ "$stable_hits" -ge 3 ]]; then
+      rm -rf "$BACKUP_APP" 2>/dev/null || true
+      write_marker "ok"
+      cleanup_stage_root
+      FINALIZED="1"
+      trap - ERR EXIT
+      rm -f "$0" || true
+      exit 0
+    fi
+  else
+    stable_pid=""
+    stable_hits=0
+  fi
+done
+exit 1
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   return scriptPath;
 }
 
-function scheduleApplyOnQuit({ app, stagedAppPath, markerFile }) {
+function scheduleApplyOnQuit({ app, stagedAppPath, markerFile, stageRoot }) {
   const targetApp = currentAppBundlePath();
   if (!targetApp) {
     throw new Error('Unable to resolve current app bundle for apply-on-quit');
   }
 
+  const targetLayout = validateAppBundleLayout(targetApp);
   const backupApp = `${targetApp}.rollback`;
-  const targetExec = resolveBundleExecutablePath(targetApp);
+  const targetExec = targetLayout.executablePath;
+  const targetFramework = targetLayout.frameworkPath;
   const applyScript = writeApplyScript();
 
   const helper = spawn('bash', [
@@ -659,6 +796,8 @@ function scheduleApplyOnQuit({ app, stagedAppPath, markerFile }) {
     markerFile,
     String(process.pid),
     targetExec,
+    stageRoot,
+    targetFramework,
   ], {
     detached: true,
     stdio: 'ignore',
@@ -960,6 +1099,13 @@ function createAppUpdater({ app, repo }) {
 
   async function installFromManifest(checkPayload, { onProgress } = {}) {
     const started = Date.now();
+
+    try {
+      pruneUpdateStageDirs(updatesRoot, { keep: MAX_STAGE_DIRS_TO_KEEP });
+    } catch (error) {
+      log('stage_prune_failed', { error: String(error?.message || error) });
+    }
+
     const stageRoot = fs.mkdtempSync(path.join(updatesRoot, `stage-${checkPayload.latestVersion}-${checkPayload.arch}-`));
 
     let modeUsed = 'full';
@@ -1013,6 +1159,8 @@ function createAppUpdater({ app, repo }) {
         modeUsed = 'full';
       }
 
+      validateAppBundleLayout(stagedAppPath);
+
       if (onProgress) {
         onProgress({ phase: 'schedule_restart', percent: 100, message: 'Update staged. Restarting application…', modeUsed, fallbackUsed });
       }
@@ -1041,6 +1189,7 @@ function createAppUpdater({ app, repo }) {
         app,
         stagedAppPath,
         markerFile,
+        stageRoot,
       });
 
       log('install_staged', {
@@ -1060,6 +1209,10 @@ function createAppUpdater({ app, repo }) {
         fallbackReason,
       };
     } catch (error) {
+      if (fs.existsSync(stageRoot)) {
+        fs.rmSync(stageRoot, { recursive: true, force: true });
+      }
+
       log('install_failed', {
         from: checkPayload.currentVersion,
         to: checkPayload.latestVersion,
