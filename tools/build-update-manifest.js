@@ -14,6 +14,12 @@ const MANIFEST_NAME = 'update-manifest.json';
 const CHECKSUMS_NAME = 'update-checksums.txt';
 const REPO = process.env.UPDATE_REPO || 'tzoharlary/brew-update-manager';
 const STRICT_DELTA_VALIDATION = String(process.env.STRICT_DELTA_VALIDATION || 'true').toLowerCase() !== 'false';
+const APP_COPY_OPTIONS = {
+  recursive: true,
+  force: true,
+  dereference: false,
+  verbatimSymlinks: true,
+};
 
 const { applyDeltaArchive } = require(path.join(ROOT, 'electron', 'app-updater'));
 
@@ -214,6 +220,55 @@ function findFirstAppBundle(dirPath) {
   return null;
 }
 
+function findAbsoluteSymlinkEntries(rootPath) {
+  const absoluteLinks = [];
+  const stack = [rootPath];
+
+  while (stack.length) {
+    const current = stack.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const child = path.join(current, entry.name);
+      const stats = fs.lstatSync(child);
+
+      if (stats.isSymbolicLink()) {
+        const linkTarget = fs.readlinkSync(child);
+        if (path.isAbsolute(linkTarget)) {
+          absoluteLinks.push({
+            relativePath: path.relative(rootPath, child),
+            target: linkTarget,
+          });
+        }
+        continue;
+      }
+
+      if (stats.isDirectory()) {
+        stack.push(child);
+      }
+    }
+  }
+
+  return absoluteLinks;
+}
+
+function assertNoAbsoluteSymlinks(rootPath, scopeLabel) {
+  const absoluteLinks = findAbsoluteSymlinkEntries(rootPath);
+  if (!absoluteLinks.length) {
+    return;
+  }
+
+  const preview = absoluteLinks
+    .slice(0, 5)
+    .map((item) => `${item.relativePath} -> ${item.target}`)
+    .join('; ');
+
+  throw new Error(
+    `${scopeLabel} contains absolute symlinks (${absoluteLinks.length}). `
+    + `This breaks portable update bundles. Examples: ${preview}`,
+  );
+}
+
 function copyAppFromDmg(dmgPath, workRoot, arch) {
   const mountPoint = fs.mkdtempSync(path.join(os.tmpdir(), `bum-mount-${arch}-`));
   let attached = false;
@@ -230,7 +285,8 @@ function copyAppFromDmg(dmgPath, workRoot, arch) {
     ensureDir(archWorkRoot);
     const target = path.join(archWorkRoot, path.basename(appPath));
     fs.rmSync(target, { recursive: true, force: true });
-    fs.cpSync(appPath, target, { recursive: true, force: true, dereference: false });
+    fs.cpSync(appPath, target, APP_COPY_OPTIONS);
+    assertNoAbsoluteSymlinks(target, `Copied app from DMG (${arch})`);
     return target;
   } finally {
     if (attached) {
@@ -250,7 +306,8 @@ function copyAppBundle(sourceAppPath, workRoot, scopeLabel) {
 
   const target = path.join(scopedRoot, path.basename(sourceAppPath));
   fs.rmSync(target, { recursive: true, force: true });
-  fs.cpSync(sourceAppPath, target, { recursive: true, force: true, dereference: false });
+  fs.cpSync(sourceAppPath, target, APP_COPY_OPTIONS);
+  assertNoAbsoluteSymlinks(target, `Copied app bundle (${scopeLabel})`);
   return target;
 }
 
