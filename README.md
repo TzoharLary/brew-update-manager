@@ -16,12 +16,14 @@ The project is prepared to be published as a GitHub repository with downloadable
 - Native desktop app window (no browser tab)
 - Bilingual UI: English + Hebrew (with RTL support)
 - Installed tab + Outdated tab
+- Advanced table controls: column sorting + filters (type/status) + search and quick reset
 - Current version + latest version + both release-date columns:
 	- Current version date
 	- Latest version date
 - `Check Now`, per-package `Update`, and `Update All`
 - Automatic checks with user-configurable frequency/time (managed from app settings)
 - In-app Homebrew path settings (auto-detect + manual override)
+- Recent update history with search, filter, and sorting controls
 
 ## Consolidated Project Layout
 
@@ -91,7 +93,7 @@ Artifacts include:
 
 - `Homebrew Update Manager-<version>-<arch>.dmg`
 - `Homebrew Update Manager-<version>-<arch>-full.tar.gz`
-- `Homebrew Update Manager-<prev>-to-<version>-<arch>-delta.tar.gz` (when previous manifest + full package are available)
+- `Homebrew Update Manager-<prev>-to-<version>-<arch>-delta.tar.gz` (when previous release assets are available — manifest full package or DMG fallback)
 - `update-manifest.json`
 - `update-checksums.txt`
 

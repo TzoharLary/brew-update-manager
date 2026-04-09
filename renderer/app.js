@@ -62,6 +62,14 @@ const brewPathStatusEl = document.getElementById('brewPathStatus');
 const updateHistoryListEl = document.getElementById('updateHistoryList');
 const packageSearchInputEl = document.getElementById('packageSearchInput');
 const packageSearchClearBtnEl = document.getElementById('packageSearchClearBtn');
+const packageTypeFilterEl = document.getElementById('packageTypeFilter');
+const packageStatusFilterEl = document.getElementById('packageStatusFilter');
+const packageFilterResetBtnEl = document.getElementById('packageFilterResetBtn');
+const historySearchInputEl = document.getElementById('historySearchInput');
+const historyKindFilterEl = document.getElementById('historyKindFilter');
+const historyStatusFilterEl = document.getElementById('historyStatusFilter');
+const historySortSelectEl = document.getElementById('historySortSelect');
+const historyFiltersClearBtnEl = document.getElementById('historyFiltersClearBtn');
 
 let progressPollTimer = null;
 let progressPollInFlight = false;
@@ -72,6 +80,12 @@ let appUpdateAutoCheckTimer = null;
 let updateHistoryItems = [];
 let appUpdateMeta = loadAppUpdateMeta();
 let packageSearchTerm = '';
+let packageTypeFilter = 'all';
+let packageStatusFilter = 'all';
+let historySearchTerm = '';
+let historyKindFilter = 'all';
+let historyStatusFilter = 'all';
+let historySortBy = 'newest';
 let appUpdateProgressState = null;
 let appUpdateProgressEnabled = false;
 let disposeAppUpdateProgress = null;
@@ -733,11 +747,60 @@ function formatDate(value) {
   return i18n.formatDate(value);
 }
 
+function updateTableFilterControls() {
+  if (packageSearchInputEl) {
+    packageSearchInputEl.placeholder = i18n.t('table.searchPlaceholder');
+    packageSearchInputEl.setAttribute('aria-label', i18n.t('table.searchLabel'));
+  }
+
+  if (packageTypeFilterEl) {
+    packageTypeFilterEl.value = packageTypeFilter;
+  }
+
+  if (packageStatusFilterEl) {
+    packageStatusFilterEl.value = packageStatusFilter;
+  }
+
+  if (packageSearchClearBtnEl) {
+    packageSearchClearBtnEl.disabled = !packageSearchTerm;
+  }
+
+  if (packageFilterResetBtnEl) {
+    const hasAnyFilter = !!packageSearchTerm || packageTypeFilter !== 'all' || packageStatusFilter !== 'all';
+    packageFilterResetBtnEl.disabled = !hasAnyFilter;
+  }
+}
+
+function updateHistoryFilterControls() {
+  if (historySearchInputEl) {
+    historySearchInputEl.placeholder = i18n.t('history.searchPlaceholder');
+    historySearchInputEl.setAttribute('aria-label', i18n.t('history.searchLabel'));
+  }
+
+  if (historyKindFilterEl) {
+    historyKindFilterEl.value = historyKindFilter;
+  }
+
+  if (historyStatusFilterEl) {
+    historyStatusFilterEl.value = historyStatusFilter;
+  }
+
+  if (historySortSelectEl) {
+    historySortSelectEl.value = historySortBy;
+  }
+
+  if (historyFiltersClearBtnEl) {
+    const hasAnyFilter = !!historySearchTerm
+      || historyKindFilter !== 'all'
+      || historyStatusFilter !== 'all'
+      || historySortBy !== 'newest';
+    historyFiltersClearBtnEl.disabled = !hasAnyFilter;
+  }
+}
+
 function updateSearchControls() {
-  if (!packageSearchInputEl || !packageSearchClearBtnEl) return;
-  packageSearchInputEl.placeholder = i18n.t('table.searchPlaceholder');
-  packageSearchInputEl.setAttribute('aria-label', i18n.t('table.searchLabel'));
-  packageSearchClearBtnEl.disabled = !packageSearchTerm;
+  updateTableFilterControls();
+  updateHistoryFilterControls();
 }
 
 function packageMatchesSearch(pkg, normalizedTerm) {
@@ -753,6 +816,22 @@ function packageMatchesSearch(pkg, normalizedTerm) {
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
   return text.includes(normalizedTerm);
+}
+
+function packageKindValue(pkg) {
+  return String(pkg?.kind || 'formula').trim().toLowerCase();
+}
+
+function packageMatchesTypeFilter(pkg) {
+  if (packageTypeFilter === 'all') return true;
+  return packageKindValue(pkg) === packageTypeFilter;
+}
+
+function packageMatchesStatusFilter(pkg) {
+  if (packageStatusFilter === 'all') return true;
+  if (packageStatusFilter === 'needs_update') return !!pkg?.outdated;
+  if (packageStatusFilter === 'up_to_date') return !pkg?.outdated;
+  return true;
 }
 
 function isSortableColumnKey(key) {
@@ -987,14 +1066,76 @@ function historyStatusMeta(item) {
   return { text: i18n.t('history.statusOk'), className: 'warn' };
 }
 
-function renderUpdateHistory(items = []) {
+function historyStatusKey(item) {
+  if (!item?.ok) return 'fail';
+  if (item?.verified_latest) return 'latest';
+  return 'pending';
+}
+
+function historyMatchesSearch(item, normalizedTerm) {
+  if (!normalizedTerm) return true;
+  const text = [
+    item?.name,
+    item?.kind,
+    item?.latest_version,
+    item?.installed_version,
+    historyStatusKey(item),
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  return text.includes(normalizedTerm);
+}
+
+function historyMatchesKindFilter(item) {
+  if (historyKindFilter === 'all') return true;
+  return String(item?.kind || 'formula').trim().toLowerCase() === historyKindFilter;
+}
+
+function historyMatchesStatusFilterItem(item) {
+  if (historyStatusFilter === 'all') return true;
+  return historyStatusKey(item) === historyStatusFilter;
+}
+
+function historyTimestamp(item) {
+  const stamp = Date.parse(String(item?.timestamp || '').trim());
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+function sortHistoryItems(items) {
+  const list = [...items];
+  switch (historySortBy) {
+    case 'oldest':
+      return list.sort((a, b) => historyTimestamp(a) - historyTimestamp(b));
+    case 'name_asc':
+      return list.sort((a, b) => compareTextValues(a?.name, b?.name, 'asc'));
+    case 'name_desc':
+      return list.sort((a, b) => compareTextValues(a?.name, b?.name, 'desc'));
+    case 'newest':
+    default:
+      return list.sort((a, b) => historyTimestamp(b) - historyTimestamp(a));
+  }
+}
+
+function getFilteredHistoryItems() {
+  const base = Array.isArray(updateHistoryItems) ? updateHistoryItems : [];
+  const filtered = base.filter((item) => {
+    if (!historyMatchesSearch(item, historySearchTerm)) return false;
+    if (!historyMatchesKindFilter(item)) return false;
+    if (!historyMatchesStatusFilterItem(item)) return false;
+    return true;
+  });
+
+  return sortHistoryItems(filtered);
+}
+
+function renderUpdateHistory(items = [], { filtered = false } = {}) {
   if (!updateHistoryListEl) return;
 
   updateHistoryListEl.innerHTML = '';
   if (!Array.isArray(items) || items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'muted small';
-    empty.textContent = i18n.t('history.empty');
+    empty.textContent = filtered ? i18n.t('history.emptyFiltered') : i18n.t('history.empty');
     updateHistoryListEl.appendChild(empty);
     return;
   }
@@ -1041,6 +1182,16 @@ function renderUpdateHistory(items = []) {
   });
 }
 
+function renderHistoryPanel() {
+  const hasFilters = !!historySearchTerm
+    || historyKindFilter !== 'all'
+    || historyStatusFilter !== 'all'
+    || historySortBy !== 'newest';
+  const items = getFilteredHistoryItems();
+  renderUpdateHistory(items, { filtered: hasFilters });
+  updateHistoryFilterControls();
+}
+
 async function loadUpdateHistory() {
   try {
     const payload = await window.brewApp.getUpdateHistory();
@@ -1048,7 +1199,7 @@ async function loadUpdateHistory() {
   } catch {
     updateHistoryItems = [];
   }
-  renderUpdateHistory(updateHistoryItems);
+  renderHistoryPanel();
 }
 
 function formatDaysOutdated(pkg) {
@@ -1104,9 +1255,12 @@ function getFilteredPackages() {
     ? pkgs.filter((pkg) => pkg.outdated)
     : pkgs;
 
+  const byType = byTab.filter((pkg) => packageMatchesTypeFilter(pkg));
+  const byStatus = byType.filter((pkg) => packageMatchesStatusFilter(pkg));
+
   const filtered = packageSearchTerm
-    ? byTab.filter((pkg) => packageMatchesSearch(pkg, packageSearchTerm))
-    : byTab;
+    ? byStatus.filter((pkg) => packageMatchesSearch(pkg, packageSearchTerm))
+    : byStatus;
 
   return applyTableSort(filtered);
 }
@@ -1118,6 +1272,7 @@ function renderTable() {
   const list = getFilteredPackages();
   const outdatedCount = all.filter((pkg) => pkg.outdated).length;
   const searchRaw = String(packageSearchInputEl?.value || '').trim();
+  const hasAdvancedFilters = packageTypeFilter !== 'all' || packageStatusFilter !== 'all';
 
   if (packageSearchTerm) {
     tableTitleEl.textContent = activeTab === 'outdated'
@@ -1129,6 +1284,10 @@ function renderTable() {
         count: i18n.formatNumber(list.length),
         query: searchRaw,
       });
+  } else if (hasAdvancedFilters) {
+    tableTitleEl.textContent = activeTab === 'outdated'
+      ? i18n.t('table.showingOutdatedFiltered', { count: i18n.formatNumber(list.length) })
+      : i18n.t('table.showingAllFiltered', { count: i18n.formatNumber(list.length) });
   } else {
     tableTitleEl.textContent = activeTab === 'outdated'
       ? i18n.t('table.showingOutdated', { count: i18n.formatNumber(list.length) })
@@ -1146,6 +1305,8 @@ function renderTable() {
     td.className = 'muted';
     if (packageSearchTerm) {
       td.textContent = i18n.t('table.noSearchResults', { query: searchRaw || packageSearchTerm });
+    } else if (hasAdvancedFilters) {
+      td.textContent = i18n.t('table.noFilteredResults');
     } else {
       td.textContent = activeTab === 'outdated' ? i18n.t('table.noUpdates') : i18n.t('table.noPackages');
     }
@@ -1228,7 +1389,7 @@ function refreshStaticText() {
   renderCards(snapshot || { counts: {} });
   renderTable();
   renderSettings();
-  renderUpdateHistory(updateHistoryItems);
+  renderHistoryPanel();
   renderAppUpdateStatus();
   updateSearchControls();
   applyActionAvailability();
@@ -1468,6 +1629,78 @@ if (packageSearchClearBtnEl) {
     updateSearchControls();
     renderTable();
     packageSearchInputEl.focus();
+  });
+}
+
+if (packageTypeFilterEl) {
+  packageTypeFilterEl.addEventListener('change', () => {
+    packageTypeFilter = String(packageTypeFilterEl.value || 'all');
+    updateSearchControls();
+    renderTable();
+  });
+}
+
+if (packageStatusFilterEl) {
+  packageStatusFilterEl.addEventListener('change', () => {
+    packageStatusFilter = String(packageStatusFilterEl.value || 'all');
+    updateSearchControls();
+    renderTable();
+  });
+}
+
+if (packageFilterResetBtnEl) {
+  packageFilterResetBtnEl.addEventListener('click', () => {
+    packageSearchTerm = '';
+    packageTypeFilter = 'all';
+    packageStatusFilter = 'all';
+    if (packageSearchInputEl) {
+      packageSearchInputEl.value = '';
+      packageSearchInputEl.focus();
+    }
+    updateSearchControls();
+    renderTable();
+  });
+}
+
+if (historySearchInputEl) {
+  historySearchInputEl.addEventListener('input', () => {
+    historySearchTerm = String(historySearchInputEl.value || '').trim().toLowerCase();
+    renderHistoryPanel();
+  });
+}
+
+if (historyKindFilterEl) {
+  historyKindFilterEl.addEventListener('change', () => {
+    historyKindFilter = String(historyKindFilterEl.value || 'all');
+    renderHistoryPanel();
+  });
+}
+
+if (historyStatusFilterEl) {
+  historyStatusFilterEl.addEventListener('change', () => {
+    historyStatusFilter = String(historyStatusFilterEl.value || 'all');
+    renderHistoryPanel();
+  });
+}
+
+if (historySortSelectEl) {
+  historySortSelectEl.addEventListener('change', () => {
+    historySortBy = String(historySortSelectEl.value || 'newest');
+    renderHistoryPanel();
+  });
+}
+
+if (historyFiltersClearBtnEl) {
+  historyFiltersClearBtnEl.addEventListener('click', () => {
+    historySearchTerm = '';
+    historyKindFilter = 'all';
+    historyStatusFilter = 'all';
+    historySortBy = 'newest';
+    if (historySearchInputEl) {
+      historySearchInputEl.value = '';
+      historySearchInputEl.focus();
+    }
+    renderHistoryPanel();
   });
 }
 

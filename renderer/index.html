@@ -377,6 +377,14 @@
       padding-right: 2px;
     }
 
+    .history-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
     .history-item {
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -493,6 +501,29 @@
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+    }
+
+    .filter-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      padding: 6px 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .filter-box select {
+      min-width: 120px;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.86rem;
+      font-weight: 500;
     }
 
     .search-box {
@@ -825,6 +856,7 @@
       .loader .inner { min-width: 300px; }
       .loader-status-grid { grid-template-columns: 1fr; }
       .search-box input { min-width: 130px; }
+      .filter-box select { min-width: 104px; }
     }
   </style>
 </head>
@@ -962,6 +994,43 @@
             </summary>
             <div class="settings-group-content">
               <div class="settings-note" data-i18n="history.help">Shows the latest package updates and when they were performed.</div>
+              <div class="history-tools">
+                <label class="search-box" for="historySearchInput">
+                  <span data-i18n="history.searchLabel">Search</span>
+                  <input id="historySearchInput" type="search" />
+                </label>
+
+                <label class="filter-box" for="historyKindFilter">
+                  <span data-i18n="history.kindFilterLabel">Type</span>
+                  <select id="historyKindFilter">
+                    <option value="all" data-i18n="history.kindFilterAll">All types</option>
+                    <option value="formula" data-i18n="history.kindFilterFormula">Formulae</option>
+                    <option value="cask" data-i18n="history.kindFilterCask">Casks</option>
+                  </select>
+                </label>
+
+                <label class="filter-box" for="historyStatusFilter">
+                  <span data-i18n="history.statusFilterLabel">Status</span>
+                  <select id="historyStatusFilter">
+                    <option value="all" data-i18n="history.statusFilterAll">All statuses</option>
+                    <option value="latest" data-i18n="history.statusFilterLatest">Verified latest</option>
+                    <option value="pending" data-i18n="history.statusFilterPending">Verification pending</option>
+                    <option value="fail" data-i18n="history.statusFilterFailed">Failed</option>
+                  </select>
+                </label>
+
+                <label class="filter-box" for="historySortSelect">
+                  <span data-i18n="history.sortLabel">Sort</span>
+                  <select id="historySortSelect">
+                    <option value="newest" data-i18n="history.sortNewest">Newest first</option>
+                    <option value="oldest" data-i18n="history.sortOldest">Oldest first</option>
+                    <option value="name_asc" data-i18n="history.sortNameAsc">Name A → Z</option>
+                    <option value="name_desc" data-i18n="history.sortNameDesc">Name Z → A</option>
+                  </select>
+                </label>
+
+                <button id="historyFiltersClearBtn" class="btn-quiet" data-i18n="history.clearFilters">Reset filters</button>
+              </div>
               <div class="history-list" id="updateHistoryList"></div>
             </div>
           </details>
@@ -984,7 +1053,27 @@
             <span data-i18n="table.searchLabel">Search</span>
             <input id="packageSearchInput" type="search" />
           </label>
+
+          <label class="filter-box" for="packageTypeFilter">
+            <span data-i18n="table.filterTypeLabel">Type</span>
+            <select id="packageTypeFilter">
+              <option value="all" data-i18n="table.filterTypeAll">All types</option>
+              <option value="formula" data-i18n="table.filterTypeFormula">Formulae</option>
+              <option value="cask" data-i18n="table.filterTypeCask">Casks</option>
+            </select>
+          </label>
+
+          <label class="filter-box" for="packageStatusFilter">
+            <span data-i18n="table.filterStatusLabel">Status</span>
+            <select id="packageStatusFilter">
+              <option value="all" data-i18n="table.filterStatusAll">All statuses</option>
+              <option value="needs_update" data-i18n="table.filterStatusNeedsUpdate">Needs update</option>
+              <option value="up_to_date" data-i18n="table.filterStatusUpToDate">Up to date</option>
+            </select>
+          </label>
+
           <button id="packageSearchClearBtn" class="btn-quiet" data-i18n="table.clearSearch">Clear</button>
+          <button id="packageFilterResetBtn" class="btn-quiet" data-i18n="table.resetFilters">Reset filters</button>
           <div id="updatedAt" class="small muted"></div>
         </div>
       </div>
