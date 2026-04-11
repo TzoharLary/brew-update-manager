@@ -302,3 +302,8 @@ ipcMain.handle('update:selected', async (_event, payload) => fetchJson(`${SERVIC
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
+ipcMain.handle('operation:cancel', async () => fetchJson(`${SERVICE_BASE}/api/cancel-operation`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({}),
+}));

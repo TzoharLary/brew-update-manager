@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('brewApp', {
   updateOne: (name, kind) => ipcRenderer.invoke('update:one', { name, kind }),
   updateAll: () => ipcRenderer.invoke('update:all'),
   updateSelected: (packages) => ipcRenderer.invoke('update:selected', { packages }),
+  cancelOperation: () => ipcRenderer.invoke('operation:cancel'),
 });

@@ -860,6 +860,93 @@
       color: #1f8b5e;
     }
 
+    .loader-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .update-live-panel {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfdff;
+      padding: 10px;
+      display: none;
+      gap: 8px;
+    }
+
+    .update-live-panel.visible {
+      display: grid;
+    }
+
+    .update-live-title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .update-live-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .update-live-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 6px 8px;
+    }
+
+    .update-live-k {
+      color: var(--muted);
+      font-size: 0.72rem;
+      margin-bottom: 2px;
+    }
+
+    .update-live-v {
+      color: var(--text);
+      font-size: 0.84rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .update-live-lists {
+      display: grid;
+      gap: 6px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .update-live-list {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 7px;
+      min-height: 80px;
+    }
+
+    .update-live-list h4 {
+      margin: 0 0 4px;
+      font-size: 0.74rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .update-live-list pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.74rem;
+      line-height: 1.35;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      max-height: 130px;
+      overflow: auto;
+    }
+
     .name-main {
       font-weight: 700;
       font-size: 0.94rem;
@@ -879,6 +966,8 @@
       th, td { padding: 10px 8px; }
       .loader .inner { min-width: 300px; }
       .loader-status-grid { grid-template-columns: 1fr; }
+      .update-live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .update-live-lists { grid-template-columns: 1fr; }
       .search-box input { min-width: 130px; }
       .filter-box select { min-width: 104px; }
     }
@@ -1196,7 +1285,50 @@
         <div class="loader-step" data-step="collecting_installed" data-i18n="progress.phase.collecting_installed">Collecting installed packages</div>
         <div class="loader-step" data-step="resolving_dates" data-i18n="progress.phase.resolving_dates">Resolving release dates</div>
         <div class="loader-step" data-step="translating_descriptions" data-i18n="progress.phase.translating_descriptions">Translating descriptions</div>
+        <div class="loader-step" data-step="canceled" data-i18n="progress.phase.canceled">Canceled</div>
         <div class="loader-step" data-step="completed" data-i18n="progress.phase.completed">Completed</div>
+      </div>
+
+      <div class="loader-actions">
+        <button id="loaderCancelBtn" class="btn-quiet" data-i18n="progress.cancelOperation">Cancel current operation</button>
+      </div>
+
+      <div class="update-live-panel" id="updateLivePanel">
+        <div class="update-live-title" data-i18n="progress.liveUpdateTitle">Live package update details</div>
+
+        <div class="update-live-grid">
+          <div class="update-live-card">
+            <div class="update-live-k" data-i18n="progress.totalPackages">Total packages</div>
+            <div class="update-live-v" id="updateLiveTotal">0</div>
+          </div>
+          <div class="update-live-card">
+            <div class="update-live-k" data-i18n="progress.completedPackages">Completed</div>
+            <div class="update-live-v" id="updateLiveCompleted">0</div>
+          </div>
+          <div class="update-live-card">
+            <div class="update-live-k" data-i18n="progress.remainingPackages">Remaining</div>
+            <div class="update-live-v" id="updateLiveRemaining">0</div>
+          </div>
+          <div class="update-live-card">
+            <div class="update-live-k" data-i18n="progress.failedPackages">Failed</div>
+            <div class="update-live-v" id="updateLiveFailed">0</div>
+          </div>
+        </div>
+
+        <div class="update-live-lists">
+          <div class="update-live-list">
+            <h4 data-i18n="progress.completedList">Completed recently</h4>
+            <pre id="updateLiveCompletedList">—</pre>
+          </div>
+          <div class="update-live-list">
+            <h4 data-i18n="progress.remainingList">Remaining next</h4>
+            <pre id="updateLiveRemainingList">—</pre>
+          </div>
+          <div class="update-live-list">
+            <h4 data-i18n="progress.failedList">Failed so far</h4>
+            <pre id="updateLiveFailedList">—</pre>
+          </div>
+        </div>
       </div>
     </div>
   </div>

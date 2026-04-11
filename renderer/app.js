@@ -32,6 +32,15 @@ const loaderPhaseValueEl = document.getElementById('loaderPhaseValue');
 const loaderCurrentValueEl = document.getElementById('loaderCurrentValue');
 const loaderEtaValueEl = document.getElementById('loaderEtaValue');
 const loaderStepEls = Array.from(document.querySelectorAll('#loaderSteps [data-step]'));
+const loaderCancelBtn = document.getElementById('loaderCancelBtn');
+const updateLivePanelEl = document.getElementById('updateLivePanel');
+const updateLiveTotalEl = document.getElementById('updateLiveTotal');
+const updateLiveCompletedEl = document.getElementById('updateLiveCompleted');
+const updateLiveRemainingEl = document.getElementById('updateLiveRemaining');
+const updateLiveFailedEl = document.getElementById('updateLiveFailed');
+const updateLiveCompletedListEl = document.getElementById('updateLiveCompletedList');
+const updateLiveRemainingListEl = document.getElementById('updateLiveRemainingList');
+const updateLiveFailedListEl = document.getElementById('updateLiveFailedList');
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
 const updateSelectedBtn = document.getElementById('updateSelectedBtn');
@@ -98,6 +107,7 @@ let appUpdateProgressEnabled = false;
 let disposeAppUpdateProgress = null;
 let tableSortState = loadSavedTableSort();
 const selectedPackageKeys = new Set();
+let cancelInFlight = false;
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -109,6 +119,7 @@ const LOADER_PHASE_ORDER = [
   'collecting_installed',
   'resolving_dates',
   'translating_descriptions',
+  'canceled',
   'completed',
   'error',
 ];
@@ -450,6 +461,112 @@ function setInlineStatus(el, text, isError = false) {
   el.style.color = isError ? 'var(--danger)' : 'var(--muted)';
 }
 
+function parseBusyOperationInfo(errorMessage) {
+  const raw = String(errorMessage || '');
+  const match = raw.match(/Operation '([^']+)' is already running since ([^\n]+)/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    name: String(match[1] || '').trim(),
+    sinceRaw: String(match[2] || '').trim(),
+  };
+}
+
+function formatOperationErrorMessage(errorLike) {
+  const raw = String(errorLike?.message || errorLike || '').trim();
+  const busy = parseBusyOperationInfo(raw);
+  if (!busy) {
+    return raw;
+  }
+
+  return i18n.t('message.operationBusy', {
+    name: busy.name || i18n.t('common.unknown'),
+    since: formatDate(busy.sinceRaw),
+  });
+}
+
+function progressPackageLabel(item) {
+  if (!item || typeof item !== 'object') {
+    return String(item || '').trim();
+  }
+  const label = String(item.label || '').trim();
+  if (label) return label;
+  const name = String(item.name || '').trim();
+  const kind = String(item.kind || '').trim();
+  if (name && kind) return `${kind}:${name}`;
+  return name || kind;
+}
+
+function renderProgressPackageList(items, { mode = 'generic', limit = 8 } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    return i18n.t('progress.noItems');
+  }
+
+  const rows = list.slice(0, limit).map((item) => {
+    const label = progressPackageLabel(item) || i18n.t('common.unknown');
+    if (mode === 'completed') {
+      if (item?.canceled) return `🛑 ${label}`;
+      if (item?.skipped) return `⏭ ${label}`;
+      if (item?.ok) return `✅ ${label}`;
+      const detail = String(item?.error || '').trim();
+      return detail ? `❌ ${label} — ${detail}` : `❌ ${label}`;
+    }
+    if (mode === 'failed') {
+      const detail = String(item?.error || '').trim();
+      return detail ? `❌ ${label} — ${detail}` : `❌ ${label}`;
+    }
+    return `• ${label}`;
+  });
+
+  const remaining = list.length - rows.length;
+  if (remaining > 0) {
+    rows.push(`… ${i18n.t('message.moreItems', { count: i18n.formatNumber(remaining) })}`);
+  }
+
+  return rows.join('\n');
+}
+
+function renderUpdateLivePanel(progress) {
+  if (!updateLivePanelEl) return;
+
+  const operationName = String(progress?.operation_name || '').trim().toLowerCase();
+  const planned = Array.isArray(progress?.planned_packages) ? progress.planned_packages : [];
+  const completed = Array.isArray(progress?.completed_packages) ? progress.completed_packages : [];
+  const remaining = Array.isArray(progress?.remaining_packages) ? progress.remaining_packages : [];
+  const failed = Array.isArray(progress?.failed_packages) ? progress.failed_packages : [];
+  const isUpdateOperation = operationName.startsWith('update');
+
+  if (!isUpdateOperation) {
+    updateLivePanelEl.classList.remove('visible');
+    return;
+  }
+
+  updateLivePanelEl.classList.add('visible');
+
+  const total = planned.length || Number(progress?.total || 0);
+  const done = completed.length || Number(progress?.done || 0);
+  const remainingCount = remaining.length || Math.max(0, total - done);
+  const failedCount = failed.length;
+
+  if (updateLiveTotalEl) updateLiveTotalEl.textContent = i18n.formatNumber(total);
+  if (updateLiveCompletedEl) updateLiveCompletedEl.textContent = i18n.formatNumber(done);
+  if (updateLiveRemainingEl) updateLiveRemainingEl.textContent = i18n.formatNumber(remainingCount);
+  if (updateLiveFailedEl) updateLiveFailedEl.textContent = i18n.formatNumber(failedCount);
+
+  if (updateLiveCompletedListEl) {
+    updateLiveCompletedListEl.textContent = renderProgressPackageList(completed, { mode: 'completed', limit: 8 });
+  }
+  if (updateLiveRemainingListEl) {
+    updateLiveRemainingListEl.textContent = renderProgressPackageList(remaining, { mode: 'generic', limit: 8 });
+  }
+  if (updateLiveFailedListEl) {
+    updateLiveFailedListEl.textContent = renderProgressPackageList(failed, { mode: 'failed', limit: 6 });
+  }
+}
+
 function setUpdateHistoryStatus(text, isError = false) {
   if (!updateHistoryStatusEl) return;
   const value = String(text || '').trim();
@@ -686,6 +803,21 @@ function resetLoaderProgress() {
   loaderStepEls.forEach((stepEl) => {
     stepEl.classList.remove('active', 'done');
   });
+
+  if (loaderCancelBtn) {
+    loaderCancelBtn.disabled = true;
+  }
+
+  if (updateLivePanelEl) {
+    updateLivePanelEl.classList.remove('visible');
+  }
+  if (updateLiveTotalEl) updateLiveTotalEl.textContent = '0';
+  if (updateLiveCompletedEl) updateLiveCompletedEl.textContent = '0';
+  if (updateLiveRemainingEl) updateLiveRemainingEl.textContent = '0';
+  if (updateLiveFailedEl) updateLiveFailedEl.textContent = '0';
+  if (updateLiveCompletedListEl) updateLiveCompletedListEl.textContent = i18n.t('progress.noItems');
+  if (updateLiveRemainingListEl) updateLiveRemainingListEl.textContent = i18n.t('progress.noItems');
+  if (updateLiveFailedListEl) updateLiveFailedListEl.textContent = i18n.t('progress.noItems');
 }
 
 function formatEta(seconds) {
@@ -763,7 +895,15 @@ function renderCheckProgress(progress) {
   if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = current || i18n.t('progress.currentNone');
   if (loaderEtaValueEl) loaderEtaValueEl.textContent = etaText;
 
+  if (loaderCancelBtn) {
+    const operationName = String(progress.operation_name || '').trim().toLowerCase();
+    const canCancel = !!progress.running && !!operationName;
+    const cancelAlreadyRequested = !!progress.cancel_requested;
+    loaderCancelBtn.disabled = !canCancel || cancelInFlight || cancelAlreadyRequested;
+  }
+
   renderLoaderSteps(progress.phase);
+  renderUpdateLivePanel(progress);
 
   loaderProgressMetaEl.textContent = countLabel;
 }
@@ -795,6 +935,25 @@ function stopProgressPolling() {
     progressPollTimer = null;
   }
   progressPollInFlight = false;
+}
+
+async function cancelCurrentOperation() {
+  if (cancelInFlight) return;
+  cancelInFlight = true;
+
+  if (loaderCancelBtn) {
+    loaderCancelBtn.disabled = true;
+  }
+
+  try {
+    await window.brewApp.cancelOperation();
+    showMessage(i18n.t('message.cancelRequestSent'));
+  } catch (err) {
+    showMessage(i18n.t('message.cancelRequestFailed', { error: formatOperationErrorMessage(err) }), true);
+  } finally {
+    cancelInFlight = false;
+    await pollCheckProgress();
+  }
 }
 
 function formatDate(value) {
@@ -1639,7 +1798,7 @@ async function checkNow() {
     updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
     showMessage(i18n.t('message.checkSuccess'));
   } catch (err) {
-    showMessage(i18n.t('message.checkFailed', { error: err.message }), true);
+    showMessage(i18n.t('message.checkFailed', { error: formatOperationErrorMessage(err) }), true);
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
@@ -1656,8 +1815,8 @@ async function updateOne(name, kind, sourceBtn = null) {
 
   clearMessage();
   showMessage(i18n.t('message.updatingOne', { name }));
-  busyLoading = true;
-  applyActionAvailability();
+  setLoading(true, 'message.updatingOne', { name });
+  startProgressPolling();
 
   try {
     const res = await window.brewApp.updateOne(name, kind);
@@ -1688,10 +1847,10 @@ async function updateOne(name, kind, sourceBtn = null) {
 
     await loadUpdateHistory();
   } catch (err) {
-    showMessage(i18n.t('message.updateOneRequestFailed', { error: err.message }), true);
+    showMessage(i18n.t('message.updateOneRequestFailed', { error: formatOperationErrorMessage(err) }), true);
   } finally {
-    busyLoading = false;
-    applyActionAvailability();
+    stopProgressPolling();
+    setLoading(false, 'message.loadingState');
     if (sourceBtn) {
       sourceBtn.textContent = i18n.t('buttons.update');
     }
@@ -1715,8 +1874,8 @@ async function updateSelected() {
 
   clearMessage();
   showMessage(i18n.t('message.updatingSelected', { count: i18n.formatNumber(selected.length) }));
-  busyLoading = true;
-  applyActionAvailability();
+  setLoading(true, 'message.updatingSelected', { count: i18n.formatNumber(selected.length) });
+  startProgressPolling();
 
   try {
     const res = await window.brewApp.updateSelected(selected);
@@ -1769,10 +1928,10 @@ ${i18n.t('message.inventoryRefreshWarning', {
 
     await loadUpdateHistory();
   } catch (err) {
-    showMessage(i18n.t('message.updateSelectedFailed', { error: err.message }), true);
+    showMessage(i18n.t('message.updateSelectedFailed', { error: formatOperationErrorMessage(err) }), true);
   } finally {
-    busyLoading = false;
-    applyActionAvailability();
+    stopProgressPolling();
+    setLoading(false, 'message.loadingState');
     updateSelectionSummary();
   }
 }
@@ -1785,8 +1944,8 @@ async function updateAll() {
 
   clearMessage();
   showMessage(i18n.t('message.updatingAll'));
-  busyLoading = true;
-  applyActionAvailability();
+  setLoading(true, 'message.updatingAll');
+  startProgressPolling();
   try {
     const res = await window.brewApp.updateAll();
     snapshot = res.snapshot;
@@ -1816,10 +1975,10 @@ async function updateAll() {
 
     await loadUpdateHistory();
   } catch (err) {
-    showMessage(i18n.t('message.updateAllFailed', { error: err.message }), true);
+    showMessage(i18n.t('message.updateAllFailed', { error: formatOperationErrorMessage(err) }), true);
   } finally {
-    busyLoading = false;
-    applyActionAvailability();
+    stopProgressPolling();
+    setLoading(false, 'message.loadingState');
     updateAllBtn.textContent = i18n.t('actions.updateAll');
   }
 }
@@ -2005,6 +2164,7 @@ updateAllBtn.addEventListener('click', updateAll);
 if (updateSelectedBtn) updateSelectedBtn.addEventListener('click', updateSelected);
 if (selectVisibleOutdatedBtn) selectVisibleOutdatedBtn.addEventListener('click', selectVisibleOutdated);
 if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
+if (loaderCancelBtn) loaderCancelBtn.addEventListener('click', cancelCurrentOperation);
 checkAppUpdateBtn.addEventListener('click', () => checkAppUpdate({ silent: false }));
 installAppUpdateBtn.addEventListener('click', installAppUpdate);
 scheduleEnabledEl.addEventListener('change', updateSchedulerFieldVisibility);
