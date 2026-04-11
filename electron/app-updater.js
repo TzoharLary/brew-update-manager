@@ -519,6 +519,41 @@ function removePathIfExists(filePath) {
   fs.rmSync(filePath, { recursive: true, force: true });
 }
 
+function ensureDirectoryPath(targetDir) {
+  const resolved = path.resolve(targetDir);
+  const parsed = path.parse(resolved);
+  const segments = resolved.slice(parsed.root.length).split(path.sep).filter(Boolean);
+
+  let cursor = parsed.root || path.sep;
+  for (const segment of segments) {
+    cursor = path.join(cursor, segment);
+    const entryType = fsEntryType(cursor);
+
+    if (entryType === 'missing') {
+      fs.mkdirSync(cursor, { recursive: false });
+      continue;
+    }
+
+    if (entryType === 'dir') {
+      continue;
+    }
+
+    if (entryType === 'symlink') {
+      try {
+        const stat = fs.statSync(cursor);
+        if (stat.isDirectory()) {
+          continue;
+        }
+      } catch {
+        // Fall through to replace broken or non-directory symlink.
+      }
+    }
+
+    removePathIfExists(cursor);
+    fs.mkdirSync(cursor, { recursive: false });
+  }
+}
+
 function mergeDeltaNode(sourcePath, targetPath) {
   const sourceType = fsEntryType(sourcePath);
   const targetType = fsEntryType(targetPath);
@@ -527,16 +562,22 @@ function mergeDeltaNode(sourcePath, targetPath) {
     if (targetType !== 'missing' && targetType !== 'dir') {
       removePathIfExists(targetPath);
     }
-    ensureDir(targetPath);
+    ensureDirectoryPath(targetPath);
 
     const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
     for (const entry of entries) {
-      mergeDeltaNode(path.join(sourcePath, entry.name), path.join(targetPath, entry.name));
+      const childSource = path.join(sourcePath, entry.name);
+      const childTarget = path.join(targetPath, entry.name);
+      try {
+        mergeDeltaNode(childSource, childTarget);
+      } catch (error) {
+        throw new Error(`Failed to merge delta entry ${childSource} -> ${childTarget}: ${error.message}`);
+      }
     }
     return;
   }
 
-  ensureDir(path.dirname(targetPath));
+  ensureDirectoryPath(path.dirname(targetPath));
 
   if (sourceType === 'symlink') {
     removePathIfExists(targetPath);
@@ -561,9 +602,19 @@ function mergeDeltaTree(sourceRoot, targetRoot) {
     return;
   }
 
+  if (fsEntryType(sourceRoot) !== 'dir') {
+    throw new Error(`Delta files root is not a directory: ${sourceRoot}`);
+  }
+
   const entries = fs.readdirSync(sourceRoot, { withFileTypes: true });
   for (const entry of entries) {
-    mergeDeltaNode(path.join(sourceRoot, entry.name), path.join(targetRoot, entry.name));
+    const sourceEntry = path.join(sourceRoot, entry.name);
+    const targetEntry = path.join(targetRoot, entry.name);
+    try {
+      mergeDeltaNode(sourceEntry, targetEntry);
+    } catch (error) {
+      throw new Error(`Delta merge failed for ${sourceEntry}: ${error.message}`);
+    }
   }
 }
 

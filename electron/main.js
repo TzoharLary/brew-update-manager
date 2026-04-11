@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
+const net = require('node:net');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { createAppUpdater } = require('./app-updater');
@@ -37,8 +38,9 @@ function resolveServiceScriptPath() {
 const SERVICE_SCRIPT_INFO = resolveServiceScriptPath();
 const SERVICE_SCRIPT = SERVICE_SCRIPT_INFO.resolved;
 const SERVICE_HOST = '127.0.0.1';
-const SERVICE_PORT = 8765;
-const SERVICE_BASE = `http://${SERVICE_HOST}:${SERVICE_PORT}`;
+const SERVICE_PORT_MIN = 8765;
+const SERVICE_PORT_MAX = 8795;
+let activeServicePort = SERVICE_PORT_MIN;
 const REQUIRED_PYTHON = '3.14';
 const FIXED_UPDATE_REPO = 'tzoharlary/brew-update-manager';
 
@@ -111,6 +113,14 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function serviceBase() {
+  return `http://${SERVICE_HOST}:${activeServicePort}`;
+}
+
+function serviceUrl(pathname) {
+  return `${serviceBase()}${pathname}`;
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
@@ -121,17 +131,58 @@ async function fetchJson(url, options = {}) {
   return payload;
 }
 
-async function serviceHealthy() {
+async function serviceHealthyOnPort(port) {
   try {
-    const res = await fetch(`${SERVICE_BASE}/health`, { method: 'GET' });
-    return res.ok;
+    const res = await fetch(`http://${SERVICE_HOST}:${port}/health`, { method: 'GET' });
+    if (!res.ok) return false;
+
+    const payload = await res.json().catch(() => null);
+    if (!payload || typeof payload !== 'object') return false;
+    return payload.ok === true && payload.app === 'Homebrew Update Manager';
   } catch {
     return false;
   }
 }
 
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+
+    server.once('error', () => {
+      resolve(false);
+    });
+
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+
+    server.listen(port, SERVICE_HOST);
+  });
+}
+
+async function selectServicePort() {
+  for (let port = SERVICE_PORT_MIN; port <= SERVICE_PORT_MAX; port += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await serviceHealthyOnPort(port)) {
+      return { port, alreadyRunning: true };
+    }
+  }
+
+  for (let port = SERVICE_PORT_MIN; port <= SERVICE_PORT_MAX; port += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPortAvailable(port)) {
+      return { port, alreadyRunning: false };
+    }
+  }
+
+  throw new Error(`No available backend port found in range ${SERVICE_PORT_MIN}-${SERVICE_PORT_MAX}`);
+}
+
 async function ensureServiceRunning() {
-  if (await serviceHealthy()) return;
+  const selection = await selectServicePort();
+  activeServicePort = selection.port;
+
+  if (selection.alreadyRunning) return;
 
   if (!fs.existsSync(SERVICE_SCRIPT)) {
     const tried = SERVICE_SCRIPT_INFO.candidates
@@ -148,7 +199,7 @@ async function ensureServiceRunning() {
     '--host',
     SERVICE_HOST,
     '--port',
-    String(SERVICE_PORT),
+    String(activeServicePort),
   ], {
     detached: true,
     stdio: 'ignore',
@@ -156,12 +207,13 @@ async function ensureServiceRunning() {
   child.unref();
 
   for (let i = 0; i < 60; i += 1) {
-    if (await serviceHealthy()) return;
+    // eslint-disable-next-line no-await-in-loop
+    if (await serviceHealthyOnPort(activeServicePort)) return;
     // eslint-disable-next-line no-await-in-loop
     await delay(200);
   }
 
-  throw new Error('Service did not become healthy in time');
+  throw new Error(`Service did not become healthy in time on port ${activeServicePort}`);
 }
 
 function createWindow() {
@@ -249,21 +301,21 @@ app.on('window-all-closed', () => {
   }
 });
 
-ipcMain.handle('state:get', async () => fetchJson(`${SERVICE_BASE}/api/state`));
-ipcMain.handle('progress:get', async () => fetchJson(`${SERVICE_BASE}/api/progress`));
-ipcMain.handle('updates:history:get', async () => fetchJson(`${SERVICE_BASE}/api/update-history`));
-ipcMain.handle('settings:get', async () => fetchJson(`${SERVICE_BASE}/api/settings`));
-ipcMain.handle('settings:scheduler:update', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/settings/scheduler`, {
+ipcMain.handle('state:get', async () => fetchJson(serviceUrl('/api/state')));
+ipcMain.handle('progress:get', async () => fetchJson(serviceUrl('/api/progress')));
+ipcMain.handle('updates:history:get', async () => fetchJson(serviceUrl('/api/update-history')));
+ipcMain.handle('settings:get', async () => fetchJson(serviceUrl('/api/settings')));
+ipcMain.handle('settings:scheduler:update', async (_event, payload) => fetchJson(serviceUrl('/api/settings/scheduler'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
-ipcMain.handle('settings:brew-path:update', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/settings/brew-path`, {
+ipcMain.handle('settings:brew-path:update', async (_event, payload) => fetchJson(serviceUrl('/api/settings/brew-path'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
-ipcMain.handle('settings:brew-path:auto-detect', async () => fetchJson(`${SERVICE_BASE}/api/brew/auto-detect`));
+ipcMain.handle('settings:brew-path:auto-detect', async () => fetchJson(serviceUrl('/api/brew/auto-detect')));
 ipcMain.handle('app-update:check', async () => {
   if (!appUpdater) {
     throw new Error('App updater is not initialized');
@@ -282,27 +334,27 @@ ipcMain.handle('app-update:download-install', async () => {
     onProgress: broadcastAppUpdateProgress,
   });
 });
-ipcMain.handle('check:run', async () => fetchJson(`${SERVICE_BASE}/api/check`, {
+ipcMain.handle('check:run', async () => fetchJson(serviceUrl('/api/check'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({}),
 }));
-ipcMain.handle('update:one', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/update-one`, {
+ipcMain.handle('update:one', async (_event, payload) => fetchJson(serviceUrl('/api/update-one'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
-ipcMain.handle('update:all', async () => fetchJson(`${SERVICE_BASE}/api/update-all`, {
+ipcMain.handle('update:all', async () => fetchJson(serviceUrl('/api/update-all'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({}),
 }));
-ipcMain.handle('update:selected', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/update-selected`, {
+ipcMain.handle('update:selected', async (_event, payload) => fetchJson(serviceUrl('/api/update-selected'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
-ipcMain.handle('operation:cancel', async () => fetchJson(`${SERVICE_BASE}/api/cancel-operation`, {
+ipcMain.handle('operation:cancel', async () => fetchJson(serviceUrl('/api/cancel-operation'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({}),
