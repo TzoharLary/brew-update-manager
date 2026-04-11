@@ -503,6 +503,14 @@
       flex-wrap: wrap;
     }
 
+    .selection-tools {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding-inline: 2px;
+    }
+
     .filter-box {
       display: inline-flex;
       align-items: center;
@@ -562,7 +570,7 @@
 
     table {
       width: 100%;
-      min-width: 1280px;
+      min-width: 1360px;
       border-collapse: collapse;
       table-layout: fixed;
     }
@@ -596,6 +604,7 @@
     th[data-col-key="latestDate"] { width: 170px; min-width: 140px; }
     th[data-col-key="daysOutdated"] { width: 150px; min-width: 120px; }
     th[data-col-key="status"] { width: 130px; min-width: 110px; }
+    th[data-col-key="select"] { width: 110px; min-width: 95px; }
     th[data-col-key="action"] { width: 130px; min-width: 110px; }
 
     .th-label {
@@ -679,6 +688,21 @@
     .status-ok { color: var(--ok); font-weight: 700; }
     .status-warn { color: var(--warn); font-weight: 700; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+    .row-select-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      min-width: 28px;
+    }
+
+    .row-select-checkbox {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--primary);
+    }
 
     .message {
       margin-top: 14px;
@@ -877,6 +901,7 @@
         </label>
         <button id="checkNowBtn" class="btn-primary" data-i18n="actions.checkNow">Start check</button>
         <button id="updateAllBtn" class="btn-danger" data-i18n="actions.updateAll">Update all outdated Homebrew packages</button>
+        <button id="updateSelectedBtn" class="btn-primary" data-i18n="actions.updateSelected">Update selected</button>
       </div>
     </div>
 
@@ -1075,6 +1100,11 @@
 
           <button id="packageSearchClearBtn" class="btn-quiet" data-i18n="table.clearSearch">Clear</button>
           <button id="packageFilterResetBtn" class="btn-quiet" data-i18n="table.resetFilters">Reset filters</button>
+          <div class="selection-tools">
+            <button id="selectVisibleOutdatedBtn" class="btn-quiet" data-i18n="table.selectVisibleOutdated">Select visible outdated</button>
+            <button id="clearSelectionBtn" class="btn-quiet" data-i18n="table.clearSelected">Clear selected</button>
+            <span id="selectedSummary" class="small muted" data-i18n="table.selectedCountZero">0 selected</span>
+          </div>
           <div id="updatedAt" class="small muted"></div>
         </div>
       </div>
@@ -1112,6 +1142,10 @@
               </th>
               <th data-col-key="status" data-min-width="110">
                 <span class="th-label" data-i18n="table.status">Status</span>
+                <span class="col-resizer" data-resizer></span>
+              </th>
+              <th data-col-key="select" data-min-width="95">
+                <span class="th-label" data-i18n="table.select">Select</span>
                 <span class="col-resizer" data-resizer></span>
               </th>
               <th data-col-key="action" data-min-width="110">

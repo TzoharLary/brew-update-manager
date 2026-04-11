@@ -1647,6 +1647,35 @@ def validate_package_name(name: str) -> None:
     if not name or not SAFE_NAME_RE.match(name):
         raise ValueError("Invalid package name")
 
+def normalize_selected_packages(raw_packages: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_packages, list) or not raw_packages:
+        raise ValueError("packages must be a non-empty array")
+
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in raw_packages:
+        if not isinstance(item, dict):
+            raise ValueError("each packages item must be an object")
+
+        name = str(item.get("name") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+
+        validate_package_name(name)
+        if kind not in {"formula", "cask"}:
+            raise ValueError("kind must be 'formula' or 'cask'")
+
+        key = (kind, name)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized.append({"name": name, "kind": kind})
+
+    if not normalized:
+        raise ValueError("packages must include at least one valid package")
+
+    return normalized
 
 def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     validate_package_name(name)
@@ -1849,6 +1878,141 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
         "snapshot": refreshed,
     }
 
+def run_update_selected(selected_packages: list[dict[str, str]], track_progress: bool = False) -> dict[str, Any]:
+    state = read_json(STATE_FILE) or compute_snapshot(run_brew_update=False)
+
+    outdated_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for pkg in state.get("packages", []) if isinstance(state, dict) else []:
+        if not isinstance(pkg, dict) or not pkg.get("outdated"):
+            continue
+        name = str(pkg.get("name") or "").strip()
+        kind = str(pkg.get("kind") or "").strip()
+        if not name or kind not in {"formula", "cask"}:
+            continue
+        outdated_lookup[(kind, name)] = pkg
+
+    targets: list[dict[str, str]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for item in selected_packages:
+        name = str(item.get("name") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+        key = (kind, name)
+
+        if key in outdated_lookup:
+            targets.append({"name": name, "kind": kind})
+            continue
+
+        skipped.append(
+            {
+                "ok": True,
+                "name": name,
+                "kind": kind,
+                "code": 0,
+                "stdout": "",
+                "stderr": "",
+                "skipped": True,
+                "reason": "not_outdated",
+            }
+        )
+
+    total = len(targets)
+
+    if track_progress:
+        reset_check_progress_for_run()
+        set_check_progress(
+            phase="brew_update",
+            message="Starting selected package updates" if total > 0 else "No selected packages require update",
+            done=0,
+            total=total,
+            eta_seconds=0 if total == 0 else None,
+            current_package="",
+        )
+
+    results: list[dict[str, Any]] = []
+    started = read_check_progress().get("started_at") if track_progress else None
+
+    for idx, pkg in enumerate(targets, start=1):
+        name = str(pkg.get("name") or "")
+        kind = str(pkg.get("kind") or "")
+
+        if track_progress:
+            eta = estimate_eta_seconds(started, idx - 1, total)
+            set_check_progress(
+                phase="brew_update",
+                message=f"Updating {name}",
+                done=idx - 1,
+                total=total,
+                eta_seconds=eta,
+                current_package=f"{kind}:{name}",
+            )
+
+        result = run_upgrade(name, kind)
+        results.append(result)
+
+        if track_progress:
+            eta = estimate_eta_seconds(started, idx, total)
+            set_check_progress(
+                done=idx,
+                total=total,
+                eta_seconds=eta,
+                current_package=f"{kind}:{name}",
+            )
+
+    refresh_error: str | None = None
+    refreshed = state
+
+    if total > 0:
+        if track_progress:
+            set_check_progress(
+                phase="preparing",
+                message="Refreshing package inventory",
+                eta_seconds=None,
+                current_package="",
+            )
+
+        refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
+
+        entries = history_entries_from_results(
+            results,
+            refreshed,
+            snapshot_verified=refresh_error is None,
+            snapshot_error=refresh_error,
+        )
+        append_update_history_entries(entries)
+
+    combined_results = [*results, *skipped]
+
+    if track_progress:
+        completion_message = "Selected package updates completed"
+        if total == 0:
+            completion_message = "Selected packages are already up to date"
+        elif refresh_error:
+            completion_message = "Selected package updates completed (inventory refresh warning)"
+
+        set_check_progress(
+            running=False,
+            phase="completed",
+            message=completion_message,
+            done=total,
+            total=total,
+            eta_seconds=0,
+            current_package="",
+            error=None,
+            completed_at=now_iso(),
+        )
+
+    return {
+        "ok": all(item.get("ok") for item in results) if results else True,
+        "selected_count": len(selected_packages),
+        "attempted_count": len(results),
+        "skipped_count": len(skipped),
+        "updated_count": sum(1 for item in results if item.get("ok")),
+        "failed_count": sum(1 for item in results if not item.get("ok")),
+        "results": combined_results,
+        "inventory_refresh_error": refresh_error,
+        "snapshot": refreshed,
+    }
 
 def escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -2168,6 +2332,25 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": CURRENT_OPERATION})
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": "update_all_failed", "detail": str(exc)})
+            return
+
+        if self.path == "/api/update-selected":
+            body = self._read_json_body()
+            raw_packages = body.get("packages") if isinstance(body, dict) else None
+
+            try:
+                selected_packages = normalize_selected_packages(raw_packages)
+                payload = run_exclusive(
+                    f"update_selected:{len(selected_packages)}",
+                    lambda: run_update_selected(selected_packages, track_progress=True),
+                )
+                self._send_json(200, payload)
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": "invalid_packages", "detail": str(exc)})
+            except BusyError as exc:
+                self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": CURRENT_OPERATION})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": "update_selected_failed", "detail": str(exc)})
             return
 
         self._send_json(404, {"ok": False, "error": "not_found"})

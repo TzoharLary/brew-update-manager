@@ -10,6 +10,12 @@ const UPDATE_MANIFEST_NAME = 'update-manifest.json';
 const DEFAULT_MIN_SUPPORTED_VERSION = '1.0.0';
 const DELTA_META_SCHEMA_VERSION = 1;
 const MAX_STAGE_DIRS_TO_KEEP = 2;
+const APP_BUNDLE_COPY_OPTIONS = {
+  recursive: true,
+  force: true,
+  dereference: false,
+  verbatimSymlinks: true,
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -575,7 +581,7 @@ function applyDeltaArchive({
   }
 
   fs.rmSync(outputAppPath, { recursive: true, force: true });
-  fs.cpSync(sourceAppPath, outputAppPath, { recursive: true, force: true, dereference: false });
+  fs.cpSync(sourceAppPath, outputAppPath, APP_BUNDLE_COPY_OPTIONS);
 
   const deltaExtractDir = path.join(workDir, 'delta-extract');
   ensureDir(deltaExtractDir);

@@ -17,7 +17,25 @@ function appRoot({ unpacked = false } = {}) {
   return unpacked ? PACKAGED_UNPACKED_ROOT : PACKAGED_ASAR_ROOT;
 }
 
-const SERVICE_SCRIPT = path.join(appRoot({ unpacked: true }), 'backend', 'brew-updates-service.py');
+function resolveServiceScriptCandidates() {
+  return [
+    path.join(appRoot({ unpacked: true }), 'backend', 'brew-updates-service.py'),
+    path.join(appRoot({ unpacked: false }), 'backend', 'brew-updates-service.py'),
+    path.join(process.resourcesPath, 'backend', 'brew-updates-service.py'),
+  ];
+}
+
+function resolveServiceScriptPath() {
+  const candidates = resolveServiceScriptCandidates();
+  const resolved = candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+  return {
+    resolved,
+    candidates,
+  };
+}
+
+const SERVICE_SCRIPT_INFO = resolveServiceScriptPath();
+const SERVICE_SCRIPT = SERVICE_SCRIPT_INFO.resolved;
 const SERVICE_HOST = '127.0.0.1';
 const SERVICE_PORT = 8765;
 const SERVICE_BASE = `http://${SERVICE_HOST}:${SERVICE_PORT}`;
@@ -116,7 +134,10 @@ async function ensureServiceRunning() {
   if (await serviceHealthy()) return;
 
   if (!fs.existsSync(SERVICE_SCRIPT)) {
-    throw new Error(`Backend service script missing: ${SERVICE_SCRIPT}`);
+    const tried = SERVICE_SCRIPT_INFO.candidates
+      .map((candidate) => `- ${candidate}`)
+      .join('\n');
+    throw new Error(`Backend service script missing: ${SERVICE_SCRIPT}\nTried:\n${tried}`);
   }
 
   const pythonBin = getPythonBin();
@@ -275,4 +296,9 @@ ipcMain.handle('update:all', async () => fetchJson(`${SERVICE_BASE}/api/update-a
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({}),
+}));
+ipcMain.handle('update:selected', async (_event, payload) => fetchJson(`${SERVICE_BASE}/api/update-selected`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload || {}),
 }));

@@ -2,7 +2,7 @@ const i18n = window.brewI18n;
 
 let snapshot = null;
 let activeTab = 'outdated';
-const TABLE_COLUMN_COUNT = 9;
+const TABLE_COLUMN_COUNT = 10;
 const COLUMN_WIDTH_STORAGE_KEY = 'bum_column_widths_v1';
 const APP_UPDATE_META_STORAGE_KEY = 'bum_app_update_meta_v1';
 const TABLE_SORT_STORAGE_KEY = 'bum_table_sort_v1';
@@ -34,6 +34,7 @@ const loaderEtaValueEl = document.getElementById('loaderEtaValue');
 const loaderStepEls = Array.from(document.querySelectorAll('#loaderSteps [data-step]'));
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
+const updateSelectedBtn = document.getElementById('updateSelectedBtn');
 const languageSelect = document.getElementById('languageSelect');
 const checkAppUpdateBtn = document.getElementById('checkAppUpdateBtn');
 const installAppUpdateBtn = document.getElementById('installAppUpdateBtn');
@@ -66,6 +67,9 @@ const packageSearchClearBtnEl = document.getElementById('packageSearchClearBtn')
 const packageTypeFilterEl = document.getElementById('packageTypeFilter');
 const packageStatusFilterEl = document.getElementById('packageStatusFilter');
 const packageFilterResetBtnEl = document.getElementById('packageFilterResetBtn');
+const selectVisibleOutdatedBtn = document.getElementById('selectVisibleOutdatedBtn');
+const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+const selectedSummaryEl = document.getElementById('selectedSummary');
 const historySearchInputEl = document.getElementById('historySearchInput');
 const historyKindFilterEl = document.getElementById('historyKindFilter');
 const historyStatusFilterEl = document.getElementById('historyStatusFilter');
@@ -93,6 +97,7 @@ let appUpdateProgressState = null;
 let appUpdateProgressEnabled = false;
 let disposeAppUpdateProgress = null;
 let tableSortState = loadSavedTableSort();
+const selectedPackageKeys = new Set();
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -380,10 +385,30 @@ function isBrewPathConfigured() {
 
 function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
+  const selectedCount = selectedPackagesFromSnapshot().length;
+  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated).length;
+
   checkNowBtn.disabled = busyLoading || !allowed;
   updateAllBtn.disabled = busyLoading || !allowed;
+
+  if (updateSelectedBtn) {
+    updateSelectedBtn.disabled = busyLoading || !allowed || selectedCount === 0;
+  }
+
+  if (selectVisibleOutdatedBtn) {
+    selectVisibleOutdatedBtn.disabled = busyLoading || !allowed || visibleOutdatedCount === 0;
+  }
+
+  if (clearSelectionBtn) {
+    clearSelectionBtn.disabled = busyLoading || selectedCount === 0;
+  }
+
   document.querySelectorAll('.row-update-btn').forEach((btn) => {
     btn.disabled = busyLoading || !allowed;
+  });
+
+  document.querySelectorAll('.row-select-checkbox').forEach((checkbox) => {
+    checkbox.disabled = busyLoading || !allowed;
   });
 }
 
@@ -611,6 +636,7 @@ async function clearBrewPath() {
   await saveBrewPath();
   setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathCleared'));
   snapshot = { counts: {}, packages: [] };
+  selectedPackageKeys.clear();
   renderCards(snapshot);
   renderTable();
   updatedAtEl.textContent = '';
@@ -848,6 +874,99 @@ function packageMatchesSearch(pkg, normalizedTerm) {
 
 function packageKindValue(pkg) {
   return String(pkg?.kind || 'formula').trim().toLowerCase();
+}
+
+
+function packageSelectionKey(name, kind) {
+  const normalizedName = String(name || '').trim();
+  const normalizedKind = String(kind || '').trim().toLowerCase();
+  if (!normalizedName || !normalizedKind) return '';
+  return `${normalizedKind}:${normalizedName}`;
+}
+
+function packageSelectionKeyFromPkg(pkg) {
+  return packageSelectionKey(pkg?.name, pkg?.kind);
+}
+
+function selectedPackagesFromSnapshot() {
+  const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
+  return pkgs
+    .filter((pkg) => pkg?.outdated && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))
+    .map((pkg) => ({
+      name: String(pkg?.name || '').trim(),
+      kind: packageKindValue(pkg),
+    }))
+    .filter((pkg) => pkg.name && (pkg.kind === 'formula' || pkg.kind === 'cask'));
+}
+
+function pruneSelectedPackages() {
+  const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
+  const validKeys = new Set(
+    pkgs
+      .filter((pkg) => pkg?.outdated)
+      .map((pkg) => packageSelectionKeyFromPkg(pkg))
+      .filter(Boolean),
+  );
+
+  let changed = false;
+  Array.from(selectedPackageKeys).forEach((key) => {
+    if (!validKeys.has(key)) {
+      selectedPackageKeys.delete(key);
+      changed = true;
+    }
+  });
+
+  return changed;
+}
+
+function updateSelectionSummary(filteredList = null) {
+  const selectedCount = selectedPackagesFromSnapshot().length;
+  const selectedCountText = i18n.formatNumber(selectedCount);
+
+  if (selectedSummaryEl) {
+    selectedSummaryEl.textContent = i18n.t('table.selectedCount', { count: selectedCountText });
+  }
+
+  if (updateSelectedBtn) {
+    updateSelectedBtn.textContent = i18n.t('actions.updateSelectedCount', { count: selectedCountText });
+  }
+
+  const visibleList = Array.isArray(filteredList) ? filteredList : getFilteredPackages();
+  const visibleOutdated = visibleList.filter((pkg) => pkg?.outdated).length;
+
+  if (selectVisibleOutdatedBtn) {
+    selectVisibleOutdatedBtn.disabled = busyLoading || !isBrewPathConfigured() || visibleOutdated === 0;
+  }
+
+  if (clearSelectionBtn) {
+    clearSelectionBtn.disabled = busyLoading || selectedCount === 0;
+  }
+}
+
+function togglePackageSelected(pkg, shouldSelect) {
+  const key = packageSelectionKeyFromPkg(pkg);
+  if (!key) return;
+  if (shouldSelect) {
+    selectedPackageKeys.add(key);
+    return;
+  }
+  selectedPackageKeys.delete(key);
+}
+
+function selectVisibleOutdated() {
+  const visible = getFilteredPackages().filter((pkg) => pkg?.outdated);
+  if (!visible.length) return;
+  visible.forEach((pkg) => {
+    const key = packageSelectionKeyFromPkg(pkg);
+    if (key) selectedPackageKeys.add(key);
+  });
+  renderTable();
+}
+
+function clearSelection() {
+  if (!selectedPackageKeys.size) return;
+  selectedPackageKeys.clear();
+  renderTable();
 }
 
 function packageMatchesTypeFilter(pkg) {
@@ -1277,6 +1396,14 @@ function packageDescription(pkg) {
   return en || he;
 }
 
+function skippedReasonLabel(reason) {
+  const value = String(reason || '').trim();
+  if (value === 'not_outdated') {
+    return i18n.t('message.skippedReasonNotOutdated');
+  }
+  return i18n.t('common.unknown');
+}
+
 function renderCards(data) {
   const counts = data?.counts || {};
   const cards = [
@@ -1315,6 +1442,7 @@ function getFilteredPackages() {
 
 function renderTable() {
   renderTableSortIndicators();
+  pruneSelectedPackages();
 
   const all = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   const list = getFilteredPackages();
@@ -1360,6 +1488,8 @@ function renderTable() {
     }
     tr.appendChild(td);
     tbodyEl.appendChild(tr);
+    updateSelectionSummary(list);
+    applyActionAvailability();
     return;
   }
 
@@ -1400,6 +1530,28 @@ function renderTable() {
       ? `<span class="status-warn">${i18n.t('status.needsUpdate')}</span>`
       : `<span class="status-ok">${i18n.t('status.upToDate')}</span>`;
 
+    const tdSelect = document.createElement('td');
+    if (pkg.outdated) {
+      const wrap = document.createElement('label');
+      wrap.className = 'row-select-wrap';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'row-select-checkbox';
+      checkbox.checked = selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg));
+      checkbox.setAttribute('aria-label', i18n.t('table.selectPackage', { name: pkg.name || '' }));
+      checkbox.addEventListener('change', () => {
+        togglePackageSelected(pkg, checkbox.checked);
+        updateSelectionSummary(list);
+        applyActionAvailability();
+      });
+
+      wrap.appendChild(checkbox);
+      tdSelect.appendChild(wrap);
+    } else {
+      tdSelect.innerHTML = `<span class="muted small">${i18n.t('common.dash')}</span>`;
+    }
+
     const tdAction = document.createElement('td');
     if (pkg.outdated) {
       const btn = document.createElement('button');
@@ -1420,11 +1572,15 @@ function renderTable() {
       tdLatestDate,
       tdDaysOutdated,
       tdStatus,
+      tdSelect,
       tdAction,
     ].forEach((td) => tr.appendChild(td));
 
     tbodyEl.appendChild(tr);
   });
+
+  updateSelectionSummary(list);
+  applyActionAvailability();
 }
 
 function refreshStaticText() {
@@ -1448,6 +1604,7 @@ async function loadState() {
 
   if (!isBrewPathConfigured()) {
     snapshot = { counts: {}, packages: [] };
+    selectedPackageKeys.clear();
     renderCards(snapshot);
     renderTable();
     updatedAtEl.textContent = '';
@@ -1538,6 +1695,85 @@ async function updateOne(name, kind, sourceBtn = null) {
     if (sourceBtn) {
       sourceBtn.textContent = i18n.t('buttons.update');
     }
+  }
+}
+
+async function updateSelected() {
+  if (!ensureBrewConfiguredForActions()) return;
+
+  const selected = selectedPackagesFromSnapshot();
+  if (!selected.length) {
+    showMessage(i18n.t('message.noSelectedPackages'), true);
+    return;
+  }
+
+  if (!confirm(i18n.t('confirm.updateSelected', { count: i18n.formatNumber(selected.length) }))) return;
+
+  if (updateSelectedBtn) {
+    updateSelectedBtn.textContent = i18n.t('buttons.updating');
+  }
+
+  clearMessage();
+  showMessage(i18n.t('message.updatingSelected', { count: i18n.formatNumber(selected.length) }));
+  busyLoading = true;
+  applyActionAvailability();
+
+  try {
+    const res = await window.brewApp.updateSelected(selected);
+    snapshot = res.snapshot;
+    pruneSelectedPackages();
+    renderCards(snapshot);
+    renderTable();
+    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
+
+    let messageText = i18n.t('message.updateSelectedSuccess', {
+      success: i18n.formatNumber(res.updated_count || 0),
+      failed: i18n.formatNumber(res.failed_count || 0),
+      skipped: i18n.formatNumber(res.skipped_count || 0),
+    });
+
+    const results = Array.isArray(res?.results) ? res.results : [];
+    const skippedResults = results.filter((item) => item?.skipped);
+    if (skippedResults.length > 0) {
+      const detailParts = skippedResults
+        .slice(0, 5)
+        .map((item) => `${String(item?.name || i18n.t('common.unknown'))} (${skippedReasonLabel(item?.reason)})`);
+
+      const remaining = skippedResults.length - detailParts.length;
+      if (remaining > 0) {
+        detailParts.push(i18n.t('message.moreItems', { count: i18n.formatNumber(remaining) }));
+      }
+
+      messageText = `${messageText}\n${i18n.t('message.updateSelectedSkippedDetails', {
+        packages: detailParts.join(', '),
+      })}`;
+    }
+
+    if (res?.inventory_refresh_error) {
+      messageText = `${messageText}
+${i18n.t('message.inventoryRefreshWarning', {
+        error: res.inventory_refresh_error,
+      })}`;
+    }
+
+    showMessage(messageText, Number(res?.failed_count || 0) > 0);
+
+    const verifiedLatestCount = results.reduce((acc, result) => {
+      if (!result?.ok || result?.skipped) return acc;
+      const pkg = findPackageInSnapshot(result?.name, result?.kind);
+      return pkg && !pkg.outdated ? acc + 1 : acc;
+    }, 0);
+    if (verifiedLatestCount > 0) {
+      alert(i18n.t('message.updateSelectedLatestConfirmed', { count: i18n.formatNumber(verifiedLatestCount) }));
+    }
+
+    await loadUpdateHistory();
+  } catch (err) {
+    showMessage(i18n.t('message.updateSelectedFailed', { error: err.message }), true);
+  } finally {
+    busyLoading = false;
+    applyActionAvailability();
+    updateSelectionSummary();
   }
 }
 
@@ -1766,6 +2002,9 @@ if (historyFiltersClearBtnEl) {
 
 checkNowBtn.addEventListener('click', checkNow);
 updateAllBtn.addEventListener('click', updateAll);
+if (updateSelectedBtn) updateSelectedBtn.addEventListener('click', updateSelected);
+if (selectVisibleOutdatedBtn) selectVisibleOutdatedBtn.addEventListener('click', selectVisibleOutdated);
+if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
 checkAppUpdateBtn.addEventListener('click', () => checkAppUpdate({ silent: false }));
 installAppUpdateBtn.addEventListener('click', installAppUpdate);
 scheduleEnabledEl.addEventListener('change', updateSchedulerFieldVisibility);

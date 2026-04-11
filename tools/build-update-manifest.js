@@ -40,6 +40,13 @@ function runOrThrow(command, args, options = {}) {
   return res;
 }
 
+function commandAvailable(command) {
+  const probe = spawnSync(command, ['--version'], {
+    stdio: 'ignore',
+  });
+  return probe.status === 0;
+}
+
 function safeDetach(mountPoint) {
   try {
     runOrThrow('hdiutil', ['detach', mountPoint, '-quiet']);
@@ -96,25 +103,84 @@ async function sha256OfFile(filePath) {
   });
 }
 
+function downloadFileWithCurl(url, destination, headers = {}) {
+  const args = [
+    '-L',
+    '--fail',
+    '--retry',
+    '8',
+    '--retry-delay',
+    '2',
+    '--retry-all-errors',
+    '--connect-timeout',
+    '20',
+    '-C',
+    '-',
+    '-o',
+    destination,
+  ];
+
+  for (const [key, value] of Object.entries(headers || {})) {
+    args.push('-H', `${key}: ${value}`);
+  }
+
+  args.push(url);
+  runOrThrow('curl', args);
+}
+
 async function downloadFile(url, destination, headers = {}) {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'homebrew-update-manager',
-      Accept: 'application/octet-stream',
-      ...headers,
-    },
-  });
+  ensureDir(path.dirname(destination));
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Download failed (${response.status}) for ${url}: ${detail || 'No details'}`);
+  const requestHeaders = {
+    'User-Agent': 'homebrew-update-manager',
+    Accept: 'application/octet-stream',
+    ...headers,
+  };
+
+  let lastError = null;
+
+  if (commandAvailable('curl')) {
+    try {
+      downloadFileWithCurl(url, destination, requestHeaders);
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[update-manifest] curl download fallback failed: ${error.message}`);
+    }
   }
 
-  if (!response.body) {
-    throw new Error(`Empty response body while downloading ${url}`);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      fs.rmSync(destination, { force: true });
+
+      const response = await fetch(url, {
+        headers: requestHeaders,
+      });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`Download failed (${response.status}) for ${url}: ${detail || 'No details'}`);
+      }
+
+      if (!response.body) {
+        throw new Error(`Empty response body while downloading ${url}`);
+      }
+
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destination));
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        console.warn(`[update-manifest] retrying download (${attempt}/3) for ${url}: ${error.message}`);
+      }
+    }
   }
 
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destination));
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error(`Download failed for ${url}`);
 }
 
 async function fetchJson(url, headers = {}) {
