@@ -44,6 +44,15 @@ const updateLiveFailedListEl = document.getElementById('updateLiveFailedList');
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
 const updateSelectedBtn = document.getElementById('updateSelectedBtn');
+const refreshStatusBtn = document.getElementById('refreshStatusBtn');
+const operationStatusBadgeEl = document.getElementById('operationStatusBadge');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModalEl = document.getElementById('settingsModal');
+const settingsModalBackdropEl = document.getElementById('settingsModalBackdrop');
+const settingsModalCloseBtn = document.getElementById('settingsModalCloseBtn');
+const settingsModalBodyEl = document.getElementById('settingsModalBody');
+const settingsPanelEl = document.querySelector('.settings-panel');
+const settingsAccordionEl = document.querySelector('.settings-accordion');
 const languageSelect = document.getElementById('languageSelect');
 const checkAppUpdateBtn = document.getElementById('checkAppUpdateBtn');
 const installAppUpdateBtn = document.getElementById('installAppUpdateBtn');
@@ -108,6 +117,8 @@ let disposeAppUpdateProgress = null;
 let tableSortState = loadSavedTableSort();
 const selectedPackageKeys = new Set();
 let cancelInFlight = false;
+let settingsModalOpen = false;
+let lastKnownOperationRunning = false;
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -434,12 +445,21 @@ function setLoading(on, messageKey = 'message.loadingState', params = {}) {
   loaderTextEl.textContent = i18n.t(messageKey, params);
   if (on) {
     resetLoaderProgress();
+    if (loaderEl) {
+      loaderEl.classList.add('visible');
+    }
+    setOperationStatusBadge('running');
   }
-  loaderEl.style.display = on ? 'flex' : 'none';
+
+  if (!on && loaderEl && !lastKnownOperationRunning) {
+    loaderEl.classList.remove('visible');
+  }
+
   applyActionAvailability();
 
-  if (!on) {
+  if (!on && !lastKnownOperationRunning) {
     resetLoaderProgress();
+    setOperationStatusBadge('idle');
   }
 }
 
@@ -459,6 +479,121 @@ function setInlineStatus(el, text, isError = false) {
   if (!el) return;
   el.textContent = String(text || '').trim();
   el.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+}
+
+function applyLocalizedAttributes() {
+  document.querySelectorAll('[data-i18n-title]').forEach((node) => {
+    const key = node.getAttribute('data-i18n-title');
+    if (!key) return;
+    node.setAttribute('title', i18n.t(key));
+  });
+
+  if (settingsBtn) {
+    settingsBtn.setAttribute('aria-label', i18n.t('actions.settingsLabel'));
+  }
+}
+
+function mountRuntimePanels() {
+  if (settingsPanelEl && settingsModalBodyEl && settingsPanelEl.parentElement !== settingsModalBodyEl) {
+    settingsModalBodyEl.appendChild(settingsPanelEl);
+  }
+
+  if (settingsAccordionEl) {
+    settingsAccordionEl.open = true;
+  }
+
+  if (cardsEl && loaderEl && loaderEl.parentElement !== cardsEl.parentElement) {
+    cardsEl.insertAdjacentElement('afterend', loaderEl);
+  }
+}
+
+function setSettingsModalOpen(open) {
+  settingsModalOpen = !!open;
+  if (!settingsModalEl) return;
+
+  settingsModalEl.classList.toggle('open', settingsModalOpen);
+  settingsModalEl.setAttribute('aria-hidden', settingsModalOpen ? 'false' : 'true');
+  document.body.style.overflow = settingsModalOpen ? 'hidden' : '';
+}
+
+function toggleSettingsModal() {
+  setSettingsModalOpen(!settingsModalOpen);
+}
+
+function operationBadgeClassName(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'running') return 'running';
+  if (value === 'failed' || value === 'error') return 'error';
+  if (value === 'completed' || value === 'canceled') return 'completed';
+  return 'idle';
+}
+
+function setOperationStatusBadge(status) {
+  if (!operationStatusBadgeEl) return;
+
+  const normalized = operationBadgeClassName(status);
+  const labelMap = {
+    idle: i18n.t('actions.statusIdle'),
+    running: i18n.t('actions.statusRunning'),
+    completed: i18n.t('actions.statusCompleted'),
+    error: i18n.t('actions.statusFailed'),
+  };
+
+  operationStatusBadgeEl.className = `status-badge ${normalized}`;
+  operationStatusBadgeEl.textContent = labelMap[normalized] || labelMap.idle;
+}
+
+async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } = {}) {
+  if (refreshStatusBtn) {
+    refreshStatusBtn.disabled = true;
+  }
+
+  try {
+    const progressPayload = await window.brewApp.getProgress();
+    const progress = progressPayload?.progress || null;
+
+    if (progress) {
+      renderCheckProgress(progress);
+      if (progress.running) {
+        startProgressPolling();
+        if (showFeedback) {
+          showMessage(i18n.t('message.operationRunningNow', {
+            name: progress.current_package || i18n.t('progress.currentNone'),
+          }));
+        }
+      } else {
+        stopProgressPolling();
+        if (!busyLoading && loaderEl) {
+          loaderEl.classList.remove('visible');
+        }
+        if (String(progress.phase || '') === 'error') {
+          setOperationStatusBadge('failed');
+        } else if (String(progress.phase || '') === 'completed' || String(progress.phase || '') === 'canceled') {
+          setOperationStatusBadge('completed');
+        } else {
+          setOperationStatusBadge('idle');
+        }
+        if (showFeedback) {
+          showMessage(i18n.t('message.statusRefreshed'));
+        }
+      }
+    }
+
+    await loadSettings();
+    await loadUpdateHistory();
+
+    if (reloadState && !progress?.running) {
+      await loadState({ showLoader: false });
+    }
+  } catch (err) {
+    if (showFeedback) {
+      showMessage(i18n.t('message.refreshFailed', { error: err.message }), true);
+    }
+  } finally {
+    if (refreshStatusBtn) {
+      refreshStatusBtn.disabled = false;
+    }
+  }
 }
 
 function parseBusyOperationInfo(errorMessage) {
@@ -864,7 +999,16 @@ function renderLoaderSteps(phase) {
 }
 
 function renderCheckProgress(progress) {
-  if (!progress || !loaderEl || loaderEl.style.display !== 'flex') {
+  if (!progress || !loaderEl) {
+    return;
+  }
+
+  lastKnownOperationRunning = !!progress.running;
+  if (progress.running) {
+    loaderEl.classList.add('visible');
+  }
+
+  if (!loaderEl.classList.contains('visible') && !busyLoading) {
     return;
   }
 
@@ -906,6 +1050,16 @@ function renderCheckProgress(progress) {
   renderUpdateLivePanel(progress);
 
   loaderProgressMetaEl.textContent = countLabel;
+
+  if (progress.running) {
+    setOperationStatusBadge('running');
+  } else if (String(progress.phase || '') === 'error') {
+    setOperationStatusBadge('failed');
+  } else if (String(progress.phase || '') === 'completed' || String(progress.phase || '') === 'canceled') {
+    setOperationStatusBadge('completed');
+  } else {
+    setOperationStatusBadge('idle');
+  }
 }
 
 async function pollCheckProgress() {
@@ -1744,6 +1898,7 @@ function renderTable() {
 
 function refreshStaticText() {
   i18n.applyStatic();
+  applyLocalizedAttributes();
   languageSelect.value = i18n.lang;
   document.title = i18n.t('app.title');
   if (snapshot?.updated_at) {
@@ -1756,9 +1911,18 @@ function refreshStaticText() {
   renderAppUpdateStatus();
   updateSearchControls();
   applyActionAvailability();
+
+  const currentBadgeState = operationStatusBadgeEl?.classList?.contains('running')
+    ? 'running'
+    : operationStatusBadgeEl?.classList?.contains('error')
+      ? 'failed'
+      : operationStatusBadgeEl?.classList?.contains('completed')
+        ? 'completed'
+        : 'idle';
+  setOperationStatusBadge(currentBadgeState);
 }
 
-async function loadState() {
+async function loadState({ showLoader = true } = {}) {
   clearMessage();
 
   if (!isBrewPathConfigured()) {
@@ -1772,7 +1936,9 @@ async function loadState() {
     return;
   }
 
-  setLoading(true, 'message.loadingState');
+  if (showLoader) {
+    setLoading(true, 'message.loadingState');
+  }
   try {
     snapshot = await window.brewApp.getState();
     renderCards(snapshot);
@@ -1781,7 +1947,9 @@ async function loadState() {
   } catch (err) {
     showMessage(i18n.t('message.loadFailed', { error: err.message }), true);
   } finally {
-    setLoading(false, 'message.loadingState');
+    if (showLoader) {
+      setLoading(false, 'message.loadingState');
+    }
   }
 }
 
@@ -1799,6 +1967,9 @@ async function checkNow() {
     showMessage(i18n.t('message.checkSuccess'));
   } catch (err) {
     showMessage(i18n.t('message.checkFailed', { error: formatOperationErrorMessage(err) }), true);
+    if (/fetch failed/i.test(String(err?.message || ''))) {
+      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
+    }
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
@@ -1848,6 +2019,9 @@ async function updateOne(name, kind, sourceBtn = null) {
     await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateOneRequestFailed', { error: formatOperationErrorMessage(err) }), true);
+    if (/fetch failed/i.test(String(err?.message || ''))) {
+      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
+    }
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
@@ -1929,6 +2103,9 @@ ${i18n.t('message.inventoryRefreshWarning', {
     await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateSelectedFailed', { error: formatOperationErrorMessage(err) }), true);
+    if (/fetch failed/i.test(String(err?.message || ''))) {
+      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
+    }
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
@@ -1976,6 +2153,9 @@ async function updateAll() {
     await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateAllFailed', { error: formatOperationErrorMessage(err) }), true);
+    if (/fetch failed/i.test(String(err?.message || ''))) {
+      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
+    }
   } finally {
     stopProgressPolling();
     setLoading(false, 'message.loadingState');
@@ -2164,6 +2344,10 @@ updateAllBtn.addEventListener('click', updateAll);
 if (updateSelectedBtn) updateSelectedBtn.addEventListener('click', updateSelected);
 if (selectVisibleOutdatedBtn) selectVisibleOutdatedBtn.addEventListener('click', selectVisibleOutdated);
 if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
+if (refreshStatusBtn) refreshStatusBtn.addEventListener('click', () => refreshRuntimeStatus({ showFeedback: true, reloadState: true }));
+if (settingsBtn) settingsBtn.addEventListener('click', toggleSettingsModal);
+if (settingsModalCloseBtn) settingsModalCloseBtn.addEventListener('click', () => setSettingsModalOpen(false));
+if (settingsModalBackdropEl) settingsModalBackdropEl.addEventListener('click', () => setSettingsModalOpen(false));
 if (loaderCancelBtn) loaderCancelBtn.addEventListener('click', cancelCurrentOperation);
 checkAppUpdateBtn.addEventListener('click', () => checkAppUpdate({ silent: false }));
 installAppUpdateBtn.addEventListener('click', installAppUpdate);
@@ -2173,6 +2357,11 @@ saveScheduleBtn.addEventListener('click', saveScheduler);
 detectBrewPathBtn.addEventListener('click', detectBrewPath);
 saveBrewPathBtn.addEventListener('click', saveBrewPath);
 clearBrewPathBtn.addEventListener('click', clearBrewPath);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && settingsModalOpen) {
+    setSettingsModalOpen(false);
+  }
+});
 window.addEventListener('beforeunload', () => {
   stopAutoAppUpdateChecks();
   if (typeof disposeAppUpdateProgress === 'function') {
@@ -2181,10 +2370,12 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
+mountRuntimePanels();
 initColumnResizing();
 initTableSorting();
 updateSchedulerFieldVisibility();
 updateSearchControls();
+setOperationStatusBadge('idle');
 refreshStaticText();
 initAppUpdateProgressBridge();
 
@@ -2193,6 +2384,7 @@ async function initializeApp() {
   await loadUpdateHistory();
   applyActionAvailability();
   await loadState();
+  await refreshRuntimeStatus({ showFeedback: false, reloadState: false });
   renderAppUpdateStatus();
   await checkAppUpdate({ silent: true });
   startAutoAppUpdateChecks();

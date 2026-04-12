@@ -73,6 +73,52 @@
       flex-wrap: wrap;
     }
 
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 1.05rem;
+      border-radius: 12px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 82px;
+      height: 30px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      background: #f7fafd;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status-badge.running {
+      color: var(--primary);
+      border-color: #c8dafe;
+      background: var(--primary-soft);
+    }
+
+    .status-badge.error,
+    .status-badge.failed {
+      color: var(--danger);
+      border-color: #f5ccd2;
+      background: var(--danger-soft);
+    }
+
+    .status-badge.completed {
+      color: var(--ok);
+      border-color: #c9e8d8;
+      background: #edf9f1;
+    }
+
     .lang-wrap {
       display: inline-flex;
       align-items: center;
@@ -176,8 +222,79 @@
     }
 
     .settings-panel {
-      margin-bottom: 16px;
+      margin: 0;
       overflow: hidden;
+      display: none;
+    }
+
+    .settings-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+
+    .settings-modal.open {
+      display: flex;
+    }
+
+    .settings-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(11, 24, 40, 0.18);
+      backdrop-filter: blur(2px);
+    }
+
+    .settings-modal-dialog {
+      position: relative;
+      z-index: 1;
+      width: min(1040px, 96vw);
+      max-height: 92vh;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: #f8fbff;
+      box-shadow: 0 28px 70px rgba(8, 19, 34, 0.24);
+    }
+
+    .settings-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .settings-modal-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 760;
+    }
+
+    .settings-modal-body {
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .settings-modal .settings-panel {
+      display: block;
+    }
+
+    .settings-modal .settings-accordion > summary {
+      display: none;
+    }
+
+    .settings-modal .settings-body {
+      border-top: none;
+      padding: 0;
+      grid-template-columns: 1fr;
     }
 
     .settings-accordion {
@@ -722,25 +839,23 @@
     }
 
     .loader {
-      position: fixed;
-      inset: 0;
       display: none;
-      align-items: center;
-      justify-content: center;
-      background: rgba(11, 24, 40, 0.1);
-      backdrop-filter: blur(1px);
-      z-index: 999;
+      margin: 2px 0 14px;
+    }
+
+    .loader.visible {
+      display: block;
     }
 
     .loader .inner {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 14px 18px 16px;
       font-weight: 650;
       box-shadow: var(--soft-shadow);
-      min-width: 440px;
-      max-width: min(92vw, 740px);
+      min-width: 0;
+      max-width: 100%;
     }
 
     .loader-top {
@@ -964,7 +1079,6 @@
       .wrap { padding: 16px; }
       .cards { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
       th, td { padding: 10px 8px; }
-      .loader .inner { min-width: 300px; }
       .loader-status-grid { grid-template-columns: 1fr; }
       .update-live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .update-live-lists { grid-template-columns: 1fr; }
@@ -981,6 +1095,9 @@
         <div class="sub" data-i18n="app.subtitle">Modern desktop manager for Homebrew packages</div>
       </div>
       <div class="actions">
+        <button id="refreshStatusBtn" class="btn-quiet" data-i18n="actions.refreshStatus" data-i18n-title="actions.refreshTooltip">Refresh status</button>
+        <span id="operationStatusBadge" class="status-badge" data-i18n="actions.statusIdle">Idle</span>
+        <button id="settingsBtn" class="icon-btn" type="button" data-i18n-title="actions.settingsTooltip" aria-label="Settings">⚙️</button>
         <label class="lang-wrap" for="languageSelect">
           <span data-i18n="actions.languageLabel">Language</span>
           <select id="languageSelect" aria-label="language selector">
@@ -1249,6 +1366,17 @@
     </div>
 
     <div class="message" id="message"></div>
+  </div>
+
+  <div class="settings-modal" id="settingsModal" aria-hidden="true">
+    <div class="settings-modal-backdrop" id="settingsModalBackdrop"></div>
+    <div class="settings-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+      <div class="settings-modal-header">
+        <h2 class="settings-modal-title" id="settingsModalTitle" data-i18n="settings.windowTitle">Settings</h2>
+        <button id="settingsModalCloseBtn" class="btn-quiet" type="button" data-i18n="settings.closeWindow">Close</button>
+      </div>
+      <div class="settings-modal-body" id="settingsModalBody"></div>
+    </div>
   </div>
 
   <div class="loader" id="loader">
