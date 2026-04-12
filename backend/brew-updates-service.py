@@ -19,6 +19,7 @@ import os
 import plistlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -208,6 +209,42 @@ def read_current_operation() -> dict[str, Any]:
 def read_parallel_check_state() -> dict[str, Any]:
     with PARALLEL_CHECK_LOCK:
         return dict(PARALLEL_CHECK_STATE)
+
+
+def normalize_stale_progress_state(operation: dict[str, Any] | None = None) -> dict[str, Any]:
+    operation_state = operation if isinstance(operation, dict) else read_current_operation()
+    progress = read_check_progress()
+
+    if not progress.get("running"):
+        return progress
+
+    if operation_state.get("running"):
+        return progress
+
+    done = int(progress.get("done") or 0)
+    total = int(progress.get("total") or 0)
+    interrupted = total > 0 and done < total
+
+    set_check_progress(
+        running=False,
+        phase="error" if interrupted else "completed",
+        message=(
+            "Operation status was stale and has been reset"
+            if interrupted
+            else "Operation already finished"
+        ),
+        eta_seconds=0,
+        completed_at=now_iso(),
+        cancel_requested=False,
+        canceled=bool(progress.get("canceled")) or interrupted,
+        error=(
+            str(progress.get("error") or "stale_progress_state_reset")
+            if interrupted
+            else progress.get("error")
+        ),
+    )
+    append_service_log("Stale progress state detected and normalized")
+    return read_check_progress()
 
 
 def is_cancel_requested() -> bool:
@@ -940,11 +977,32 @@ def terminate_process(proc: subprocess.Popen[str] | None, *, force_kill_after_se
         if proc.poll() is not None:
             return False
 
-        proc.terminate()
+        used_process_group = False
+        if hasattr(os, "killpg"):
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+                used_process_group = True
+            except Exception:
+                used_process_group = False
+
+        if not used_process_group:
+            proc.terminate()
+
         proc.wait(timeout=force_kill_after_seconds)
         return True
     except subprocess.TimeoutExpired:
-        proc.kill()
+        used_process_group = False
+        if hasattr(os, "killpg"):
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+                used_process_group = True
+            except Exception:
+                used_process_group = False
+
+        if not used_process_group:
+            proc.kill()
         try:
             proc.wait(timeout=2.0)
         except Exception:
@@ -961,6 +1019,7 @@ def run_cmd(args: list[str], timeout: int = 1800, *, cancellable: bool = False) 
         stderr=subprocess.PIPE,
         text=True,
         env=process_env(),
+        start_new_session=True,
     )
 
     if cancellable:
@@ -1013,6 +1072,19 @@ def raise_if_cancel_requested() -> None:
 def request_cancel_current_operation() -> dict[str, Any]:
     operation = read_current_operation()
     if not operation.get("running"):
+        progress_before = read_check_progress()
+        progress = normalize_stale_progress_state(operation)
+
+        if progress_before.get("running") and not progress.get("running"):
+            return {
+                "ok": True,
+                "running": False,
+                "message": "No active operation process found; stale progress state was reset",
+                "operation": operation,
+                "terminated_command": False,
+                "stale_progress_cleared": True,
+            }
+
         return {
             "ok": False,
             "running": False,
@@ -2663,11 +2735,12 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/progress":
             operation = read_current_operation()
+            progress = normalize_stale_progress_state(operation)
             self._send_json(
                 200,
                 {
                     "ok": True,
-                    "progress": read_check_progress(),
+                    "progress": progress,
                     "operation": operation,
                     "parallel_check": read_parallel_check_state(),
                 },

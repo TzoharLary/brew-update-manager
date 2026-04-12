@@ -122,6 +122,7 @@ let lastKnownOperationRunning = false;
 let lastKnownOperationName = '';
 let lastKnownParallelCheckRunning = false;
 let lastKnownParallelCheckFinishedAt = '';
+const failedItemOpenKeys = new Set();
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -704,7 +705,17 @@ function completedItemPrefix(item) {
   return '❌';
 }
 
-function failureReasonText(item) {
+function failureItemKey(item) {
+  return [
+    String(item?.kind || '').trim(),
+    String(item?.name || '').trim(),
+    String(item?.started_at || '').trim(),
+    String(item?.completed_at || '').trim(),
+    String(item?.code ?? ''),
+  ].join('|');
+}
+
+function failureTechnicalText(item) {
   if (item?.canceled) {
     return i18n.t('progress.failureCanceled');
   }
@@ -727,6 +738,49 @@ function failureReasonText(item) {
   }
 
   return i18n.t('progress.failureUnknown');
+}
+
+function failureHumanExplanation(item) {
+  if (item?.canceled) {
+    return i18n.t('progress.failureExplainCanceled');
+  }
+
+  const raw = String(item?.error || '').toLowerCase();
+  const code = Number(item?.code || 0);
+
+  if (raw.includes('ssl connection timeout') || raw.includes('curl: (28)') || raw.includes('download failed')) {
+    return i18n.t('progress.failureExplainNetworkTimeout');
+  }
+  if (raw.includes('command timed out after')) {
+    return i18n.t('progress.failureExplainCommandTimeout');
+  }
+  if (raw.includes('post-install step did not complete successfully')) {
+    return i18n.t('progress.failureExplainPostInstall');
+  }
+  if (raw.includes('command line tools release is available') || raw.includes('xcode-select --install')) {
+    return i18n.t('progress.failureExplainCliTools');
+  }
+  if (raw.includes('tier 2 configuration')) {
+    return i18n.t('progress.failureExplainTier2');
+  }
+
+  if (code === 124) {
+    return i18n.t('progress.failureExplainCommandTimeout');
+  }
+  if (Number.isFinite(code) && code !== 0) {
+    return i18n.t('progress.failureExplainGenericCode', { code: i18n.formatNumber(code) });
+  }
+
+  return i18n.t('progress.failureExplainGeneric');
+}
+
+function failureReasonText(item) {
+  const explanation = failureHumanExplanation(item);
+  const technical = failureTechnicalText(item);
+  if (!technical || technical === explanation) {
+    return explanation;
+  }
+  return `${explanation}\n\n${i18n.t('progress.failureTechnicalPrefix')}\n${technical}`;
 }
 
 function renderSimpleProgressList(container, items, { mode = 'generic' } = {}) {
@@ -776,17 +830,35 @@ function renderSimpleProgressList(container, items, { mode = 'generic' } = {}) {
 
 function renderFailedProgressList(container, items) {
   if (!container) return;
+
+  container.querySelectorAll('details[data-failure-key][open]').forEach((node) => {
+    const key = String(node.getAttribute('data-failure-key') || '').trim();
+    if (key) {
+      failedItemOpenKeys.add(key);
+    }
+  });
+
   clearNode(container);
 
   const list = (Array.isArray(items) ? items : []).filter((item) => !item?.ok);
   if (!list.length) {
+    failedItemOpenKeys.clear();
     container.appendChild(makeProgressEmptyNode());
     return;
   }
 
+  const validKeys = new Set();
+
   list.forEach((item) => {
+    const key = failureItemKey(item);
+    validKeys.add(key);
+
     const details = document.createElement('details');
     details.className = 'update-live-failure';
+    details.setAttribute('data-failure-key', key);
+    if (failedItemOpenKeys.has(key)) {
+      details.open = true;
+    }
 
     const summary = document.createElement('summary');
     summary.textContent = `❌ ${progressPackageLabel(item) || i18n.t('common.unknown')}`;
@@ -797,7 +869,22 @@ function renderFailedProgressList(container, items) {
 
     details.appendChild(summary);
     details.appendChild(reason);
+
+    details.addEventListener('toggle', () => {
+      if (details.open) {
+        failedItemOpenKeys.add(key);
+      } else {
+        failedItemOpenKeys.delete(key);
+      }
+    });
+
     container.appendChild(details);
+  });
+
+  Array.from(failedItemOpenKeys).forEach((key) => {
+    if (!validKeys.has(key)) {
+      failedItemOpenKeys.delete(key);
+    }
   });
 }
 
@@ -1233,8 +1320,12 @@ async function cancelCurrentOperation() {
   }
 
   try {
-    await window.brewApp.cancelOperation();
-    showMessage(i18n.t('message.cancelRequestSent'));
+    const payload = await window.brewApp.cancelOperation();
+    if (payload?.stale_progress_cleared) {
+      showMessage(i18n.t('message.staleProgressCleared'));
+    } else {
+      showMessage(i18n.t('message.cancelRequestSent'));
+    }
   } catch (err) {
     showMessage(i18n.t('message.cancelRequestFailed', { error: formatOperationErrorMessage(err) }), true);
   } finally {
