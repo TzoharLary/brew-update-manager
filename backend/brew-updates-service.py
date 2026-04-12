@@ -94,6 +94,13 @@ ACTIVE_COMMAND: dict[str, Any] = {
 
 CHECK_PROGRESS_LOCK = threading.Lock()
 
+DEFERRED_CHECK_LOCK = threading.Lock()
+DEFERRED_CHECK_STATE: dict[str, Any] = {
+    "requested": False,
+    "requested_at": None,
+    "reason": None,
+}
+
 
 def new_check_progress_state() -> dict[str, Any]:
     return {
@@ -207,6 +214,74 @@ def mark_cancel_requested() -> None:
             CANCEL_STATE["requested_at"] = now_iso()
 
 
+def request_deferred_check(reason: str) -> bool:
+    with DEFERRED_CHECK_LOCK:
+        already_requested = bool(DEFERRED_CHECK_STATE.get("requested"))
+        if not already_requested:
+            DEFERRED_CHECK_STATE["requested"] = True
+            DEFERRED_CHECK_STATE["requested_at"] = now_iso()
+            DEFERRED_CHECK_STATE["reason"] = str(reason or "manual_check")
+            return True
+        return False
+
+
+def consume_deferred_check_request() -> dict[str, Any] | None:
+    with DEFERRED_CHECK_LOCK:
+        if not DEFERRED_CHECK_STATE.get("requested"):
+            return None
+        payload = {
+            "requested_at": str(DEFERRED_CHECK_STATE.get("requested_at") or ""),
+            "reason": str(DEFERRED_CHECK_STATE.get("reason") or "manual_check"),
+        }
+        DEFERRED_CHECK_STATE["requested"] = False
+        DEFERRED_CHECK_STATE["requested_at"] = None
+        DEFERRED_CHECK_STATE["reason"] = None
+        return payload
+
+
+def _deferred_check_worker(context: dict[str, Any]) -> None:
+    reason = str(context.get("reason") or "manual_check")
+    append_service_log(f"Starting deferred check after update (reason={reason})")
+    append_check_log(f"Starting deferred check after update (reason={reason})")
+
+    for attempt in range(1, 4):
+        try:
+            run_exclusive(
+                "check_now_deferred",
+                lambda: compute_snapshot(run_brew_update=True, track_progress=False),
+            )
+            append_service_log("Deferred check completed successfully")
+            append_check_log("Deferred check completed successfully")
+            return
+        except BusyError as exc:
+            append_service_log(f"Deferred check attempt {attempt} busy: {exc}")
+            time.sleep(0.8)
+        except Exception as exc:
+            append_service_log(f"Deferred check failed: {exc}")
+            append_check_log(f"Deferred check failed: {exc}")
+            return
+
+    append_service_log("Deferred check dropped after busy retries")
+    append_check_log("Deferred check dropped after busy retries")
+
+
+def maybe_schedule_deferred_check(trigger_operation_name: str) -> None:
+    name = str(trigger_operation_name or "")
+    if not name.startswith("update"):
+        return
+
+    context = consume_deferred_check_request()
+    if not context:
+        return
+
+    worker = threading.Thread(
+        target=_deferred_check_worker,
+        args=(context,),
+        daemon=True,
+    )
+    worker.start()
+
+
 def set_check_progress(
     *,
     running: bool | None = None,
@@ -303,6 +378,34 @@ def estimate_eta_seconds(started_at_iso: str | None, done: int, total: int) -> i
 
     remaining = max(0.0, (total - done) / rate)
     return int(round(remaining))
+
+
+def estimate_eta_from_completed_packages(
+    completed_packages: list[dict[str, Any]],
+    total_packages: int,
+) -> int | None:
+    done = max(0, len(completed_packages or []))
+    remaining = max(0, int(total_packages or 0) - done)
+    if remaining <= 0:
+        return 0
+    if done <= 0:
+        return None
+
+    durations: list[float] = []
+    for item in completed_packages:
+        start = parse_iso_datetime(str(item.get("started_at") or ""))
+        end = parse_iso_datetime(str(item.get("completed_at") or ""))
+        if not start or not end:
+            continue
+        seconds = (end - start).total_seconds()
+        if seconds > 0:
+            durations.append(seconds)
+
+    if not durations:
+        return None
+
+    avg_seconds = sum(durations) / len(durations)
+    return int(round(max(0.0, avg_seconds * remaining)))
 
 
 def compute_days_since(iso_value: str | None) -> int | None:
@@ -909,6 +1012,7 @@ def run_exclusive(op_name: str, fn):
             CURRENT_OPERATION["name"] = None
             CURRENT_OPERATION["started_at"] = None
         OP_LOCK.release()
+        maybe_schedule_deferred_check(op_name)
 
 
 def normalize_versions(raw: Any) -> list[str]:
@@ -2013,7 +2117,7 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
         reset_check_progress_for_run()
         set_check_progress(
             operation_name="update_all",
-            phase="brew_update",
+            phase="updating_packages",
             message="Starting package updates",
             done=0,
             total=total,
@@ -2041,9 +2145,11 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
         package_started_at = now_iso()
 
         if track_progress:
-            eta = estimate_eta_seconds(started, idx - 1, total)
+            eta = estimate_eta_from_completed_packages(completed_progress, total)
+            if eta is None:
+                eta = estimate_eta_seconds(started, idx - 1, total)
             set_check_progress(
-                phase="brew_update",
+                phase="updating_packages",
                 message=f"Updating {name}",
                 done=idx - 1,
                 total=total,
@@ -2068,7 +2174,9 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
 
         if track_progress:
             done_count = len(results)
-            eta = estimate_eta_seconds(started, done_count, total)
+            eta = estimate_eta_from_completed_packages(completed_progress, total)
+            if eta is None:
+                eta = estimate_eta_seconds(started, done_count, total)
             set_check_progress(
                 done=done_count,
                 total=total,
@@ -2199,7 +2307,7 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
         reset_check_progress_for_run()
         set_check_progress(
             operation_name="update_selected",
-            phase="brew_update",
+            phase="updating_packages",
             message="Starting selected package updates" if total > 0 else "No selected packages require update",
             done=0,
             total=total,
@@ -2227,9 +2335,11 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
         package_started_at = now_iso()
 
         if track_progress:
-            eta = estimate_eta_seconds(started, idx - 1, total)
+            eta = estimate_eta_from_completed_packages(completed_progress, total)
+            if eta is None:
+                eta = estimate_eta_seconds(started, idx - 1, total)
             set_check_progress(
-                phase="brew_update",
+                phase="updating_packages",
                 message=f"Updating {name}",
                 done=idx - 1,
                 total=total,
@@ -2254,7 +2364,9 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
 
         if track_progress:
             done_count = len(results)
-            eta = estimate_eta_seconds(started, done_count, total)
+            eta = estimate_eta_from_completed_packages(completed_progress, total)
+            if eta is None:
+                eta = estimate_eta_seconds(started, done_count, total)
             set_check_progress(
                 done=done_count,
                 total=total,
@@ -2569,6 +2681,26 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/check":
+            operation = read_current_operation()
+            operation_name = str(operation.get("name") or "")
+
+            if operation.get("running") and operation_name.startswith("update"):
+                queued_now = request_deferred_check("manual_check")
+                detail = "Check queued and will run after current update operation"
+                if not queued_now:
+                    detail = "Check already queued and will run after current update operation"
+                self._send_json(
+                    202,
+                    {
+                        "ok": True,
+                        "queued": True,
+                        "already_queued": not queued_now,
+                        "detail": detail,
+                        "operation": operation,
+                    },
+                )
+                return
+
             try:
                 snapshot = run_exclusive(
                     "check_now",
@@ -2596,7 +2728,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     reset_check_progress_for_run()
                     set_check_progress(
                         operation_name="update_one",
-                        phase="brew_update",
+                        phase="updating_packages",
                         message=f"Updating {name}",
                         done=0,
                         total=1,

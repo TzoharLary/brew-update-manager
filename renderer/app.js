@@ -38,9 +38,9 @@ const updateLiveTotalEl = document.getElementById('updateLiveTotal');
 const updateLiveCompletedEl = document.getElementById('updateLiveCompleted');
 const updateLiveRemainingEl = document.getElementById('updateLiveRemaining');
 const updateLiveFailedEl = document.getElementById('updateLiveFailed');
-const updateLiveCompletedListEl = document.getElementById('updateLiveCompletedList');
-const updateLiveRemainingListEl = document.getElementById('updateLiveRemainingList');
-const updateLiveFailedListEl = document.getElementById('updateLiveFailedList');
+const updateLiveCompletedItemsEl = document.getElementById('updateLiveCompletedItems');
+const updateLiveRemainingItemsEl = document.getElementById('updateLiveRemainingItems');
+const updateLiveFailedItemsEl = document.getElementById('updateLiveFailedItems');
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
 const updateSelectedBtn = document.getElementById('updateSelectedBtn');
@@ -119,6 +119,7 @@ const selectedPackageKeys = new Set();
 let cancelInFlight = false;
 let settingsModalOpen = false;
 let lastKnownOperationRunning = false;
+let lastKnownOperationName = '';
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -126,6 +127,7 @@ const LOADER_PHASE_ORDER = [
   'starting',
   'preparing',
   'brew_update',
+  'updating_packages',
   'collecting_outdated',
   'collecting_installed',
   'resolving_dates',
@@ -409,28 +411,30 @@ function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
   const selectedCount = selectedPackagesFromSnapshot().length;
   const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated).length;
+  const operationRunning = !!lastKnownOperationRunning;
+  const checkBlockedByBusy = !!busyLoading && !isUpdateOperationRunning();
 
-  checkNowBtn.disabled = busyLoading || !allowed;
-  updateAllBtn.disabled = busyLoading || !allowed;
+  checkNowBtn.disabled = checkBlockedByBusy || !allowed;
+  updateAllBtn.disabled = busyLoading || operationRunning || !allowed;
 
   if (updateSelectedBtn) {
-    updateSelectedBtn.disabled = busyLoading || !allowed || selectedCount === 0;
+    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || selectedCount === 0;
   }
 
   if (selectVisibleOutdatedBtn) {
-    selectVisibleOutdatedBtn.disabled = busyLoading || !allowed || visibleOutdatedCount === 0;
+    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || visibleOutdatedCount === 0;
   }
 
   if (clearSelectionBtn) {
-    clearSelectionBtn.disabled = busyLoading || selectedCount === 0;
+    clearSelectionBtn.disabled = busyLoading || operationRunning || selectedCount === 0;
   }
 
   document.querySelectorAll('.row-update-btn').forEach((btn) => {
-    btn.disabled = busyLoading || !allowed;
+    btn.disabled = busyLoading || operationRunning || !allowed;
   });
 
   document.querySelectorAll('.row-select-checkbox').forEach((checkbox) => {
-    checkbox.disabled = busyLoading || !allowed;
+    checkbox.disabled = busyLoading || operationRunning || !allowed;
   });
 }
 
@@ -526,6 +530,10 @@ function operationBadgeClassName(status) {
   if (value === 'failed' || value === 'error') return 'error';
   if (value === 'completed' || value === 'canceled') return 'completed';
   return 'idle';
+}
+
+function isUpdateOperationRunning() {
+  return !!lastKnownOperationRunning && String(lastKnownOperationName || '').startsWith('update');
 }
 
 function setOperationStatusBadge(status) {
@@ -634,34 +642,122 @@ function progressPackageLabel(item) {
   return name || kind;
 }
 
-function renderProgressPackageList(items, { mode = 'generic', limit = 8 } = {}) {
+function clearNode(node) {
+  if (!node) return;
+  while (node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+function makeProgressEmptyNode() {
+  const empty = document.createElement('div');
+  empty.className = 'update-live-empty';
+  empty.textContent = i18n.t('progress.noItems');
+  return empty;
+}
+
+function completedItemPrefix(item) {
+  if (item?.canceled) return '🛑';
+  if (item?.skipped) return '⏭';
+  if (item?.ok) return '✅';
+  return '❌';
+}
+
+function failureReasonText(item) {
+  if (item?.canceled) {
+    return i18n.t('progress.failureCanceled');
+  }
+
+  const detail = String(item?.error || '').trim();
+  if (detail) {
+    return detail;
+  }
+
+  if (item?.reason === 'not_outdated') {
+    return i18n.t('message.skippedReasonNotOutdated');
+  }
+
+  const code = Number(item?.code || 0);
+  if (code === 124) {
+    return i18n.t('progress.failureTimeout');
+  }
+  if (Number.isFinite(code) && code !== 0) {
+    return i18n.t('progress.failureExitCode', { code: i18n.formatNumber(code) });
+  }
+
+  return i18n.t('progress.failureUnknown');
+}
+
+function renderSimpleProgressList(container, items, { mode = 'generic' } = {}) {
+  if (!container) return;
+  clearNode(container);
+
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
-    return i18n.t('progress.noItems');
+    container.appendChild(makeProgressEmptyNode());
+    return;
   }
 
-  const rows = list.slice(0, limit).map((item) => {
-    const label = progressPackageLabel(item) || i18n.t('common.unknown');
+  list.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'update-live-item';
+
+    const label = document.createElement('div');
+    label.className = 'update-live-item-label';
+    const base = progressPackageLabel(item) || i18n.t('common.unknown');
+
     if (mode === 'completed') {
-      if (item?.canceled) return `🛑 ${label}`;
-      if (item?.skipped) return `⏭ ${label}`;
-      if (item?.ok) return `✅ ${label}`;
-      const detail = String(item?.error || '').trim();
-      return detail ? `❌ ${label} — ${detail}` : `❌ ${label}`;
+      label.textContent = `${completedItemPrefix(item)} ${base}`;
+    } else {
+      label.textContent = `• ${base}`;
     }
-    if (mode === 'failed') {
-      const detail = String(item?.error || '').trim();
-      return detail ? `❌ ${label} — ${detail}` : `❌ ${label}`;
-    }
-    return `• ${label}`;
-  });
 
-  const remaining = list.length - rows.length;
-  if (remaining > 0) {
-    rows.push(`… ${i18n.t('message.moreItems', { count: i18n.formatNumber(remaining) })}`);
+    row.appendChild(label);
+
+    if (mode === 'completed') {
+      const noteText = failureReasonText(item);
+      if (item?.ok || item?.skipped || item?.canceled) {
+        const note = document.createElement('div');
+        note.className = 'update-live-item-note';
+        note.textContent = item?.ok ? i18n.t('progress.completedOk') : noteText;
+        row.appendChild(note);
+      } else if (noteText) {
+        const note = document.createElement('div');
+        note.className = 'update-live-item-note';
+        note.textContent = noteText;
+        row.appendChild(note);
+      }
+    }
+
+    container.appendChild(row);
+  });
+}
+
+function renderFailedProgressList(container, items) {
+  if (!container) return;
+  clearNode(container);
+
+  const list = (Array.isArray(items) ? items : []).filter((item) => !item?.ok);
+  if (!list.length) {
+    container.appendChild(makeProgressEmptyNode());
+    return;
   }
 
-  return rows.join('\n');
+  list.forEach((item) => {
+    const details = document.createElement('details');
+    details.className = 'update-live-failure';
+
+    const summary = document.createElement('summary');
+    summary.textContent = `❌ ${progressPackageLabel(item) || i18n.t('common.unknown')}`;
+
+    const reason = document.createElement('div');
+    reason.className = 'update-live-failure-reason';
+    reason.textContent = failureReasonText(item);
+
+    details.appendChild(summary);
+    details.appendChild(reason);
+    container.appendChild(details);
+  });
 }
 
 function renderUpdateLivePanel(progress) {
@@ -691,15 +787,9 @@ function renderUpdateLivePanel(progress) {
   if (updateLiveRemainingEl) updateLiveRemainingEl.textContent = i18n.formatNumber(remainingCount);
   if (updateLiveFailedEl) updateLiveFailedEl.textContent = i18n.formatNumber(failedCount);
 
-  if (updateLiveCompletedListEl) {
-    updateLiveCompletedListEl.textContent = renderProgressPackageList(completed, { mode: 'completed', limit: 8 });
-  }
-  if (updateLiveRemainingListEl) {
-    updateLiveRemainingListEl.textContent = renderProgressPackageList(remaining, { mode: 'generic', limit: 8 });
-  }
-  if (updateLiveFailedListEl) {
-    updateLiveFailedListEl.textContent = renderProgressPackageList(failed, { mode: 'failed', limit: 6 });
-  }
+  renderSimpleProgressList(updateLiveCompletedItemsEl, completed, { mode: 'completed' });
+  renderSimpleProgressList(updateLiveRemainingItemsEl, remaining, { mode: 'generic' });
+  renderFailedProgressList(updateLiveFailedItemsEl, failed);
 }
 
 function setUpdateHistoryStatus(text, isError = false) {
@@ -950,9 +1040,9 @@ function resetLoaderProgress() {
   if (updateLiveCompletedEl) updateLiveCompletedEl.textContent = '0';
   if (updateLiveRemainingEl) updateLiveRemainingEl.textContent = '0';
   if (updateLiveFailedEl) updateLiveFailedEl.textContent = '0';
-  if (updateLiveCompletedListEl) updateLiveCompletedListEl.textContent = i18n.t('progress.noItems');
-  if (updateLiveRemainingListEl) updateLiveRemainingListEl.textContent = i18n.t('progress.noItems');
-  if (updateLiveFailedListEl) updateLiveFailedListEl.textContent = i18n.t('progress.noItems');
+  renderSimpleProgressList(updateLiveCompletedItemsEl, []);
+  renderSimpleProgressList(updateLiveRemainingItemsEl, []);
+  renderFailedProgressList(updateLiveFailedItemsEl, []);
 }
 
 function formatEta(seconds) {
@@ -1004,6 +1094,7 @@ function renderCheckProgress(progress) {
   }
 
   lastKnownOperationRunning = !!progress.running;
+  lastKnownOperationName = String(progress.operation_name || '').trim().toLowerCase();
   if (progress.running) {
     loaderEl.classList.add('visible');
   }
@@ -1246,13 +1337,14 @@ function updateSelectionSummary(filteredList = null) {
 
   const visibleList = Array.isArray(filteredList) ? filteredList : getFilteredPackages();
   const visibleOutdated = visibleList.filter((pkg) => pkg?.outdated).length;
+  const operationRunning = !!lastKnownOperationRunning;
 
   if (selectVisibleOutdatedBtn) {
-    selectVisibleOutdatedBtn.disabled = busyLoading || !isBrewPathConfigured() || visibleOutdated === 0;
+    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !isBrewPathConfigured() || visibleOutdated === 0;
   }
 
   if (clearSelectionBtn) {
-    clearSelectionBtn.disabled = busyLoading || selectedCount === 0;
+    clearSelectionBtn.disabled = busyLoading || operationRunning || selectedCount === 0;
   }
 }
 
@@ -1956,6 +2048,46 @@ async function loadState({ showLoader = true } = {}) {
 async function checkNow() {
   if (!ensureBrewConfiguredForActions()) return;
   clearMessage();
+
+  let liveProgress = null;
+  try {
+    const payload = await window.brewApp.getProgress();
+    liveProgress = payload?.progress || null;
+  } catch {
+    liveProgress = null;
+  }
+
+  if (liveProgress) {
+    lastKnownOperationRunning = !!liveProgress.running;
+    lastKnownOperationName = String(liveProgress.operation_name || '').trim().toLowerCase();
+    renderCheckProgress(liveProgress);
+    applyActionAvailability();
+  }
+
+  const updateRunning = !!liveProgress?.running
+    && String(liveProgress.operation_name || '').trim().toLowerCase().startsWith('update');
+
+  if (updateRunning) {
+    try {
+      const response = await window.brewApp.runCheckNow();
+      if (response?.queued) {
+        showMessage(i18n.t('message.checkQueuedAfterUpdate'));
+      } else if (response?.snapshot) {
+        snapshot = response.snapshot;
+        renderCards(snapshot);
+        renderTable();
+        updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
+        showMessage(i18n.t('message.checkSuccess'));
+      } else {
+        showMessage(i18n.t('message.statusRefreshed'));
+      }
+      await refreshRuntimeStatus({ showFeedback: false, reloadState: false });
+    } catch (err) {
+      showMessage(i18n.t('message.checkFailed', { error: formatOperationErrorMessage(err) }), true);
+    }
+    return;
+  }
+
   setLoading(true, 'message.runningCheck');
   startProgressPolling();
   try {

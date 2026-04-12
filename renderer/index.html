@@ -1050,16 +1050,75 @@
       font-weight: 700;
     }
 
-    .update-live-list pre {
+    .update-live-items {
+      display: grid;
+      gap: 6px;
       margin: 0;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .update-live-item {
+      border: 1px solid #e4ebf5;
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 6px 8px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .update-live-item-label {
+      font-weight: 680;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .update-live-item-note {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .update-live-empty {
+      border: 1px dashed #d9e3f1;
+      border-radius: 8px;
+      background: #f8fbff;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 8px;
+    }
+
+    .update-live-failure {
+      border: 1px solid #f2d4da;
+      border-radius: 8px;
+      background: #fff7f8;
+    }
+
+    .update-live-failure summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 8px 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #b12d3a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .update-live-failure summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .update-live-failure-reason {
+      border-top: 1px solid #f2d4da;
+      padding: 8px 10px;
+      font-size: 0.79rem;
+      color: #5f1420;
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 0.74rem;
-      line-height: 1.35;
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      max-height: 130px;
-      overflow: auto;
     }
 
     .name-main {
@@ -1409,6 +1468,7 @@
       <div class="loader-steps" id="loaderSteps">
         <div class="loader-step" data-step="starting" data-i18n="progress.phase.starting">Starting</div>
         <div class="loader-step" data-step="brew_update" data-i18n="progress.phase.brew_update">Running brew update</div>
+        <div class="loader-step" data-step="updating_packages" data-i18n="progress.phase.updating_packages">Updating packages</div>
         <div class="loader-step" data-step="collecting_outdated" data-i18n="progress.phase.collecting_outdated">Collecting outdated packages</div>
         <div class="loader-step" data-step="collecting_installed" data-i18n="progress.phase.collecting_installed">Collecting installed packages</div>
         <div class="loader-step" data-step="resolving_dates" data-i18n="progress.phase.resolving_dates">Resolving release dates</div>
@@ -1446,15 +1506,15 @@
         <div class="update-live-lists">
           <div class="update-live-list">
             <h4 data-i18n="progress.completedList">Completed recently</h4>
-            <pre id="updateLiveCompletedList">—</pre>
+            <div class="update-live-items" id="updateLiveCompletedItems"></div>
           </div>
           <div class="update-live-list">
             <h4 data-i18n="progress.remainingList">Remaining next</h4>
-            <pre id="updateLiveRemainingList">—</pre>
+            <div class="update-live-items" id="updateLiveRemainingItems"></div>
           </div>
           <div class="update-live-list">
             <h4 data-i18n="progress.failedList">Failed so far</h4>
-            <pre id="updateLiveFailedList">—</pre>
+            <div class="update-live-items" id="updateLiveFailedItems"></div>
           </div>
         </div>
       </div>
