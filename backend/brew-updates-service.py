@@ -101,6 +101,15 @@ DEFERRED_CHECK_STATE: dict[str, Any] = {
     "reason": None,
 }
 
+PARALLEL_CHECK_LOCK = threading.Lock()
+PARALLEL_CHECK_STATE: dict[str, Any] = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+    "reason": None,
+}
+
 
 def new_check_progress_state() -> dict[str, Any]:
     return {
@@ -196,6 +205,11 @@ def read_current_operation() -> dict[str, Any]:
         return dict(CURRENT_OPERATION)
 
 
+def read_parallel_check_state() -> dict[str, Any]:
+    with PARALLEL_CHECK_LOCK:
+        return dict(PARALLEL_CHECK_STATE)
+
+
 def is_cancel_requested() -> bool:
     with CANCEL_STATE_LOCK:
         return bool(CANCEL_STATE.get("requested"))
@@ -280,6 +294,54 @@ def maybe_schedule_deferred_check(trigger_operation_name: str) -> None:
         daemon=True,
     )
     worker.start()
+
+
+def _parallel_check_worker(*, run_brew_update: bool, reason: str) -> None:
+    error_text: str | None = None
+
+    append_service_log(f"Parallel check started (reason={reason}, run_brew_update={run_brew_update})")
+    append_check_log(f"Parallel check started (reason={reason}, run_brew_update={run_brew_update})")
+
+    try:
+        compute_snapshot(run_brew_update=run_brew_update, track_progress=False)
+    except Exception as exc:
+        error_text = str(exc)
+        append_service_log(f"Parallel check failed: {error_text}")
+        append_check_log(f"Parallel check failed: {error_text}")
+    finally:
+        with PARALLEL_CHECK_LOCK:
+            PARALLEL_CHECK_STATE["running"] = False
+            PARALLEL_CHECK_STATE["finished_at"] = now_iso()
+            PARALLEL_CHECK_STATE["last_error"] = error_text
+
+        if not error_text:
+            append_service_log("Parallel check completed successfully")
+            append_check_log("Parallel check completed successfully")
+
+
+def start_parallel_check(*, reason: str, run_brew_update: bool) -> tuple[bool, dict[str, Any]]:
+    with PARALLEL_CHECK_LOCK:
+        if PARALLEL_CHECK_STATE.get("running"):
+            return False, dict(PARALLEL_CHECK_STATE)
+
+        PARALLEL_CHECK_STATE["running"] = True
+        PARALLEL_CHECK_STATE["started_at"] = now_iso()
+        PARALLEL_CHECK_STATE["finished_at"] = None
+        PARALLEL_CHECK_STATE["last_error"] = None
+        PARALLEL_CHECK_STATE["reason"] = str(reason or "manual_check")
+
+        state_snapshot = dict(PARALLEL_CHECK_STATE)
+
+    worker = threading.Thread(
+        target=_parallel_check_worker,
+        kwargs={
+            "run_brew_update": bool(run_brew_update),
+            "reason": str(reason or "manual_check"),
+        },
+        daemon=True,
+    )
+    worker.start()
+    return True, state_snapshot
 
 
 def set_check_progress(
@@ -2607,6 +2669,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "progress": read_check_progress(),
                     "operation": operation,
+                    "parallel_check": read_parallel_check_state(),
                 },
             )
             return
@@ -2685,18 +2748,37 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             operation_name = str(operation.get("name") or "")
 
             if operation.get("running") and operation_name.startswith("update"):
-                queued_now = request_deferred_check("manual_check")
-                detail = "Check queued and will run after current update operation"
-                if not queued_now:
-                    detail = "Check already queued and will run after current update operation"
+                started, parallel_state = start_parallel_check(
+                    reason="manual_check_during_update",
+                    run_brew_update=False,
+                )
+                detail = "Parallel check started while update is running"
+                if not started:
+                    detail = "Parallel check is already running"
                 self._send_json(
                     202,
                     {
                         "ok": True,
-                        "queued": True,
-                        "already_queued": not queued_now,
+                        "parallel": True,
+                        "started": started,
                         "detail": detail,
                         "operation": operation,
+                        "parallel_check": parallel_state,
+                    },
+                )
+                return
+
+            active_parallel = read_parallel_check_state()
+            if active_parallel.get("running"):
+                self._send_json(
+                    202,
+                    {
+                        "ok": True,
+                        "parallel": True,
+                        "started": False,
+                        "detail": "Parallel check is already running",
+                        "operation": operation,
+                        "parallel_check": active_parallel,
                     },
                 )
                 return

@@ -120,6 +120,8 @@ let cancelInFlight = false;
 let settingsModalOpen = false;
 let lastKnownOperationRunning = false;
 let lastKnownOperationName = '';
+let lastKnownParallelCheckRunning = false;
+let lastKnownParallelCheckFinishedAt = '';
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const LOADER_PHASE_ORDER = [
@@ -559,6 +561,7 @@ async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } 
   try {
     const progressPayload = await window.brewApp.getProgress();
     const progress = progressPayload?.progress || null;
+    const parallelCheck = progressPayload?.parallel_check || null;
 
     if (progress) {
       renderCheckProgress(progress);
@@ -587,10 +590,12 @@ async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } 
       }
     }
 
+    await syncParallelCheckState(parallelCheck, { showFeedback });
+
     await loadSettings();
     await loadUpdateHistory();
 
-    if (reloadState && !progress?.running) {
+    if (reloadState && !progress?.running && !parallelCheck?.running) {
       await loadState({ showLoader: false });
     }
   } catch (err) {
@@ -601,6 +606,42 @@ async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } 
     if (refreshStatusBtn) {
       refreshStatusBtn.disabled = false;
     }
+  }
+}
+
+async function syncParallelCheckState(parallelCheck, { showFeedback = false } = {}) {
+  const payload = parallelCheck && typeof parallelCheck === 'object' ? parallelCheck : {};
+  const running = !!payload.running;
+  const finishedAt = String(payload.finished_at || '').trim();
+  const lastError = String(payload.last_error || '').trim();
+
+  if (running) {
+    lastKnownParallelCheckRunning = true;
+    if (showFeedback) {
+      showMessage(i18n.t('message.checkParallelRunning'));
+    }
+    return;
+  }
+
+  const justFinished = !!finishedAt && finishedAt !== lastKnownParallelCheckFinishedAt;
+  if (!justFinished) {
+    lastKnownParallelCheckRunning = false;
+    return;
+  }
+
+  lastKnownParallelCheckFinishedAt = finishedAt;
+  const wasRunning = lastKnownParallelCheckRunning;
+  lastKnownParallelCheckRunning = false;
+
+  await loadState({ showLoader: false });
+
+  if (lastError) {
+    showMessage(i18n.t('message.checkParallelFailed', { error: lastError }), true);
+    return;
+  }
+
+  if (showFeedback || wasRunning) {
+    showMessage(i18n.t('message.checkParallelCompleted'));
   }
 }
 
@@ -1161,6 +1202,7 @@ async function pollCheckProgress() {
     if (payload?.progress) {
       renderCheckProgress(payload.progress);
     }
+    await syncParallelCheckState(payload?.parallel_check, { showFeedback: false });
   } catch {
     // Ignore transient polling errors while check is in progress.
   } finally {
@@ -2070,8 +2112,13 @@ async function checkNow() {
   if (updateRunning) {
     try {
       const response = await window.brewApp.runCheckNow();
-      if (response?.queued) {
-        showMessage(i18n.t('message.checkQueuedAfterUpdate'));
+      if (response?.parallel) {
+        if (response?.started) {
+          showMessage(i18n.t('message.checkParallelStarted'));
+        } else {
+          showMessage(i18n.t('message.checkParallelAlreadyRunning'));
+        }
+        await syncParallelCheckState(response?.parallel_check, { showFeedback: false });
       } else if (response?.snapshot) {
         snapshot = response.snapshot;
         renderCards(snapshot);
