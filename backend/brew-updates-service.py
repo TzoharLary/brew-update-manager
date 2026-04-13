@@ -45,6 +45,7 @@ MAX_TRANSLATIONS_PER_RUN = 40
 GITHUB_COMMITS_PER_FILE = 80
 MAX_GITHUB_FALLBACK_PER_RUN = 25
 VERSION_SEARCH_COMMITS_LIMIT = 60
+BREW_LOG_COMMITS_LIMIT = 120
 GITHUB_PATH_CANDIDATES_LIMIT = 5
 BREW_SCAN_TIMEOUT_SECONDS = 20
 BREW_SCAN_MAX_RESULTS = 50
@@ -140,6 +141,7 @@ CHECK_PROGRESS: dict[str, Any] = new_check_progress_state()
 UNSET = object()
 
 REPO_CACHE: dict[str, Path] = {}
+BREW_LOG_CACHE: dict[tuple[str, str], list[dict[str, str]]] = {}
 
 TAP_GITHUB_REPO = {
     "homebrew/core": "Homebrew/homebrew-core",
@@ -962,6 +964,9 @@ def process_env() -> dict[str, str]:
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
+        "HOMEBREW_NO_PAGER": "1",
+        "GIT_PAGER": "cat",
+        "PAGER": "cat",
     }
     for key, value in os.environ.items():
         if key.startswith("HOMEBREW_"):
@@ -1507,6 +1512,123 @@ def git_version_intro_iso(repo: Path, target_file: Path, version: str) -> str | 
     return res.stdout.splitlines()[0].strip()
 
 
+def parse_brew_log_date_iso(raw: str) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+
+    try:
+        parsed = dt.datetime.strptime(text, "%a %b %d %H:%M:%S %Y %z")
+    except ValueError:
+        return None
+
+    return parsed.astimezone(dt.timezone.utc).isoformat()
+
+
+def parse_brew_log_commits(raw: str) -> list[dict[str, str]]:
+    commits: list[dict[str, str]] = []
+    current_hash = ""
+    current_date_raw = ""
+    current_subject = ""
+
+    def flush_current() -> None:
+        nonlocal current_hash, current_date_raw, current_subject
+        if not current_hash:
+            return
+        commit_iso = parse_brew_log_date_iso(current_date_raw) or ""
+        commits.append(
+            {
+                "hash": current_hash,
+                "date": commit_iso,
+                "subject": current_subject,
+            }
+        )
+        current_hash = ""
+        current_date_raw = ""
+        current_subject = ""
+
+    for line in str(raw or "").splitlines():
+        if line.startswith("commit "):
+            flush_current()
+            current_hash = line.split(" ", 1)[1].strip()
+            continue
+
+        if not current_hash:
+            continue
+
+        if line.startswith("Date:"):
+            current_date_raw = line.split("Date:", 1)[1].strip()
+            continue
+
+        if not current_subject:
+            stripped = line.strip()
+            if stripped and line.startswith("    "):
+                current_subject = stripped
+
+    flush_current()
+    return commits
+
+
+def brew_log_commits(kind: str, name: str) -> list[dict[str, str]]:
+    normalized_kind = str(kind or "").strip()
+    normalized_name = str(name or "").strip()
+    if normalized_kind not in {"formula", "cask"} or not normalized_name:
+        return []
+
+    key = (normalized_kind, normalized_name)
+    cached = BREW_LOG_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    b = brew_bin()
+    args = [b, "log", f"--max-count={BREW_LOG_COMMITS_LIMIT}"]
+    if normalized_kind == "cask":
+        args.extend(["--cask", normalized_name])
+    else:
+        args.extend(["--formula", normalized_name])
+
+    res = run_cmd(args, timeout=120)
+    if res.code != 0 or not res.stdout:
+        fallback = run_cmd([b, "log", f"--max-count={BREW_LOG_COMMITS_LIMIT}", normalized_name], timeout=120)
+        if fallback.code != 0 or not fallback.stdout:
+            BREW_LOG_CACHE[key] = []
+            return []
+        parsed_fallback = parse_brew_log_commits(fallback.stdout)
+        BREW_LOG_CACHE[key] = parsed_fallback
+        return parsed_fallback
+
+    parsed = parse_brew_log_commits(res.stdout)
+    BREW_LOG_CACHE[key] = parsed
+    return parsed
+
+
+def brew_log_version_intro_iso(kind: str, name: str, version: str) -> str | None:
+    normalized_version = str(version or "").strip()
+    if not normalized_version or normalized_version in {"unknown", "latest"}:
+        return None
+
+    commits = brew_log_commits(kind, name)
+    if not commits:
+        return None
+
+    for commit in reversed(commits):
+        commit_date = str(commit.get("date") or "").strip()
+        subject = str(commit.get("subject") or "")
+        if commit_date and version_in_text(subject, normalized_version):
+            return commit_date
+
+    return None
+
+
+def brew_log_latest_change_iso(kind: str, name: str) -> str | None:
+    commits = brew_log_commits(kind, name)
+    for commit in commits:
+        commit_date = str(commit.get("date") or "").strip()
+        if commit_date:
+            return commit_date
+    return None
+
+
 def github_commits_for_path(repo_slug: str, relative_path: str) -> list[dict[str, Any]]:
     encoded_path = quote(relative_path, safe="")
     url = (
@@ -1670,6 +1792,11 @@ def cache_entry_fresh(entry: dict[str, Any]) -> bool:
     return age <= dt.timedelta(days=RELEASE_CACHE_TTL_DAYS)
 
 
+def is_homebrew_latest_source(source: str) -> bool:
+    normalized = str(source or "").strip()
+    return normalized.startswith("tap_git_") or normalized.startswith("brew_log_")
+
+
 def resolve_release_dates(
     pkg: dict[str, Any],
     cache: dict[str, Any],
@@ -1678,15 +1805,21 @@ def resolve_release_dates(
     key = release_cache_key(pkg)
     cached = cache.get(key)
     if isinstance(cached, dict) and cache_entry_fresh(cached):
-        return (
-            cached.get("current_release_date"),
-            str(cached.get("current_release_date_source") or "unavailable"),
-            cached.get("latest_release_date"),
-            str(cached.get("latest_release_date_source") or "unavailable"),
-        )
+        cached_latest = cached.get("latest_release_date")
+        cached_latest_source = str(cached.get("latest_release_date_source") or "unavailable")
+        if not (cached_latest and not is_homebrew_latest_source(cached_latest_source)):
+            return (
+                cached.get("current_release_date"),
+                str(cached.get("current_release_date_source") or "unavailable"),
+                cached_latest,
+                cached_latest_source,
+            )
 
     tap = normalize_tap(str(pkg.get("tap") or ""), str(pkg.get("kind") or ""))
     repo = resolve_repo_path(tap)
+    kind = str(pkg.get("kind") or "").strip()
+    name = str(pkg.get("name") or "").strip()
+    is_outdated = bool(pkg.get("outdated"))
 
     current_release_date: str | None = None
     latest_release_date: str | None = None
@@ -1710,17 +1843,30 @@ def resolve_release_dates(
             if current_release_date:
                 current_source = "tap_git_version_intro"
 
-    if (not latest_release_date or not current_release_date) and allow_github_fallback and bool(pkg.get("outdated")):
+    if kind in {"formula", "cask"} and name and is_outdated:
+        brew_latest_intro = brew_log_version_intro_iso(kind, name, str(pkg.get("latest_version") or ""))
+        if brew_latest_intro:
+            latest_release_date = brew_latest_intro
+            latest_source = "brew_log_latest_version_intro"
+
+    if not latest_release_date and kind in {"formula", "cask"} and name and is_outdated:
+        latest_release_date = brew_log_latest_change_iso(kind, name)
+        if latest_release_date:
+            latest_source = "brew_log_latest_change"
+
+    if not current_release_date and kind in {"formula", "cask"} and name and is_outdated:
+        current_release_date = brew_log_version_intro_iso(kind, name, str(pkg.get("installed_version") or ""))
+        if current_release_date:
+            current_source = "brew_log_version_intro"
+
+    if not current_release_date and allow_github_fallback and bool(pkg.get("outdated")):
         candidate_paths = github_candidate_paths(pkg, repo, target_file)
-        gh_current, gh_current_source, gh_latest, gh_latest_source = github_release_dates_for_package(
+        gh_current, gh_current_source, _gh_latest, _gh_latest_source = github_release_dates_for_package(
             tap,
             candidate_paths,
             str(pkg.get("installed_version") or ""),
             str(pkg.get("latest_version") or ""),
         )
-        if not latest_release_date and gh_latest:
-            latest_release_date = gh_latest
-            latest_source = gh_latest_source
         if not current_release_date and gh_current:
             current_release_date = gh_current
             current_source = gh_current_source
