@@ -983,6 +983,85 @@
       gap: 8px;
     }
 
+    .operation-report {
+      display: none;
+      margin: 2px 0 14px;
+    }
+
+    .operation-report.visible {
+      display: block;
+    }
+
+    .operation-report .inner {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 18px 16px;
+      box-shadow: var(--soft-shadow);
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .operation-report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .operation-report-title {
+      margin: 0;
+      font-size: 0.98rem;
+      font-weight: 760;
+      color: var(--text);
+    }
+
+    .operation-report-close {
+      min-width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      padding: 0;
+      font-size: 0.95rem;
+      box-shadow: none;
+      background: #f6f9ff;
+    }
+
+    .operation-report-body {
+      display: grid;
+      gap: 9px;
+    }
+
+    .operation-report-section {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fbfdff;
+      padding: 9px 11px;
+    }
+
+    .operation-report-section h4 {
+      margin: 0 0 6px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .operation-report-list {
+      margin: 0;
+      padding-inline-start: 16px;
+      color: var(--text);
+      font-size: 0.86rem;
+      display: grid;
+      gap: 4px;
+      max-height: 220px;
+      overflow: auto;
+    }
+
+    .operation-report-empty {
+      font-size: 0.83rem;
+      color: var(--muted);
+    }
+
     .update-live-panel {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -1278,53 +1357,6 @@
             </div>
           </details>
 
-          <details class="settings-group" open>
-            <summary>
-              <span data-i18n="history.title">Recent package updates</span>
-            </summary>
-            <div class="settings-group-content">
-              <div class="settings-note" data-i18n="history.help">Shows the latest package updates and when they were performed.</div>
-              <div class="history-tools">
-                <label class="search-box" for="historySearchInput">
-                  <span data-i18n="history.searchLabel">Search</span>
-                  <input id="historySearchInput" type="search" />
-                </label>
-
-                <label class="filter-box" for="historyKindFilter">
-                  <span data-i18n="history.kindFilterLabel">Type</span>
-                  <select id="historyKindFilter">
-                    <option value="all" data-i18n="history.kindFilterAll">All types</option>
-                    <option value="formula" data-i18n="history.kindFilterFormula">Formulae</option>
-                    <option value="cask" data-i18n="history.kindFilterCask">Casks</option>
-                  </select>
-                </label>
-
-                <label class="filter-box" for="historyStatusFilter">
-                  <span data-i18n="history.statusFilterLabel">Status</span>
-                  <select id="historyStatusFilter">
-                    <option value="all" data-i18n="history.statusFilterAll">All statuses</option>
-                    <option value="latest" data-i18n="history.statusFilterLatest">Verified latest</option>
-                    <option value="pending" data-i18n="history.statusFilterPending">Verification pending</option>
-                    <option value="fail" data-i18n="history.statusFilterFailed">Failed</option>
-                  </select>
-                </label>
-
-                <label class="filter-box" for="historySortSelect">
-                  <span data-i18n="history.sortLabel">Sort</span>
-                  <select id="historySortSelect">
-                    <option value="newest" data-i18n="history.sortNewest">Newest first</option>
-                    <option value="oldest" data-i18n="history.sortOldest">Oldest first</option>
-                    <option value="name_asc" data-i18n="history.sortNameAsc">Name A → Z</option>
-                    <option value="name_desc" data-i18n="history.sortNameDesc">Name Z → A</option>
-                  </select>
-                </label>
-
-                <button id="historyFiltersClearBtn" class="btn-quiet" data-i18n="history.clearFilters">Reset filters</button>
-              </div>
-              <div class="settings-note" id="updateHistoryStatus"></div>
-              <div class="history-list" id="updateHistoryList"></div>
-            </div>
-          </details>
         </div>
       </details>
     </div>
@@ -1465,18 +1497,6 @@
           <div class="loader-progress-fill" id="loaderProgressFill"></div>
         </div>
       </div>
-      <div class="loader-steps" id="loaderSteps">
-        <div class="loader-step" data-step="starting" data-i18n="progress.phase.starting">Starting</div>
-        <div class="loader-step" data-step="brew_update" data-i18n="progress.phase.brew_update">Running brew update</div>
-        <div class="loader-step" data-step="updating_packages" data-i18n="progress.phase.updating_packages">Updating packages</div>
-        <div class="loader-step" data-step="collecting_outdated" data-i18n="progress.phase.collecting_outdated">Collecting outdated packages</div>
-        <div class="loader-step" data-step="collecting_installed" data-i18n="progress.phase.collecting_installed">Collecting installed packages</div>
-        <div class="loader-step" data-step="resolving_dates" data-i18n="progress.phase.resolving_dates">Resolving release dates</div>
-        <div class="loader-step" data-step="translating_descriptions" data-i18n="progress.phase.translating_descriptions">Translating descriptions</div>
-        <div class="loader-step" data-step="canceled" data-i18n="progress.phase.canceled">Canceled</div>
-        <div class="loader-step" data-step="completed" data-i18n="progress.phase.completed">Completed</div>
-      </div>
-
       <div class="loader-actions">
         <button id="loaderCancelBtn" class="btn-quiet" data-i18n="progress.cancelOperation">Cancel current operation</button>
       </div>
@@ -1518,6 +1538,22 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="operation-report" id="operationReport">
+    <div class="inner">
+      <div class="operation-report-header">
+        <h3 class="operation-report-title" id="operationReportTitle"></h3>
+        <button
+          id="operationReportCloseBtn"
+          class="operation-report-close"
+          type="button"
+          data-i18n="report.close"
+          aria-label="Close report"
+        >✕</button>
+      </div>
+      <div class="operation-report-body" id="operationReportBody"></div>
     </div>
   </div>
 

@@ -2153,6 +2153,53 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     }
 
 
+def run_brew_update_stage(
+    *,
+    track_progress: bool,
+    total: int,
+    planned_packages: list[dict[str, Any]],
+    completed_progress: list[dict[str, Any]],
+    failed_progress: list[dict[str, Any]],
+    remaining_progress: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if track_progress:
+        set_check_progress(
+            phase="brew_update",
+            message="Running brew update",
+            done=0,
+            total=total,
+            eta_seconds=None,
+            current_package="brew update",
+            planned_packages=planned_packages,
+            completed_packages=completed_progress,
+            failed_packages=failed_progress,
+            remaining_packages=remaining_progress,
+            cancel_requested=is_cancel_requested(),
+            canceled=False,
+        )
+
+    append_check_log("Running brew update before package upgrades...")
+    b = brew_bin()
+    res = run_cmd([b, "update"], timeout=3600, cancellable=True)
+    ok = res.code == 0
+    canceled = bool(is_cancel_requested() and not ok)
+    warning = ""
+
+    if ok:
+        append_check_log("brew update completed before package upgrades")
+    elif canceled:
+        append_check_log("brew update cancelled before package upgrades")
+    else:
+        warning = str(res.stderr or res.stdout or "unknown error")
+        append_check_log(f"Warning: brew update failed before package upgrades: {warning}")
+
+    return {
+        "ok": ok,
+        "canceled": canceled,
+        "warning": warning,
+    }
+
+
 def package_from_snapshot(snapshot: dict[str, Any], name: str, kind: str) -> dict[str, Any] | None:
     for pkg in snapshot.get("packages", []) if isinstance(snapshot, dict) else []:
         if str(pkg.get("name") or "") == str(name or "") and str(pkg.get("kind") or "") == str(kind or ""):
@@ -2268,8 +2315,25 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     started = read_check_progress().get("started_at") if track_progress else None
     cancelled = False
+    brew_update_warning: str | None = None
+
+    preflight = run_brew_update_stage(
+        track_progress=track_progress,
+        total=total,
+        planned_packages=planned_packages,
+        completed_progress=completed_progress,
+        failed_progress=failed_progress,
+        remaining_progress=remaining_progress,
+    )
+    if preflight.get("warning"):
+        brew_update_warning = str(preflight.get("warning") or "")
+    if preflight.get("canceled"):
+        cancelled = True
 
     for idx, pkg in enumerate(outdated, start=1):
+        if cancelled:
+            break
+
         if is_cancel_requested():
             cancelled = True
             break
@@ -2284,7 +2348,7 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
                 eta = estimate_eta_seconds(started, idx - 1, total)
             set_check_progress(
                 phase="updating_packages",
-                message=f"Updating {name}",
+                message=f"Updating package {idx}/{total}: {name}",
                 done=idx - 1,
                 total=total,
                 eta_seconds=eta,
@@ -2325,20 +2389,6 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
         if result.get("canceled"):
             cancelled = True
             break
-
-    if track_progress:
-        set_check_progress(
-            phase="preparing",
-            message="Refreshing package inventory" if not cancelled else "Refreshing package inventory after cancellation",
-            eta_seconds=None,
-            current_package="",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=is_cancel_requested(),
-            canceled=cancelled,
-        )
 
     refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
 
@@ -2381,6 +2431,7 @@ def run_update_all(track_progress: bool = False) -> dict[str, Any]:
     return {
         "ok": (all(item.get("ok") for item in results) if results else True) and not cancelled,
         "canceled": cancelled,
+        "brew_update_warning": brew_update_warning,
         "attempted_count": len(results),
         "remaining_count": len(remaining_progress),
         "updated_count": sum(1 for item in results if item.get("ok")),
@@ -2458,8 +2509,26 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
     results: list[dict[str, Any]] = []
     started = read_check_progress().get("started_at") if track_progress else None
     cancelled = False
+    brew_update_warning: str | None = None
+
+    if total > 0:
+        preflight = run_brew_update_stage(
+            track_progress=track_progress,
+            total=total,
+            planned_packages=planned_packages,
+            completed_progress=completed_progress,
+            failed_progress=failed_progress,
+            remaining_progress=remaining_progress,
+        )
+        if preflight.get("warning"):
+            brew_update_warning = str(preflight.get("warning") or "")
+        if preflight.get("canceled"):
+            cancelled = True
 
     for idx, pkg in enumerate(targets, start=1):
+        if cancelled:
+            break
+
         if is_cancel_requested():
             cancelled = True
             break
@@ -2474,7 +2543,7 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
                 eta = estimate_eta_seconds(started, idx - 1, total)
             set_check_progress(
                 phase="updating_packages",
-                message=f"Updating {name}",
+                message=f"Updating package {idx}/{total}: {name}",
                 done=idx - 1,
                 total=total,
                 eta_seconds=eta,
@@ -2520,20 +2589,6 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
     refreshed = state
 
     if total > 0:
-        if track_progress:
-            set_check_progress(
-                phase="preparing",
-                message="Refreshing package inventory" if not cancelled else "Refreshing package inventory after cancellation",
-                eta_seconds=None,
-                current_package="",
-                planned_packages=planned_packages,
-                completed_packages=completed_progress,
-                failed_packages=failed_progress,
-                remaining_packages=remaining_progress,
-                cancel_requested=is_cancel_requested(),
-                canceled=cancelled,
-            )
-
         refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
 
         entries = history_entries_from_results(
@@ -2583,6 +2638,7 @@ def run_update_selected(selected_packages: list[dict[str, str]], track_progress:
     return {
         "ok": (all(item.get("ok") for item in results) if results else True) and not cancelled,
         "canceled": cancelled,
+        "brew_update_warning": brew_update_warning,
         "selected_count": len(selected_packages),
         "attempted_count": len(results),
         "remaining_count": len(remaining_progress),
@@ -2883,12 +2939,12 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     reset_check_progress_for_run()
                     set_check_progress(
                         operation_name="update_one",
-                        phase="updating_packages",
-                        message=f"Updating {name}",
+                        phase="brew_update",
+                        message="Running brew update",
                         done=0,
                         total=1,
                         eta_seconds=None,
-                        current_package=f"{kind}:{name}",
+                        current_package="brew update",
                         planned_packages=planned,
                         completed_packages=completed,
                         failed_packages=failed,
@@ -2898,38 +2954,74 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         error=None,
                     )
 
-                    package_started_at = now_iso()
-                    result = run_upgrade(name, kind)
-                    result_item = progress_result_item(result, started_at=package_started_at)
-                    completed.append(result_item)
-                    if not result.get("ok"):
-                        failed.append(result_item)
-
-                    cancelled = bool(result.get("canceled"))
-
-                    set_check_progress(
-                        done=1,
+                    preflight = run_brew_update_stage(
+                        track_progress=True,
                         total=1,
-                        eta_seconds=0,
-                        current_package=f"{kind}:{name}",
-                        completed_packages=completed,
-                        failed_packages=failed,
-                        remaining_packages=[],
-                        cancel_requested=is_cancel_requested(),
-                        canceled=cancelled,
+                        planned_packages=planned,
+                        completed_progress=completed,
+                        failed_progress=failed,
+                        remaining_progress=planned,
                     )
 
-                    set_check_progress(
-                        phase="preparing",
-                        message="Refreshing package inventory" if not cancelled else "Refreshing package inventory after cancellation",
-                        current_package="",
-                        planned_packages=planned,
-                        completed_packages=completed,
-                        failed_packages=failed,
-                        remaining_packages=[],
-                        cancel_requested=is_cancel_requested(),
-                        canceled=cancelled,
-                    )
+                    brew_update_warning = str(preflight.get("warning") or "")
+                    result: dict[str, Any] = {
+                        "ok": False,
+                        "canceled": False,
+                        "name": name,
+                        "kind": kind,
+                        "code": 0,
+                        "stdout": "",
+                        "stderr": "",
+                    }
+                    cancelled = False
+                    done_count = 0
+
+                    if preflight.get("canceled"):
+                        cancelled = True
+                        result.update(
+                            {
+                                "canceled": True,
+                                "code": 130,
+                                "stderr": "Cancelled during brew update preflight",
+                            }
+                        )
+                    else:
+                        set_check_progress(
+                            phase="updating_packages",
+                            message=f"Updating package 1/1: {name}",
+                            done=0,
+                            total=1,
+                            eta_seconds=None,
+                            current_package=f"{kind}:{name}",
+                            planned_packages=planned,
+                            completed_packages=completed,
+                            failed_packages=failed,
+                            remaining_packages=planned,
+                            cancel_requested=is_cancel_requested(),
+                            canceled=False,
+                        )
+
+                        package_started_at = now_iso()
+                        result = run_upgrade(name, kind)
+                        result_item = progress_result_item(result, started_at=package_started_at)
+                        completed.append(result_item)
+                        if not result.get("ok"):
+                            failed.append(result_item)
+
+                        cancelled = bool(result.get("canceled"))
+                        done_count = 1
+
+                        set_check_progress(
+                            done=done_count,
+                            total=1,
+                            eta_seconds=0,
+                            current_package=f"{kind}:{name}",
+                            completed_packages=completed,
+                            failed_packages=failed,
+                            remaining_packages=[],
+                            cancel_requested=is_cancel_requested(),
+                            canceled=cancelled,
+                        )
 
                     snapshot, refresh_error = safe_refresh_snapshot(previous_snapshot=previous_snapshot)
 
@@ -2949,7 +3041,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="completed",
                             message=completed_message,
-                            done=1,
+                            done=done_count,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -2967,7 +3059,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="canceled",
                             message=f"Update canceled for {name}",
-                            done=1,
+                            done=done_count,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -2985,7 +3077,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="error",
                             message=f"Update failed for {name}",
-                            done=1,
+                            done=done_count,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -3001,6 +3093,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
                     return {
                         "result": result,
+                        "brew_update_warning": brew_update_warning or None,
                         "snapshot": snapshot,
                         "inventory_refresh_error": refresh_error,
                     }
