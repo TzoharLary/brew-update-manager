@@ -1,0 +1,17 @@
+{
+  "tag": "v2.12.7",
+  "assets": [
+    {
+      "name": "MacPorts-2.12.7-26-Tahoe.pkg",
+      "size": 7435356,
+      "digest": "sha256:588f14ccd3c6199559a070a80e6cddd6871721a08cc434775bf54378fd667910",
+      "browser_download_url": "https://github.com/macports/macports-base/releases/download/v2.12.7/MacPorts-2.12.7-26-Tahoe.pkg"
+    },
+    {
+      "name": "MacPorts-2.12.7.chk.txt",
+      "size": 6918,
+      "digest": "sha256:a260e083938a94cd8c6ce5291afb6fb0a5933039ae5cf3812bbc501a8b4a46b5",
+      "browser_download_url": "https://github.com/macports/macports-base/releases/download/v2.12.7/MacPorts-2.12.7.chk.txt"
+    }
+  ]
+}

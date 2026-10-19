@@ -1,0 +1,28 @@
+root	status	error
+clang-23	0	
+gnupg2	0	
+gpgme	0	
+gpgmepp	0	
+include-what-you-use	0	
+llvm-23	0	
+net-snmp	0	
+nmap	0	
+nss	0	
+openjpeg	0	
+openldap	0	
+openmpi-default	0	
+p11-kit	0	
+pango	0	
+php85	0	
+poppler	0	
+postgresql17	0	
+postgresql17-server	0	
+py314-cairo	0	
+py314-cryptography	0	
+simdjson	0	
+socat	0	
+terminal-notifier	0	
+tesseract	0	
+unbound	0	
+wget	0	
+whisper.cpp	error	key "porturl" not known in dictionary

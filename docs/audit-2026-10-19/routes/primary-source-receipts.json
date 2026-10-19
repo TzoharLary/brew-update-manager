@@ -1,0 +1,29 @@
+[
+  {
+    "name": "nmap-download",
+    "url": "https://nmap.org/download",
+    "checked_at": "2026-10-19T05:49:00.621693+00:00",
+    "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1144)>"
+  },
+  {
+    "name": "nmap-7.992-digest",
+    "url": "https://nmap.org/dist/sigs/nmap-7.992.dmg.digest.txt",
+    "checked_at": "2026-10-19T05:49:01.274099+00:00",
+    "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1144)>"
+  },
+  {
+    "name": "terminal-notifier-readme",
+    "url": "https://raw.githubusercontent.com/julienXX/terminal-notifier/master/README.markdown",
+    "checked_at": "2026-10-19T05:49:01.675386+00:00",
+    "http_status": 200,
+    "bytes": 22605,
+    "saved_file": "docs/audit-2026-10-19/routes/terminal-notifier-readme.txt",
+    "sha256": "772f95144f8f4da26e0fe1ad06505d95f26ac1d6a0d168bc1a1ff496f6e06cd5"
+  },
+  {
+    "name": "homebrew-support-tiers",
+    "url": "https://raw.githubusercontent.com/Homebrew/brew/master/docs/Support-Tiers.md",
+    "checked_at": "2026-10-19T05:49:02.086042+00:00",
+    "error": "HTTP Error 404: Not Found"
+  }
+]

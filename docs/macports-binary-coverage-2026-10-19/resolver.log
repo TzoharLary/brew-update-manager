@@ -1,0 +1,216 @@
+HOST darwin 25 x86_64
+ROOT clang-23
+RESOLUTION_STATUS clang-23 0
+PORT clang-23 23.1.3 0 +analyzer x86_64 clang-23-23.1.3_0+analyzer.darwin_25.x86_64.tbz2 libcxx,zlib,zstd,ld64,libomp,llvm-23,clang_select-23,cctools,perl5 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/llvm-23
+PORT perl5 5.34.3 0 +perl5_34 noarch perl5-5.34.3_0+perl5_34.any_any.noarch.tbz2 perl5.34 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/perl5
+PORT lz4 1.10.0 0 {} x86_64 lz4-1.10.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/lz4
+PORT xz 5.8.4 0 {} x86_64 xz-5.8.4_0.darwin_25.x86_64.tbz2 libiconv,gettext-runtime file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/xz
+PORT libiconv 1.19 0 {} x86_64 libiconv-1.19_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libiconv
+PORT gettext-runtime 1.0 0 {} x86_64 gettext-runtime-1.0_0.darwin_25.x86_64.tbz2 libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gettext
+PORT ld64-xcode 2 6 {} x86_64 ld64-xcode-2_6.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/ld64
+PORT libedit 20260512-3.1 0 {} x86_64 libedit-20260512-3.1_0.darwin_25.x86_64.tbz2 ncurses file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libedit
+PORT libffi 3.4.8 0 {} x86_64 libffi-3.4.8_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libffi
+PORT libxml2 2.15.4 0 {} x86_64 libxml2-2.15.4_0.darwin_25.x86_64.tbz2 libiconv,icu,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libxml2
+PORT llvm_select-23 2 1 {} noarch llvm_select-23-2_1.any_any.noarch.tbz2 llvm_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/llvm_select
+PORT libcxx 5.0.1 5 {} noarch libcxx-5.0.1_5.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/libcxx
+PORT ncurses 6.6 0 {} x86_64 ncurses-6.6_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/ncurses
+PORT icu 78.3 1 {} x86_64 icu-78.3_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/icu
+PORT llvm_select 2 1 {} noarch llvm_select-2_1.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/llvm_select
+PORT clang_select 2.5 0 {} noarch clang_select-2.5_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/clang_select
+PORT perl5.34 5.34.3 1 {} x86_64 perl5.34-5.34.3_1.darwin_25.x86_64.tbz2 db48,gdbm file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/perl5
+PORT db48 4.8.30 5 {} x86_64 db48-4.8.30_5.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/db48
+PORT gdbm 1.26 0 {} x86_64 gdbm-1.26_0.darwin_25.x86_64.tbz2 gettext-runtime,readline file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/gdbm
+PORT readline 8.3.003 0 {} x86_64 readline-8.3.003_0.darwin_25.x86_64.tbz2 ncurses file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/readline
+PORT zlib 1.3.2 0 {} x86_64 zlib-1.3.2_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/zlib
+PORT zstd 1.5.7 0 {} x86_64 zstd-1.5.7_0.darwin_25.x86_64.tbz2 lz4,xz,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/zstd
+PORT ld64 3 6 +ld64_xcode x86_64 ld64-3_6+ld64_xcode.darwin_25.x86_64.tbz2 ld64-xcode file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/ld64
+PORT libomp 21.1.7 0 {} x86_64 libomp-21.1.7_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/libomp
+PORT llvm-23 23.1.3 0 {} x86_64 llvm-23-23.1.3_0.darwin_25.x86_64.tbz2 libcxx,libedit,libffi,libxml2,zlib,zstd,llvm_select-23 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/llvm-23
+PORT clang_select-23 2.5 0 {} noarch clang_select-23-2.5_0.any_any.noarch.tbz2 clang_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/clang_select
+PORT cctools 949.0.1 3 +xcode noarch cctools-949.0.1_3+xcode.darwin_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/cctools
+ROOT gnupg2
+RESOLUTION_STATUS gnupg2 0
+PORT gnupg2 2.5.21 0 +openldap+pinentry_mac x86_64 gnupg2-2.5.21_0+openldap+pinentry_mac.darwin_25.x86_64.tbz2 libiconv,gettext-runtime,zlib,bzip2,libassuan,libksba,libgcrypt,libgpg-error,readline,gnutls,libusb-compat,npth,sqlite3,pinentry-mac,openldap file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/mail/gnupg2
+PORT bzip2 1.0.8 1 {} x86_64 bzip2-1.0.8_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/bzip2
+PORT libassuan 3.0.2 0 {} x86_64 libassuan-3.0.2_0.darwin_25.x86_64.tbz2 libgpg-error,pth file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libassuan
+PORT libksba 1.6.8 0 {} x86_64 libksba-1.6.8_0.darwin_25.x86_64.tbz2 libgpg-error file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libksba
+PORT libgcrypt 1.12.4 0 {} x86_64 libgcrypt-1.12.4_0.darwin_25.x86_64.tbz2 libgpg-error,texinfo file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libgcrypt
+PORT libgpg-error 1.61 0 {} x86_64 libgpg-error-1.61_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,texinfo file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libgpg-error
+PORT gnutls 3.8.13 1 {} x86_64 gnutls-3.8.13_1.darwin_25.x86_64.tbz2 brotli,gettext-runtime,gmp,libidn2,libtasn1,libunistring,p11-kit,nettle,zlib,zstd file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gnutls
+PORT libusb-compat 0.1.9 0 {} x86_64 libusb-compat-0.1.9_0.darwin_25.x86_64.tbz2 libusb file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libusb-compat
+PORT npth 1.8 0 {} x86_64 npth-1.8_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/npth
+PORT sqlite3 3.54.1 0 {} x86_64 sqlite3-3.54.1_0.darwin_25.x86_64.tbz2 libedit,ncurses,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/sqlite3
+PORT pinentry-mac 1.3.1.1 0 {} x86_64 pinentry-mac-1.3.1.1_0.darwin_25.x86_64.tbz2 libassuan,libgpg-error file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/aqua/pinentry-mac
+PORT openldap 2.6.13 0 {} x86_64 openldap-2.6.13_0.darwin_25.x86_64.tbz2 cyrus-sasl2,db48,libfetch,openssl,perl5,tcp_wrappers file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/openldap
+PORT pth 2.0.7 1 {} x86_64 pth-2.0.7_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/pth
+PORT texinfo 7.3 0 +perl5_34 x86_64 texinfo-7.3_0+perl5_34.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libunistring,ncurses,perl5.34 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/texinfo
+PORT libunistring 1.5 0 {} x86_64 libunistring-1.5_0.darwin_25.x86_64.tbz2 libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libunistring
+PORT brotli 1.2.0 0 {} x86_64 brotli-1.2.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/brotli
+PORT gmp 6.3.0 0 {} x86_64 gmp-6.3.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gmp
+PORT libidn2 2.3.8 0 {} x86_64 libidn2-2.3.8_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libunistring file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/mail/libidn2
+PORT libtasn1 4.21.0 0 {} x86_64 libtasn1-4.21.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libtasn1
+PORT p11-kit 0.26.5 1 {} x86_64 p11-kit-0.26.5_1.darwin_25.x86_64.tbz2 gettext-runtime,libtasn1,libffi,libxslt,curl-ca-bundle file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/security/p11-kit
+PORT nettle 3.10.2 0 {} x86_64 nettle-3.10.2_0.darwin_25.x86_64.tbz2 gmp file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/nettle
+PORT libxslt 1.1.45 0 {} x86_64 libxslt-1.1.45_0.darwin_25.x86_64.tbz2 libxml2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libxslt
+PORT curl-ca-bundle 8.23.0 0 {} noarch curl-ca-bundle-8.23.0_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/curl
+PORT libusb 1.0.30 0 {} x86_64 libusb-1.0.30_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libusb
+PORT cyrus-sasl2 2.1.28 1 +kerberos x86_64 cyrus-sasl2-2.1.28_1+kerberos.darwin_25.x86_64.tbz2 openssl,zlib,kerberos5 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/security/cyrus-sasl2
+PORT libfetch 9.0.0-RELEASE 3 {} x86_64 libfetch-9.0.0-RELEASE_3.darwin_25.x86_64.tbz2 openssl file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/libfetch
+PORT openssl 3 33 {} x86_64 openssl-3_33.darwin_25.x86_64.tbz2 openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/openssl
+PORT tcp_wrappers 20 5 {} x86_64 tcp_wrappers-20_5.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/tcp_wrappers
+PORT kerberos5 1.22.2 0 {} x86_64 kerberos5-1.22.2_0.darwin_25.x86_64.tbz2 gettext-runtime,libcomerr,libedit,lmdb,ncurses,openssl file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/kerberos5
+PORT libcomerr 1.47.1 0 {} x86_64 libcomerr-1.47.1_0.darwin_25.x86_64.tbz2 gettext-runtime file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/e2fsprogs
+PORT lmdb 0.9.36 0 {} x86_64 lmdb-0.9.36_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/lmdb
+PORT openssl3 3.6.5 0 {} x86_64 openssl3-3.6.5_0.darwin_25.x86_64.tbz2 zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/openssl3
+ROOT gpgme
+RESOLUTION_STATUS gpgme 0
+PORT gpgme 2.2.0 0 {} x86_64 gpgme-2.2.0_0.darwin_25.x86_64.tbz2 pth,libgpg-error,libassuan,gnupg2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gpgme
+ROOT gpgmepp
+RESOLUTION_STATUS gpgmepp 0
+PORT gpgmepp 2.2.0 0 {} x86_64 gpgmepp-2.2.0_0.darwin_25.x86_64.tbz2 gpgme file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gpgmepp
+ROOT include-what-you-use
+RESOLUTION_STATUS include-what-you-use 0
+PORT include-what-you-use 0.27 0 {} x86_64 include-what-you-use-0.27_0.darwin_25.x86_64.tbz2 clang-23,llvm-23 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/include-what-you-use
+ROOT llvm-23
+RESOLUTION_STATUS llvm-23 0
+ROOT net-snmp
+RESOLUTION_STATUS net-snmp 0
+PORT net-snmp 5.9.4 0 +perl5_34+ssl x86_64 net-snmp-5.9.4_0+perl5_34+ssl.darwin_25.x86_64.tbz2 bzip2,libpcap,pcre,perl5.34,zlib,openssl file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/net-snmp
+PORT libpcap 1.11.0 0 {} x86_64 libpcap-1.11.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/libpcap
+PORT pcre 8.45 0 {} x86_64 pcre-8.45_0.darwin_25.x86_64.tbz2 bzip2,libedit,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/pcre
+ROOT nmap
+RESOLUTION_STATUS nmap 0
+PORT nmap 7.992 0 +pcre+ssl x86_64 nmap-7.992_0+pcre+ssl.darwin_25.x86_64.tbz2 libpcap,zlib,libssh2,pcre2,openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/nmap
+PORT libssh2 1.11.1 0 {} x86_64 libssh2-1.11.1_0.darwin_25.x86_64.tbz2 zlib,openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libssh2
+PORT pcre2 10.48 0 {} x86_64 pcre2-10.48_0.darwin_25.x86_64.tbz2 bzip2,libedit,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/pcre
+ROOT nss
+RESOLUTION_STATUS nss 0
+PORT nss 3.131 0 {} x86_64 nss-3.131_0.darwin_25.x86_64.tbz2 nspr,zlib,sqlite3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/nss
+PORT nspr 4.40 0 {} x86_64 nspr-4.40_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/nspr
+ROOT openjpeg
+RESOLUTION_STATUS openjpeg 0
+PORT openjpeg 2.5.4 0 {} x86_64 openjpeg-2.5.4_0.darwin_25.x86_64.tbz2 libpng,tiff,lcms2,zlib,jbigkit file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/openjpeg
+PORT libpng 1.6.58 0 {} x86_64 libpng-1.6.58_0.darwin_25.x86_64.tbz2 zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/libpng
+PORT tiff 4.7.2 0 {} x86_64 tiff-4.7.2_0.darwin_25.x86_64.tbz2 lerc,libdeflate,libjpeg-turbo,xz,zlib,zstd file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/tiff
+PORT lcms2 2.19.1 0 {} x86_64 lcms2-2.19.1_0.darwin_25.x86_64.tbz2 libjpeg-turbo,tiff,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/lcms2
+PORT jbigkit 2.2 0 {} x86_64 jbigkit-2.2_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/jbigkit
+PORT lerc 4.2.0 0 {} x86_64 lerc-4.2.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/gis/lerc
+PORT libdeflate 1.26 0 {} x86_64 libdeflate-1.26_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/libdeflate
+PORT libjpeg-turbo 3.2.0 0 {} x86_64 libjpeg-turbo-3.2.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/libjpeg-turbo
+ROOT openldap
+RESOLUTION_STATUS openldap 0
+ROOT openmpi-default
+RESOLUTION_STATUS openmpi-default 0
+PORT openmpi-default 5.0.11 0 +gcc15 x86_64 openmpi-default-5.0.11_0+gcc15.darwin_25.x86_64.tbz2 hwloc,libevent,zlib,gcc15,libgcc,mpi_select,mpi-doc file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/science/openmpi
+PORT hwloc 2.14.0 0 {} x86_64 hwloc-2.14.0_0.darwin_25.x86_64.tbz2 libxml2,ncurses file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/hwloc
+PORT libevent 2.1.13 0 {} x86_64 libevent-2.1.13_0.darwin_25.x86_64.tbz2 openssl file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libevent
+PORT gcc15 15.3.0 0 +stdlib_flag x86_64 gcc15-15.3.0_0+stdlib_flag.darwin_25.x86_64.tbz2 cctools,gmp,isl,ld64,libiconv,libmpc,mpfr,zlib,zstd,libgcc,gcc_select,gcc15-libcxx file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/gcc15
+PORT libgcc 15 0 {} x86_64 libgcc-15_0.any_any.x86_64.tbz2 libgcc15 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/libgcc
+PORT mpi_select 0.0 4 {} noarch mpi_select-0.0_4.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/mpi_select
+PORT mpi-doc 5.0.1 0 {} noarch mpi-doc-5.0.1_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/science/mpi-doc
+PORT isl 0.24 1 {} x86_64 isl-0.24_1.darwin_25.x86_64.tbz2 gmp file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/isl
+PORT libmpc 1.4.1 0 {} x86_64 libmpc-1.4.1_0.darwin_25.x86_64.tbz2 gmp,mpfr file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libmpc
+PORT mpfr 4.2.2 0 {} x86_64 mpfr-4.2.2_0.darwin_25.x86_64.tbz2 gmp file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/mpfr
+PORT gcc_select 0.1 10 {} noarch gcc_select-0.1_10.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/gcc_select
+PORT gcc15-libcxx 15.3.0 0 +clang18 noarch gcc15-libcxx-15.3.0_0+clang18.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/gcc15
+PORT libgcc15 15.3.0 0 +stdlib_flag x86_64 libgcc15-15.3.0_0+stdlib_flag.darwin_25.x86_64.tbz2 zlib,libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/gcc15
+ROOT p11-kit
+RESOLUTION_STATUS p11-kit 0
+ROOT pango
+RESOLUTION_STATUS pango 0
+PORT pango 1.58.2 0 +quartz+x11 x86_64 pango-1.58.2_0+quartz+x11.darwin_25.x86_64.tbz2 cairo,fontconfig,freetype,fribidi,glib2,harfbuzz,Xft2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/pango
+PORT expat 2.9.0 0 {} x86_64 expat-2.9.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/expat
+PORT libpixman 0.46.0 0 {} x86_64 libpixman-0.46.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/libpixman
+PORT lzo2 2.10 0 {} x86_64 lzo2-2.10_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/lzo2
+PORT xorg-libXext 1.3.6 0 {} x86_64 xorg-libXext-1.3.6_0.darwin_25.x86_64.tbz2 xorg-libX11,xorg-xorgproto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-libXext
+PORT xorg-xcb-util 0.4.1 0 {} x86_64 xorg-xcb-util-0.4.1_0.darwin_25.x86_64.tbz2 xorg-libxcb,xorg-xorgproto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-xcb-util
+PORT xrender 0.9.12 0 {} x86_64 xrender-0.9.12_0.darwin_25.x86_64.tbz2 xorg-libX11,xorg-xorgproto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xrender
+PORT xorg-libX11 1.8.12 0 {} x86_64 xorg-libX11-1.8.12_0.darwin_25.x86_64.tbz2 xorg-libXdmcp,xorg-libXau,xorg-libxcb,xorg-xorgproto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-libX11
+PORT xorg-xorgproto 2024.1 0 {} noarch xorg-xorgproto-2024.1_0.darwin_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-xorgproto
+PORT xorg-libXdmcp 1.1.5 0 {} x86_64 xorg-libXdmcp-1.1.5_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-libXdmcp
+PORT xorg-libXau 1.0.12 0 {} x86_64 xorg-libXau-1.0.12_0.darwin_25.x86_64.tbz2 xorg-xorgproto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-libXau
+PORT xorg-libxcb 1.17.0 0 +python314 x86_64 xorg-libxcb-1.17.0_0+python314.darwin_25.x86_64.tbz2 xorg-libXau,xorg-libXdmcp,xorg-xcb-proto file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-libxcb
+PORT xorg-xcb-proto 1.17.0 0 +python314 noarch xorg-xcb-proto-1.17.0_0+python314.darwin_any.noarch.tbz2 libxml2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/xorg-xcb-proto
+PORT libelf 0.8.13 6 {} x86_64 libelf-0.8.13_6.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libelf
+PORT python314 3.14.8 0 +lto+optimizations x86_64 python314-3.14.8_0+lto+optimizations.darwin_25.x86_64.tbz2 bzip2,expat,gettext-runtime,libedit,libffi,mpdecimal,ncurses,openssl,sqlite3,xz,zlib,zstd,python_select-314,python3_select-314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/python314
+PORT dbus 1.16.2 0 {} x86_64 dbus-1.16.2_0.darwin_25.x86_64.tbz2 expat file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/dbus
+PORT mpdecimal 4.0.1 0 {} x86_64 mpdecimal-4.0.1_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/math/mpdecimal
+PORT python_select-314 0.3 1 {} noarch python_select-314-0.3_1.any_any.noarch.tbz2 python_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python_select
+PORT python3_select-314 0.1 1 {} noarch python3_select-314-0.1_1.any_any.noarch.tbz2 python3_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python3_select
+PORT python_select 0.3 10 {} noarch python_select-0.3_10.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python_select
+PORT python3_select 0.1 0 {} noarch python3_select-0.1_0.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python3_select
+PORT graphite2 1.3.15 0 {} x86_64 graphite2-1.3.15_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/graphite2
+PORT cairo 1.18.4 2 +quartz+x11 x86_64 cairo-1.18.4_2+quartz+x11.darwin_25.x86_64.tbz2 expat,fontconfig,freetype,glib2,libpixman,libpng,lzo2,zlib,xorg-libXext,xorg-xcb-util,xrender file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/cairo
+PORT fontconfig 2.18.3 0 {} x86_64 fontconfig-2.18.3_0.darwin_25.x86_64.tbz2 expat,freetype,gettext-runtime,libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/fontconfig
+PORT freetype 2.14.3 0 {} x86_64 freetype-2.14.3_0.darwin_25.x86_64.tbz2 brotli,bzip2,libpng,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/print/freetype
+PORT fribidi 1.0.16 0 {} x86_64 fribidi-1.0.16_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/fribidi
+PORT glib2 2.88.3 2 +dbus+x11 x86_64 glib2-2.88.3_2+dbus+x11.darwin_25.x86_64.tbz2 gettext-runtime,libelf,libffi,libiconv,pcre2,python314,zlib,dbus file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/glib2
+PORT harfbuzz 14.4.0 0 {} x86_64 harfbuzz-14.4.0_0.darwin_25.x86_64.tbz2 cairo,freetype,glib2,graphite2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/harfbuzz
+PORT Xft2 2.3.9 0 {} x86_64 Xft2-2.3.9_0.darwin_25.x86_64.tbz2 zlib,xrender,freetype,fontconfig,expat file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/x11/Xft2
+ROOT php85
+RESOLUTION_STATUS php85 0
+PORT php85 8.5.11 0 +libedit x86_64 php85-8.5.11_0+libedit.darwin_25.x86_64.tbz2 gsed,libiconv,libxml2,bzip2,mhash,zlib,pcre2,argon2,libedit,ncurses,php_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/php
+PORT gsed 4.10 0 {} x86_64 gsed-4.10_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,texinfo file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/gsed
+PORT mhash 0.9.9.9 1 {} x86_64 mhash-0.9.9.9_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/mhash
+PORT argon2 20190702 1 {} x86_64 argon2-20190702_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/argon2
+PORT php_select 1.0 1 {} noarch php_select-1.0_1.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/php_select
+ROOT poppler
+RESOLUTION_STATUS poppler 0
+PORT poppler 26.02.0 0 +boost x86_64 poppler-26.02.0_0+boost.darwin_25.x86_64.tbz2 bzip2,cairo,curl,expat,fontconfig,freetype,gettext-runtime,glib2,gpgmepp,lcms2,libiconv,libjpeg-turbo,libpng,nss,openjpeg,poppler-data,tiff,zlib,boost188 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/poppler
+PORT curl 8.23.0 0 +brotli+http2+idn+psl+ssl+zstd x86_64 curl-8.23.0_0+brotli+http2+idn+psl+ssl+zstd.darwin_25.x86_64.tbz2 zlib,brotli,nghttp2,libidn2,libpsl,openssl,curl-ca-bundle,zstd file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/curl
+PORT poppler-data 0.4.12 0 {} noarch poppler-data-0.4.12_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/poppler-data
+PORT boost188 1.88.0 3 +no_single+no_static+python314 x86_64 boost188-1.88.0_3+no_single+no_static+python314.darwin_25.x86_64.tbz2 bzip2,expat,icu,libiconv,lzma,zlib,zstd,python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/boost188
+PORT nghttp2 1.70.0 0 {} x86_64 nghttp2-1.70.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/www/nghttp2
+PORT libpsl 0.23.3 0 {} x86_64 libpsl-0.23.3_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libidn2,libunistring file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/libpsl
+PORT lzma 26.03 0 {} x86_64 lzma-26.03_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/lzma
+ROOT postgresql17
+RESOLUTION_STATUS postgresql17 0
+PORT postgresql17 17.11 0 {} x86_64 postgresql17-17.11_0.darwin_25.x86_64.tbz2 readline,zlib,libxml2,libxslt,icu,kerberos5,zstd,lz4,openssl3,postgresql_select-17,curl-ca-bundle file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/postgresql17
+PORT postgresql_select-17 0.9 0 {} noarch postgresql_select-17-0.9_0.any_any.noarch.tbz2 postgresql_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/postgresql_select
+PORT postgresql_select 0.9 0 {} noarch postgresql_select-0.9_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/postgresql_select
+ROOT postgresql17-server
+RESOLUTION_STATUS postgresql17-server 0
+PORT postgresql17-server 17.11 0 {} noarch postgresql17-server-17.11_0.darwin_any.noarch.tbz2 postgresql17 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/postgresql17-server
+ROOT py314-cairo
+RESOLUTION_STATUS py314-cairo 0
+PORT py314-cairo 1.29.2 0 +quartz+x11 x86_64 py314-cairo-1.29.2_0+quartz+x11.darwin_25.x86_64.tbz2 cairo,glib2,python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-cairo
+ROOT py314-cryptography
+RESOLUTION_STATUS py314-cryptography 0
+PORT py314-cryptography 48.0.0 0 {} x86_64 py314-cryptography-48.0.0_0.darwin_25.x86_64.tbz2 py314-cffi,python314,openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-cryptography
+PORT py314-cffi 2.1.1 0 {} x86_64 py314-cffi-2.1.1_0.darwin_25.x86_64.tbz2 libffi,py314-pycparser,python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-cffi
+PORT py314-pycparser 3.0 0 {} noarch py314-pycparser-3.0_0.darwin_any.noarch.tbz2 python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-pycparser
+ROOT simdjson
+RESOLUTION_STATUS simdjson 0
+PORT simdjson 4.6.1 0 {} x86_64 simdjson-4.6.1_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/simdjson
+ROOT socat
+RESOLUTION_STATUS socat 0
+PORT socat 1.8.1.3 0 {} x86_64 socat-1.8.1.3_0.darwin_25.x86_64.tbz2 readline,tcp_wrappers,openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/socat
+ROOT terminal-notifier
+RESOLUTION_STATUS terminal-notifier 0
+PORT terminal-notifier 3.1.0 0 {} x86_64 terminal-notifier-3.1.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/aqua/terminal-notifier
+ROOT tesseract
+RESOLUTION_STATUS tesseract 0
+PORT tesseract 5.5.3 0 {} x86_64 tesseract-5.5.3_0.darwin_25.x86_64.tbz2 curl,leptonica,libarchive,libjpeg-turbo,libpng,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/tesseract
+PORT leptonica 1.87.0 2 {} x86_64 leptonica-1.87.0_2.darwin_25.x86_64.tbz2 tiff,zlib,libpng,libjpeg-turbo,openjpeg,giflib5,webp file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/leptonica
+PORT libarchive 3.8.10 0 {} x86_64 libarchive-3.8.10_0.darwin_25.x86_64.tbz2 bzip2,zlib,libxml2,xz,lzo2,libiconv,lz4,zstd,libb2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/libarchive
+PORT giflib5 5.2.2 3 {} x86_64 giflib5-5.2.2_3.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/giflib5
+PORT webp 1.6.0 0 {} x86_64 webp-1.6.0_0.darwin_25.x86_64.tbz2 giflib,libjpeg-turbo,libpng,tiff file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/webp
+PORT giflib 4.2.3 1 {} x86_64 giflib-4.2.3_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/graphics/giflib
+PORT libb2 0.98.1 1 {} x86_64 libb2-0.98.1_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libb2
+ROOT unbound
+RESOLUTION_STATUS unbound 0
+PORT unbound 1.26.1 0 {} x86_64 unbound-1.26.1_0.darwin_25.x86_64.tbz2 expat,libsodium,openssl file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/unbound
+PORT libsodium 1.0.22 0 {} x86_64 libsodium-1.0.22_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libsodium
+ROOT wget
+RESOLUTION_STATUS wget 0
+PORT wget 1.25.0 1 +gnutls x86_64 wget-1.25.0_1+gnutls.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libidn2,libproxy,libpsl,libunistring,nettle,pcre2,zlib,gnutls file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/wget
+PORT libproxy 0.5.12 0 {} x86_64 libproxy-0.5.12_0.darwin_25.x86_64.tbz2 glib2,gobject-introspection,gsettings-desktop-schemas file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/libproxy
+PORT gobject-introspection 1.86.0 1 {} x86_64 gobject-introspection-1.86.0_1.darwin_25.x86_64.tbz2 cairo,glib2,pkgconfig,libffi,python314,py314-mako,py314-markdown,py314-setuptools file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/gnome/gobject-introspection
+PORT gsettings-desktop-schemas 50.0 1 {} noarch gsettings-desktop-schemas-50.0_1.any_any.noarch.tbz2 glib2 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/gnome/gsettings-desktop-schemas
+PORT pkgconfig 0.29.2 0 {} x86_64 pkgconfig-0.29.2_0.darwin_25.x86_64.tbz2 libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/pkgconfig
+PORT py314-mako 1.3.12 0 {} noarch py314-mako-1.3.12_0.darwin_any.noarch.tbz2 py314-markupsafe,python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-mako
+PORT py314-markdown 3.10.3 0 {} noarch py314-markdown-3.10.3_0.darwin_any.noarch.tbz2 python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-markdown
+PORT py314-setuptools 84.0.0 0 {} noarch py314-setuptools-84.0.0_0.darwin_any.noarch.tbz2 python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-setuptools
+PORT py314-markupsafe 3.0.4 0 {} x86_64 py314-markupsafe-3.0.4_0.darwin_25.x86_64.tbz2 python314 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-markupsafe
+ROOT whisper.cpp
+ERROR whisper.cpp {key "porturl" not known in dictionary}

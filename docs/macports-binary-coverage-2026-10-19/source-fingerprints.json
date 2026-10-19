@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-10-19T11:04:26.049680+00:00",
+  "inputs": {
+    "port_index": {
+      "path": "/opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/PortIndex",
+      "sha256": "db67c6f687998de32a26caf46d32c5c8c4a1cf29b9042d806848c7e4fa889ede",
+      "mtime": 1792402525.0
+    },
+    "macports_config": {
+      "path": "/opt/local/etc/macports/macports.conf",
+      "sha256": "44ae6b70fc0d41a685b0351741c951639bfc5f25cbd9d0cfe33e00cdc16640f8",
+      "mtime": 1792406977.717483
+    },
+    "variants": {
+      "path": "/opt/local/etc/macports/variants.conf",
+      "sha256": "718c7252e45a0ac0f5f83339a96bffba04323871b055539eb7dc94c4e1f262c0",
+      "mtime": 1724148522.3381164
+    },
+    "resolver": {
+      "path": "docs/macports-binary-coverage-2026-10-19/probe-research/resolve.tcl",
+      "sha256": "b7b9e75dde445287fc5731413c2c0b9413d9a84d765a1d0456b6187c64bf00e6",
+      "mtime": 1792407455.0622854
+    }
+  }
+}

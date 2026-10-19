@@ -1,0 +1,9 @@
+[
+  {
+    "name": "uv",
+    "kind": "formula",
+    "provider": "standalone_uv",
+    "version": "0.13.1",
+    "ready": true
+  }
+]

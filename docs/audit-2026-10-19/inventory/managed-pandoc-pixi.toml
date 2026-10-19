@@ -1,0 +1,7 @@
+[workspace]
+name = "managed-tool"
+channels = ["conda-forge"]
+platforms = ["osx-64"]
+
+[dependencies]
+"pandoc" = ">=3.12.1"

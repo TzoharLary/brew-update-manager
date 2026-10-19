@@ -1,0 +1,3011 @@
+{
+  "generated_at": "2026-10-19T05:51:38.195345+00:00",
+  "host_scope": "Intel x86_64 macOS 26.7.1 / Darwin 25, as supplied by parent task",
+  "policy": "Read-only metadata research. No installs, removals, updates, package execution or new dependency solves. ngrok excluded.",
+  "revision_policy": "A Homebrew _N revision is not an upstream version and has no established equivalence to conda build N or MacPorts _N. Matching upstream versions are candidates, not evidence that a Homebrew revision fix is included.",
+  "app_plan_path": "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/update-plan.json",
+  "app_plan_created_at": "2026-10-19T04:19:49.202517+00:00",
+  "app_state_path": "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/state.json",
+  "app_state_updated_at": "2026-10-19T04:22:29.030602+00:00",
+  "app_plan_sha256": "3290e0b91657bcd21a22b7daa117e8ba95feb9a93de915e4802f660775011e38",
+  "app_state_sha256": "76bf770f86713d63fe2212d2d28c9ca6b6c5bf45d71d40f7c137d756c461cda5",
+  "counts": {
+    "packages": 27,
+    "new_runtime_verified": 0,
+    "new_migrations": 0
+  },
+  "items": [
+    {
+      "name": "cryptography",
+      "installed_version": "48.0.0",
+      "target_version": "50.0.2_2",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "48.0.0",
+      "retained_installation_states": [
+        {
+          "version": "48.0.0",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "ansible"
+      ],
+      "installed_reverse_dependents": [
+        "ansible"
+      ],
+      "consumer_groups": [
+        "legacy-ansible-python"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "50.0.2",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "cryptography",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "python-library",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "uv has no Intel macOS wheel for 50.0.2 in the checked PyPI release; conda has an osx-64 artifact. A separate Python environment does not update existing Homebrew Python imports.",
+      "recommended_next_action": "Identify importing Python interpreters/projects; solve cryptography=50.0.2 with their Python ABI; then test imports and the actual TLS/signing workflows in a separate environment.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "cryptography",
+          "version": "50.0.2",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "cryptography-50.0.2-py311hc027f23_0.conda",
+              "version": "50.0.2",
+              "build": "py311hc027f23_0",
+              "subdir": "osx-64",
+              "timestamp": 1790790581781,
+              "depends": [
+                "python",
+                "cffi >=2.0",
+                "__osx >=11.0",
+                "_python_abi3_support 1.*",
+                "cpython >=3.11",
+                "openssl >=3.5.8,<4.0a0"
+              ],
+              "sha256": "99c82adba610df83bf0f47491adf6ced7ea7eafc703011a230ddfcfc89118081"
+            },
+            {
+              "filename": "cryptography-50.0.2-py314hdc23d7c_0.conda",
+              "version": "50.0.2",
+              "build": "py314hdc23d7c_0",
+              "subdir": "osx-64",
+              "timestamp": 1790790585622,
+              "depends": [
+                "python",
+                "cffi >=2.0",
+                "__osx >=11.0",
+                "openssl >=3.5.8,<4.0a0",
+                "python_abi 3.14.* *_cp314t"
+              ],
+              "sha256": "5fce21881373713996b27b1e4885a27dba33b09d5244bd6dd584825c77410ed8"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "gnupg",
+      "installed_version": "2.5.20",
+      "target_version": "2.5.24_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.5.20",
+      "retained_installation_states": [
+        {
+          "version": "2.5.20",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "gpgme"
+      ],
+      "installed_reverse_dependents": [
+        "gpgme",
+        "gpgmepp",
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.5.24",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "cli-and-agent-state",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-keyring",
+      "why_still_blocked": "The command can move independently only after agent/pinentry/keyring integration is checked. No target dependency solution was performed here.",
+      "recommended_next_action": "Solve gnupg=2.5.24; inventory agent, pinentry and configuration; validate list/verify/sign with a disposable test keyring before selecting an executable.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "gnupg",
+          "version": "2.5.24",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "gnupg-2.5.24-h4ccb0c0_0.conda",
+              "version": "2.5.24",
+              "build": "h4ccb0c0_0",
+              "subdir": "osx-64",
+              "timestamp": 1790187378775,
+              "depends": [
+                "bzip2",
+                "readline",
+                "libiconv",
+                "sqlite",
+                "libcxx >=21",
+                "__osx >=11.0",
+                "readline >=8.3,<9.0a0",
+                "libgpg-error >=1.61,<2.0a0",
+                "libassuan >=3.0.2,<4.0a0",
+                "libksba >=1.6.7,<1.7.0a0",
+                "bzip2 >=1.0.8,<2.0a0",
+                "ntbtls >=0.3.2,<1.0a0",
+                "npth >=1.8,<2.0a0",
+                "libiconv >=1.18,<2.0a0",
+                "libsqlite >=3.53.4,<4.0a0",
+                "libgcrypt-lib >=1.12.2,<2.0a0"
+              ],
+              "sha256": "26faef1a7427846709eeffa6a03e639695d3c13999b873b94b2e073b665f5d15"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "gpgme",
+      "installed_version": "2.1.0",
+      "target_version": "2.2.0",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.1.0",
+      "retained_installation_states": [
+        {
+          "version": "2.1.0",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "gpgmepp",
+        "poppler"
+      ],
+      "installed_reverse_dependents": [
+        "gpgmepp",
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.2.0",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "gpgme",
+          "reason": "source_required"
+        },
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-c-library",
+      "recommended_route": "macports-cohort",
+      "priority_group": "P2-library",
+      "why_still_blocked": "A matching MacPorts archive exists, but consumers linked to /usr/local/opt/gpgme cannot use /opt/local automatically; GnuPG runtime integration is separate.",
+      "recommended_next_action": "Enumerate reverse consumers and ABI paths; verify a complete MacPorts binary dependency graph including GnuPG, then rebuild/test one consumer in that prefix.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "gpgme",
+          "version": "2.2.0",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "gpgme-2.2.0-hc569e58_0.conda",
+              "version": "2.2.0",
+              "build": "hc569e58_0",
+              "subdir": "osx-64",
+              "timestamp": 1788199562208,
+              "depends": [
+                "libgpg-error >=1.36",
+                "libassuan >=2.4.2",
+                "__osx >=11.0",
+                "libcxx >=21",
+                "libassuan >=3.0.2,<4.0a0",
+                "libgpg-error >=1.61,<2.0a0"
+              ],
+              "sha256": "fb8eebf0ca555bc28c736e333dcc66798b2133cc901eb9371d92c99d63caed66"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "gpgme",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "gpgme-2.2.0_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/gpgme/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "gpgmepp",
+      "installed_version": "2.1.0",
+      "target_version": "2.2.0",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.1.0",
+      "retained_installation_states": [
+        {
+          "version": "2.1.0",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "poppler"
+      ],
+      "installed_reverse_dependents": [
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.2.0",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "gpgmepp",
+          "reason": "source_required"
+        },
+        {
+          "name": "gpgme",
+          "reason": "source_required"
+        },
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-cpp-library",
+      "recommended_route": "macports-cohort",
+      "priority_group": "P2-library",
+      "why_still_blocked": "No conda gpgmepp/libgpgmepp 2.2.0 release was found in targeted checks. MacPorts has the exact upstream archive; it remains an unverified C++ ABI migration.",
+      "recommended_next_action": "Migrate gpgmepp, gpgme and GnuPG as one consumer-tested cohort; verify all recursive archives and C++ ABI before building a consumer.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "macports",
+          "package": "gpgmepp",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "gpgmepp-2.2.0_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/gpgmepp/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "include-what-you-use",
+      "installed_version": "0.26",
+      "target_version": "0.27",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "0.26",
+      "retained_installation_states": [
+        {
+          "version": "0.26",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "compiler-iwyu"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "0.27",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "include-what-you-use",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "project-toolchain-command",
+      "recommended_route": "pixi-project",
+      "priority_group": "P1-command",
+      "why_still_blocked": "The 2026-10-18 lock solved 0.27, but its matching Clang/LLVM headers, target and project compile commands were not exercised.",
+      "recommended_next_action": "Revalidate the retained 0.27 lock and run the tool against a small real compile_commands.json fixture using its matching Clang resources.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "include-what-you-use",
+          "version": "0.27",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "include-what-you-use-0.27-h6e061ac_0.conda",
+              "version": "0.27",
+              "build": "h6e061ac_0",
+              "subdir": "osx-64",
+              "timestamp": 1791191651666,
+              "depends": [
+                "__osx >=11.0",
+                "libclang-cpp23.1 >=23.1.2,<23.2.0a0",
+                "libcxx >=21",
+                "libllvm23 >=23.1.2,<23.2.0a0"
+              ],
+              "sha256": "c0b55ebb8e2043acc21959e24f331b744ae2c016031fcf197f5d10c765214fbb"
+            },
+            {
+              "filename": "include-what-you-use-0.27-hc569e58_1.conda",
+              "version": "0.27",
+              "build": "hc569e58_1",
+              "subdir": "osx-64",
+              "timestamp": 1791194023426,
+              "depends": [
+                "__osx >=11.0",
+                "libcxx >=21",
+                "libclang-cpp23.1 >=23.1.2,<23.2.0a0",
+                "libllvm23 >=23.1.2,<23.2.0a0"
+              ],
+              "sha256": "988bb389aef9f3a762d41483b579e6ffae47969158010ec4f1047f92ab24e194"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "include-what-you-use",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=0.26",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/include-what-you-use-0.27-hc569e58_1.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/include-what-you-use/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "include-what-you-use",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "include-what-you-use-0.27_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/include-what-you-use/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "libtensorflow",
+      "installed_version": "2.21.0",
+      "target_version": "2.21.0_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.21.0",
+      "retained_installation_states": [
+        {
+          "version": "2.21.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "tensorflow-c-project"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.21.0",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "libtensorflow",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-c-library",
+      "recommended_route": "hold-no-target-binary",
+      "priority_group": "P3-version-gap",
+      "why_still_blocked": "Target is 2.21.0_1. Cached conda osx-64 offers 2.18.0; current 2.21.0 release metadata has no osx-64 files. Official TensorFlow C docs identify 2.16 as the final macOS x86 release.",
+      "recommended_next_action": "Identify actual C API consumers and required TensorFlow features; decide whether a source build, supported remote runtime, or explicit application migration is justified. Do not downgrade automatically.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "libtensorflow",
+          "version": "2.18.0",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "libtensorflow-2.18.0-cpu_h38b2b02_1.conda",
+              "version": "2.18.0",
+              "build": "cpu_h38b2b02_1",
+              "subdir": "osx-64",
+              "timestamp": 1754516928968,
+              "depends": [
+                "__osx >=10.13",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.14.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.1.0,<4.0a0",
+                "libpng >=1.6.50,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.50.4,<4.0a0",
+                "libtensorflow_framework 2.18.0 cpu_h38b2b02_1",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.5.2,<4.0a0",
+                "snappy >=1.2.2,<1.3.0a0"
+              ],
+              "sha256": "76aa77203505157e1a604add32cbb7cec8646e326d246b6e4da17510ada32047"
+            },
+            {
+              "filename": "libtensorflow-2.18.0-cpu_h5cb49da_0.conda",
+              "version": "2.18.0",
+              "build": "cpu_h5cb49da_0",
+              "subdir": "osx-64",
+              "timestamp": 1741480192412,
+              "depends": [
+                "__osx >=10.13",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.12.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.0.0,<4.0a0",
+                "libpng >=1.6.47,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.49.1,<4.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.4.1,<4.0a0",
+                "snappy >=1.2.1,<1.3.0a0"
+              ],
+              "sha256": "28cb1b29ed156fb57f7a8d0d8ad9ef0b30f2a895b71ab20e52f0576a3e5aa38b"
+            },
+            {
+              "filename": "libtensorflow-2.18.0-cpu_hdc90b9f_0.conda",
+              "version": "2.18.0",
+              "build": "cpu_hdc90b9f_0",
+              "subdir": "osx-64",
+              "timestamp": 1740029514204,
+              "depends": [
+                "__osx >=10.13",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.12.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.0.0,<4.0a0",
+                "libpng >=1.6.47,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.49.1,<4.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.4.1,<4.0a0",
+                "snappy >=1.2.1,<1.3.0a0"
+              ],
+              "sha256": "60724b973335069698732dab16c067175cd12d717dea20064bf733231155166d"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "conda-forge",
+          "package": "libtensorflow_cc",
+          "version": "2.18.0",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "libtensorflow_cc-2.18.0-cpu_h899624e_0.conda",
+              "version": "2.18.0",
+              "build": "cpu_h899624e_0",
+              "subdir": "osx-64",
+              "timestamp": 1740029822514,
+              "depends": [
+                "__osx >=10.13",
+                "flatbuffers >=24.12.23,<24.12.24.0a0",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.12.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.0.0,<4.0a0",
+                "libml_dtypes-headers >=0.5.0,<0.6",
+                "libpng >=1.6.47,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.49.1,<4.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.4.1,<4.0a0",
+                "snappy >=1.2.1,<1.3.0a0"
+              ],
+              "sha256": "2a67bf1396a2c463035b156e1dc0896e1f60771f690ec914f9df06be3b109f70"
+            },
+            {
+              "filename": "libtensorflow_cc-2.18.0-cpu_hb6fe057_0.conda",
+              "version": "2.18.0",
+              "build": "cpu_hb6fe057_0",
+              "subdir": "osx-64",
+              "timestamp": 1741482107587,
+              "depends": [
+                "__osx >=10.13",
+                "flatbuffers >=24.12.23,<24.12.24.0a0",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.12.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.0.0,<4.0a0",
+                "libml_dtypes-headers >=0.5.0,<0.6",
+                "libpng >=1.6.47,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.49.1,<4.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.4.1,<4.0a0",
+                "snappy >=1.2.1,<1.3.0a0"
+              ],
+              "sha256": "9eaf21549cb85f4cab5b73d3993e78fd3b6c6145f01e2bccd38a79b892a95597"
+            },
+            {
+              "filename": "libtensorflow_cc-2.18.0-cpu_hce6ddfb_1.conda",
+              "version": "2.18.0",
+              "build": "cpu_hce6ddfb_1",
+              "subdir": "osx-64",
+              "timestamp": 1754517183864,
+              "depends": [
+                "__osx >=10.13",
+                "flatbuffers >=24.12.23,<24.12.24.0a0",
+                "giflib >=5.2.2,<5.3.0a0",
+                "icu >=75.1,<76.0a0",
+                "libabseil * cxx17*",
+                "libabseil >=20240722.0,<20240723.0a0",
+                "libcurl >=8.14.1,<9.0a0",
+                "libcxx >=18",
+                "libgrpc >=1.67.1,<1.68.0a0",
+                "libjpeg-turbo >=3.1.0,<4.0a0",
+                "libml_dtypes-headers >=0.5.0,<0.6",
+                "libpng >=1.6.50,<1.7.0a0",
+                "libprotobuf >=5.28.3,<5.28.4.0a0",
+                "libsqlite >=3.50.4,<4.0a0",
+                "libtensorflow_framework 2.18.0 cpu_h38b2b02_1",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.5.2,<4.0a0",
+                "snappy >=1.2.2,<1.3.0a0"
+              ],
+              "sha256": "2655f265a093160d1249f1dc0ad1e610e8a583901f8a0d1a6b52a6b1cb2fa9c8"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "libtensorflow",
+          "evidence_status": "dependency-solve-failed",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=2.21.0",
+          "locked_urls": [],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/libtensorflow/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "libtensorflow",
+          "evidence_status": "no-matching-archive-in-checked-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/libtensorflow/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "tensorflow",
+          "evidence_status": "no-matching-archive-in-checked-index",
+          "evidence_date": "2026-10-18",
+          "archives": [],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/tensorflow/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "llvm",
+      "installed_version": "23.1.3_2",
+      "target_version": "23.1.3_2",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "22.1.5",
+      "retained_installation_states": [
+        {
+          "version": "22.1.5",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        },
+        {
+          "version": "23.1.3_2",
+          "active_keg": false,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": false,
+          "install_status": "unverified_empty_keg_directory"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "include-what-you-use"
+      ],
+      "installed_reverse_dependents": [
+        "include-what-you-use"
+      ],
+      "consumer_groups": [
+        "compiler-iwyu"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "23.1.3",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "llvm",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "toolchain-and-linked-library",
+      "recommended_route": "pixi-project-or-macports-cohort",
+      "priority_group": "P0-broken-linkage",
+      "why_still_blocked": "The app labels installed LLVM as 23.1.3_2, equal to its target, but fresh receipt inventory identifies active 22.1.5 and a nonactive 23.1.3_2 directory without INSTALL_RECEIPT. Retained linkage evidence reports missing libz3.4.15. A conda artifact and a MacPorts archive at 23.1.3 exist, without runtime/consumer verification. Official release has macOS ARM64 binaries only.",
+      "recommended_next_action": "Reconcile the damaged/incomplete LLVM installation and the missing z3 linkage first; solve the needed clang/llvm/lld components together, then compile/link a representative project. An llvm metapackage alone may not provide every Homebrew tool.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "llvm",
+          "version": "23.1.3",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "llvm-23.1.3-h66ed1e6_0.conda",
+              "version": "23.1.3",
+              "build": "h66ed1e6_0",
+              "subdir": "osx-64",
+              "timestamp": 1791344496018,
+              "depends": [
+                "libllvm23 23.1.3 hd11396f_0",
+                "libxml2",
+                "libxml2-16 >=2.15.4",
+                "libzlib >=1.3.2,<2.0a0",
+                "zstd >=1.5.7,<1.6.0a0"
+              ],
+              "sha256": "944c532b6f1e06fdc327341b6133f2542f5ecebbafb55965e757ab785c586dda"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "llvm-23",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "llvm-23-23.1.3_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/llvm-23/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "merve",
+      "installed_version": "1.2.2_1",
+      "target_version": "1.2.2_4",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.2.2_1",
+      "retained_installation_states": [
+        {
+          "version": "1.2.2_1",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "node"
+      ],
+      "installed_reverse_dependents": [
+        "mongodb-community",
+        "node"
+      ],
+      "consumer_groups": [
+        "legacy-homebrew-node"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.2.2",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "merve",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-cpp-library",
+      "recommended_route": "hold-source-or-consumer-migration",
+      "priority_group": "P0-broken-linkage",
+      "why_still_blocked": "Retained linkage evidence reports missing libsimdutf.34. Checked conda/MacPorts names do not provide a matching binary; upstream v1.2.2 assets are source files/singleheader.zip.",
+      "recommended_next_action": "Identify reverse consumers of the broken Homebrew library; choose a coordinated source rebuild with the correct simdutf ABI or source-vendored consumer migration. The source-only singleheader release does not repair the installed dylib.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "native-upstream",
+          "package": "nodejs/merve",
+          "version": "v1.2.2",
+          "evidence_status": "release-assets-metadata",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "assets": [
+            {
+              "name": "merve.cpp",
+              "size": 68374,
+              "browser_download_url": "https://github.com/nodejs/merve/releases/download/v1.2.2/merve.cpp",
+              "digest": "sha256:d6aa8a639c60824ea52c0e0fabc6c0f9633f8cc14a7cf1ff92f5e171590a760d"
+            },
+            {
+              "name": "merve.h",
+              "size": 6190,
+              "browser_download_url": "https://github.com/nodejs/merve/releases/download/v1.2.2/merve.h",
+              "digest": "sha256:572c2ac6d81aac760f659b945756e7b3d02d1010e38f9ee7425e0830f8ce19bb"
+            },
+            {
+              "name": "merve_c.h",
+              "size": 5859,
+              "browser_download_url": "https://github.com/nodejs/merve/releases/download/v1.2.2/merve_c.h",
+              "digest": "sha256:0f302ff85268ac2704b473037e3e11a035880d7c9fc46c90ab296c15d5a376c8"
+            },
+            {
+              "name": "singleheader.zip",
+              "size": 16588,
+              "browser_download_url": "https://github.com/nodejs/merve/releases/download/v1.2.2/singleheader.zip",
+              "digest": "sha256:d81d6802456e8023dbc6602420408007f9b435e9bcbbe3a72e78d4de1c7ca532"
+            }
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "runtime_verified": false,
+          "architecture_verified": false
+        }
+      ]
+    },
+    {
+      "name": "net-snmp",
+      "installed_version": "5.9.5.2",
+      "target_version": "5.9.5.2_2",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "5.9.5.2",
+      "retained_installation_states": [
+        {
+          "version": "5.9.5.2",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "php"
+      ],
+      "installed_reverse_dependents": [
+        "php"
+      ],
+      "consumer_groups": [
+        "php-runtime"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "5.9.5.2",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "net-snmp",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "library-cli-and-possible-service",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has 5.9.5.2 metadata, but Homebrew revision _2 and PHP SNMP integration are not represented by the upstream version alone.",
+      "recommended_next_action": "Identify CLI versus PHP library versus snmpd use; solve the exact version and test required SNMP versions/options in an isolated fixture; service configuration needs its own migration.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "net-snmp",
+          "version": "5.9.5.2",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "net-snmp-5.9.5.2-pl5321h76196fa_0.conda",
+              "version": "5.9.5.2",
+              "build": "pl5321h76196fa_0",
+              "subdir": "osx-64",
+              "timestamp": 1773432793811,
+              "depends": [
+                "libcxx >=19",
+                "__osx >=11.0",
+                "openssl >=3.5.5,<4.0a0"
+              ],
+              "sha256": "d76dda081de3a09bd1fb8e3dff5cefb6ba6dcd952450c1fdd6dc1936ea531e69"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "nmap",
+      "installed_version": "7.99",
+      "target_version": "7.992",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "7.99",
+      "retained_installation_states": [
+        {
+          "version": "7.99",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "standalone-command"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "7.992",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "nmap",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "cli-suite-and-privileged-features",
+      "recommended_route": "native-official",
+      "priority_group": "P1-command",
+      "why_still_blocked": "Official x86-64 installer 7.992 exists. A DMG installer changes more than an isolated command shim; package payload, signatures, privilege requirements and Tahoe behavior are not verified.",
+      "recommended_next_action": "Fetch with valid TLS and verify the publisher signature/digest; inspect the installer payload/prefix and component choices, then test version and a local authorized scan before changing command selection.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "macports",
+          "package": "nmap",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "nmap-7.991_0+pcre+ssl.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/nmap/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "native-upstream",
+          "package": "nmap",
+          "version": "7.992",
+          "evidence_status": "publisher-download-page",
+          "evidence_date": "2026-10-19",
+          "url": "https://nmap.org/download",
+          "artifact_url": "https://nmap.org/dist/nmap-7.992.dmg",
+          "architecture": "x86-64 (publisher documented)",
+          "artifact_downloaded": false,
+          "runtime_verified": false,
+          "local_metadata_fetch_limitation": "urllib TLS certificate validation failed; page independently retrieved through web tool; no TLS bypass performed"
+        }
+      ]
+    },
+    {
+      "name": "nss",
+      "installed_version": "3.124",
+      "target_version": "3.131",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "3.124",
+      "retained_installation_states": [
+        {
+          "version": "3.124",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "poppler"
+      ],
+      "installed_reverse_dependents": [
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "3.131",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "nss",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-security-library",
+      "recommended_route": "macports-cohort",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda cached 3.118 is below target 3.131 and a targeted 3.131 release lookup returned 404; MacPorts has Darwin25 Intel 3.131.",
+      "recommended_next_action": "Verify the full MacPorts graph and consumer NSS/NSPR ABI plus any certificate database formats; migrate the consumer closure rather than symlinking /usr/local to /opt/local.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "nss",
+          "version": "3.118",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "nss-3.118-h2b2a826_0.conda",
+              "version": "3.118",
+              "build": "h2b2a826_0",
+              "subdir": "osx-64",
+              "timestamp": 1763486024796,
+              "depends": [
+                "__osx >=10.13",
+                "libcxx >=19",
+                "libsqlite >=3.51.0,<4.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "nspr >=4.38,<5.0a0"
+              ],
+              "sha256": "5107dd376fbbed40a0556835e7ff25d09a4931f339a075167ebf370bbc945390"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "nss",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "nss-3.129_0.darwin_25.x86_64.tbz2",
+            "nss-3.130_0.darwin_25.x86_64.tbz2",
+            "nss-3.131_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/nss/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "open-mpi",
+      "installed_version": "5.0.9",
+      "target_version": "5.0.11",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "5.0.9",
+      "retained_installation_states": [
+        {
+          "version": "5.0.9",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "arpack"
+      ],
+      "installed_reverse_dependents": [
+        "arpack",
+        "igraph"
+      ],
+      "consumer_groups": [
+        "mpi-arpack-igraph"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "5.0.11",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "open-mpi",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "project-mpi-toolchain-and-library",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has openmpi 5.0.11 metadata, but an MPI launcher, compiler wrappers and linked application must agree on the implementation and ABI.",
+      "recommended_next_action": "Solve openmpi=5.0.11 with the actual project compilers and MPI variant; build and execute a two-process local sample in that environment.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "openmpi",
+          "version": "5.0.11",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "openmpi-5.0.11-h02ad2ad_0.conda",
+              "version": "5.0.11",
+              "build": "h02ad2ad_0",
+              "subdir": "osx-64",
+              "timestamp": 1790353625290,
+              "depends": [
+                "mpi 1.0.* openmpi",
+                "__osx >=11.0",
+                "libcxx >=21",
+                "libgfortran5 >=15.3.0",
+                "libgfortran",
+                "libgcc >=15",
+                "libfabric",
+                "libfabric1 >=1.14.0",
+                "libhwloc >=2.13.0,<2.13.1.0a0",
+                "libpmix >=5.0.8,<6.0a0",
+                "libevent >=2.1.12,<2.1.13.0a0",
+                "libzlib >=1.3.2,<2.0a0"
+              ],
+              "sha256": "62cbf0b8fa3db7c76ce732e2ff8552f47c27cb27bcf83f7c0ca3d71b03334fa6"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "openjpeg",
+      "installed_version": "2.5.4",
+      "target_version": "2.5.4_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.5.4",
+      "retained_installation_states": [
+        {
+          "version": "2.5.4",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "leptonica",
+        "poppler"
+      ],
+      "installed_reverse_dependents": [
+        "leptonica",
+        "poppler",
+        "tesseract",
+        "tesseract-lang"
+      ],
+      "consumer_groups": [
+        "pdf-poppler",
+        "ocr-tesseract"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.5.4",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "openjpeg",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-library-and-cli",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has upstream 2.5.4, while Homebrew requests a revision rebuild. Existing Poppler/other dylib consumers remain linked to their original prefix.",
+      "recommended_next_action": "Identify direct consumers; solve and rebuild a consumer in the chosen environment; compare a JPEG2000 decode fixture and library linkage.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "openjpeg",
+          "version": "2.5.4",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "openjpeg-2.5.4-h52bb76a_0.conda",
+              "version": "2.5.4",
+              "build": "h52bb76a_0",
+              "subdir": "osx-64",
+              "timestamp": 1772625294157,
+              "depends": [
+                "__osx >=11.0",
+                "libcxx >=19",
+                "libpng >=1.6.55,<1.7.0a0",
+                "libtiff >=4.7.1,<4.8.0a0",
+                "libzlib >=1.3.1,<2.0a0"
+              ],
+              "sha256": "9a37ecf9c086f3a50d0132e6087dcbe7ea978d80e2da267fa3199c486529b311"
+            },
+            {
+              "filename": "openjpeg-2.5.4-h87e8dc5_0.conda",
+              "version": "2.5.4",
+              "build": "h87e8dc5_0",
+              "subdir": "osx-64",
+              "timestamp": 1758489493148,
+              "depends": [
+                "__osx >=10.13",
+                "libcxx >=19",
+                "libpng >=1.6.50,<1.7.0a0",
+                "libtiff >=4.7.1,<4.8.0a0",
+                "libzlib >=1.3.1,<2.0a0"
+              ],
+              "sha256": "fdf4708a4e45b5fd9868646dd0c0a78429f4c0b8be490196c975e06403a841d0"
+            },
+            {
+              "filename": "openjpeg-2.5.4-he4eae51_1.conda",
+              "version": "2.5.4",
+              "build": "he4eae51_1",
+              "subdir": "osx-64",
+              "timestamp": 1788252699539,
+              "depends": [
+                "__osx >=11.0",
+                "libcxx >=21",
+                "libpng >=1.6.58,<1.7.0a0",
+                "libtiff >=4.7.2,<4.8.0a0",
+                "libzlib >=1.3.2,<2.0a0"
+              ],
+              "sha256": "2d9eef746dc20c5e829b0b10de6731c5c5ab01c55160364ecf05a1bfaea0cca6"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "openldap",
+      "installed_version": "2.6.13",
+      "target_version": "2.7.1_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.6.13",
+      "retained_installation_states": [
+        {
+          "version": "2.6.13",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "php"
+      ],
+      "installed_reverse_dependents": [
+        "php"
+      ],
+      "consumer_groups": [
+        "php-runtime"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "2.7.1",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "openldap",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-library-and-possible-service",
+      "recommended_route": "hold-no-target-binary",
+      "priority_group": "P3-version-gap",
+      "why_still_blocked": "Conda and the freshly checked MacPorts Intel index offer 2.6.13, below target 2.7.1. No target binary was established in the sources checked.",
+      "recommended_next_action": "Separate LDAP client/PHP extension use from slapd service use; check target 2.7.1 binary publication again before a coordinated consumer/service migration. Source compilation is a separate decision.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "openldap",
+          "version": "2.6.13",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "openldap-2.6.13-h2f5043c_0.conda",
+              "version": "2.6.13",
+              "build": "h2f5043c_0",
+              "subdir": "osx-64",
+              "timestamp": 1775742025810,
+              "depends": [
+                "__osx >=11.0",
+                "cyrus-sasl >=2.1.28,<3.0a0",
+                "krb5 >=1.22.2,<1.23.0a0",
+                "libcxx >=19",
+                "openssl >=3.5.6,<4.0a0"
+              ],
+              "sha256": "9b1b7fb7b6d3c98fd9b42313f575b93dba0fd299add27cbb7b1a3f26bbc62c85"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "openldap",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "openldap-2.6.13_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/openldap/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "p11-kit",
+      "installed_version": "0.26.2",
+      "target_version": "0.26.5",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "0.26.2",
+      "retained_installation_states": [
+        {
+          "version": "0.26.2",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "gnutls"
+      ],
+      "installed_reverse_dependents": [
+        "gnupg",
+        "gnutls",
+        "gpgme",
+        "gpgmepp",
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "0.26.5",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "p11-kit",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-library-and-trust-configuration",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has 0.26.5 artifacts only at catalog evidence level. PKCS#11 modules/trust configuration and linked consumers cannot be switched by PATH.",
+      "recommended_next_action": "Solve 0.26.5 with a consumer and validate required modules, trust roots and lookup paths in that prefix.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "p11-kit",
+          "version": "0.26.5",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "p11-kit-0.26.5-h5e89a30_2.conda",
+              "version": "0.26.5",
+              "build": "h5e89a30_2",
+              "subdir": "osx-64",
+              "timestamp": 1788196813283,
+              "depends": [
+                "__osx >=11.0",
+                "libffi >=3.7.0,<3.8.0a0",
+                "libtasn1 >=4.21.0,<5.0a0"
+              ],
+              "sha256": "42ac1caf5f073d3705954f2fc0a164b16ee440707d1c12e855c1d47946872503"
+            },
+            {
+              "filename": "p11-kit-0.26.5-hdd125a7_1.conda",
+              "version": "0.26.5",
+              "build": "hdd125a7_1",
+              "subdir": "osx-64",
+              "timestamp": 1786921012666,
+              "depends": [
+                "__osx >=11.0",
+                "libffi >=3.7.0,<3.8.0a0",
+                "libtasn1 >=4.21.0,<5.0a0"
+              ],
+              "sha256": "9953938e4d7c62896dd05170910ccd32b4d7fab8721d7b9525f366c1d2a0cb2c"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "pango",
+      "installed_version": "1.57.1",
+      "target_version": "1.58.2",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.57.1",
+      "retained_installation_states": [
+        {
+          "version": "1.57.1",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "tesseract"
+      ],
+      "installed_reverse_dependents": [
+        "tesseract",
+        "tesseract-lang"
+      ],
+      "consumer_groups": [
+        "ocr-tesseract"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.58.2",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "pango",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-text-rendering-library",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has 1.58.2 artifacts; changing the library alone does not migrate Cairo/fontconfig/Harfbuzz consumers or fonts.",
+      "recommended_next_action": "Solve the rendering consumer closure and validate Hebrew/Latin text, fonts and output against a focused fixture.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "pango",
+          "version": "1.58.2",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "pango-1.58.2-h207e965_3.conda",
+              "version": "1.58.2",
+              "build": "h207e965_3",
+              "subdir": "osx-64",
+              "timestamp": 1792050808922,
+              "depends": [
+                "libpango-devel ==1.58.2 h432f75e_3"
+              ],
+              "sha256": "6d2cfd84a71e9e79e45fa8ae675b8057be763f7cecc0952d3f59edf0f1831beb"
+            },
+            {
+              "filename": "pango-1.58.2-hc5a6962_1.conda",
+              "version": "1.58.2",
+              "build": "hc5a6962_1",
+              "subdir": "osx-64",
+              "timestamp": 1788490852434,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.4,<2.0a0",
+                "fontconfig >=2.18.3,<3.0a0",
+                "fonts-conda-ecosystem",
+                "fribidi >=1.0.16,<2.0a0",
+                "libexpat >=2.8.1,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libglib >=2.88.3,<3.0a0",
+                "libharfbuzz >=14.4.0",
+                "libpng >=1.6.58,<1.7.0a0",
+                "libzlib >=1.3.2,<2.0a0"
+              ],
+              "sha256": "f0d480da4a46cd5049d8cb88cead23d532debd098ac94a11791ce0a672d43acb"
+            },
+            {
+              "filename": "pango-1.58.2-hc5a6962_2.conda",
+              "version": "1.58.2",
+              "build": "hc5a6962_2",
+              "subdir": "osx-64",
+              "timestamp": 1792003671436,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "fontconfig >=2.18.3,<3.0a0",
+                "fonts-conda-ecosystem",
+                "fribidi >=1.0.17,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libglib >=2.90.1,<3.0a0",
+                "libharfbuzz >=14.6.0",
+                "libpng >=1.6.59,<1.7.0a0",
+                "libzlib >=1.3.2,<2.0a0"
+              ],
+              "sha256": "51549c305b5dd2e963eeec9657e336db2d8f8d2a95cb64a57ed9b9a3c1a15402"
+            },
+            {
+              "filename": "pango-1.58.2-hf280016_0.conda",
+              "version": "1.58.2",
+              "build": "hf280016_0",
+              "subdir": "osx-64",
+              "timestamp": 1786107780519,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.4,<2.0a0",
+                "fontconfig >=2.18.1,<3.0a0",
+                "fonts-conda-ecosystem",
+                "fribidi >=1.0.16,<2.0a0",
+                "libexpat >=2.8.1,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libglib >=2.88.3,<3.0a0",
+                "libharfbuzz >=14.3.0",
+                "libpng >=1.6.58,<1.7.0a0",
+                "libzlib >=1.3.2,<2.0a0"
+              ],
+              "sha256": "3aafce903004fcd745f3ccedbb4d39afcdbee06352be1d7286fcbafa2e7e1dd1"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "php",
+      "installed_version": "8.5.6",
+      "target_version": "8.5.11_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "8.5.6",
+      "retained_installation_states": [
+        {
+          "version": "8.5.6",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "php-runtime"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "8.5.11",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "php",
+          "reason": "source_required"
+        },
+        {
+          "name": "net-snmp",
+          "reason": "source_required"
+        },
+        {
+          "name": "openldap",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "runtime-extensions-and-possible-service",
+      "recommended_route": "macports-cohort",
+      "priority_group": "P2-runtime-service",
+      "why_still_blocked": "The old conda solve is 8.5.9 below target 8.5.11_1. MacPorts php85 8.5.11 archive exists, but extensions, php.ini, FPM/web-service and required LDAP/SNMP functionality differ by build.",
+      "recommended_next_action": "Inventory php -m/ini/service consumers without secrets; verify php85 and each needed extension binary graph, then run project tests and any FPM integration in a separate prefix.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "php",
+          "version": "8.5.9",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "php-8.5.9-h185b369_0.conda",
+              "version": "8.5.9",
+              "build": "h185b369_0",
+              "subdir": "osx-64",
+              "timestamp": 1785441717601,
+              "depends": [
+                "libcxx >=19",
+                "__osx >=11.0",
+                "pcre2 >=10.47,<10.48.0a0",
+                "readline >=8.3,<9.0a0",
+                "libintl >=0.25.1,<1.0a0",
+                "libasprintf >=0.25.1,<1.0a0",
+                "libgettextpo >=0.25.1,<1.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "oniguruma >=6.9.10,<6.10.0a0",
+                "libsqlite >=3.53.4,<4.0a0",
+                "libxslt >=1.1.43,<2.0a0",
+                "libsodium >=1.0.22,<1.0.23.0a0",
+                "libpq >=18.1,<19.0a0",
+                "libxml2",
+                "libxml2-16 >=2.14.6",
+                "gmp >=6.3.0,<7.0a0",
+                "icu >=75.1,<76.0a0",
+                "libiconv >=1.18,<2.0a0",
+                "openssl >=3.5.7,<4.0a0",
+                "libzip >=1.11.2,<2.0a0",
+                "bzip2 >=1.0.8,<2.0a0"
+              ],
+              "sha256": "3713873682b1ac30e138ede1ceaad04bdacbcfcff26f0969dc26130fcbbfb9e6"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "php",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=8.5.6",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/php-8.5.9-h185b369_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/php/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "php85",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "php85-8.5.10_0+libedit.darwin_25.x86_64.tbz2",
+            "php85-8.5.11_0+libedit.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/php85/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "poppler",
+      "installed_version": "26.04.0",
+      "target_version": "26.10.0",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "26.04.0",
+      "retained_installation_states": [
+        {
+          "version": "26.04.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "26.10.0",
+      "app_provider": "pixi",
+      "app_blocked_reason": "binary_route_unavailable",
+      "app_blockers": [],
+      "app_detail": "Error:   × failed to solve requirements of environment 'default' for platform 'osx-\n  │ 64'\n  ├─▶   × failed to solve the environment\n  │   \n  ╰─▶ Cannot solve the request because of: No candidates were found for\n      poppler >=26.10.0.",
+      "migration_scope": "pdf-cli-and-linked-library",
+      "recommended_route": "hold-no-target-binary",
+      "priority_group": "P3-version-gap",
+      "why_still_blocked": "Current application solve failed at >=26.10.0. Old conda lock is 26.09.0; fresh target release lookup returned 404 and MacPorts Intel index is 26.02.0.",
+      "recommended_next_action": "Wait for/recheck target 26.10.0 osx-64 publication or choose an explicitly scoped source build. A 26.09 CLI candidate must not mark target 26.10 completed; later test extraction/render fixtures and separate library consumers.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "poppler",
+          "version": "26.09.0",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "poppler-26.09.0-hb8a767d_0.conda",
+              "version": "26.09.0",
+              "build": "hb8a767d_0",
+              "subdir": "osx-64",
+              "timestamp": 1788836080203,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.4,<2.0a0",
+                "fontconfig >=2.18.3,<3.0a0",
+                "fonts-conda-ecosystem",
+                "lcms2 >=2.19.1,<3.0a0",
+                "libcurl >=8.22.0,<9.0a0",
+                "libcxx >=21",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libglib >=2.88.3,<3.0a0",
+                "libharfbuzz >=14.4.0",
+                "libiconv >=1.18,<2.0a0",
+                "libintl >=0.25.1,<1.0a0",
+                "libjpeg-turbo >=3.2.0,<4.0a0",
+                "libpng >=1.6.58,<1.7.0a0",
+                "libtiff >=4.7.2,<4.8.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "nspr >=4.40,<5.0a0",
+                "nss >=3.118,<4.0a0",
+                "openjpeg >=2.5.4,<3.0a0",
+                "poppler-data"
+              ],
+              "sha256": "7d0f2b3de7c9d2176e6356c10b478f9d539a79368b8741e43467a6e99e4dee68"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "poppler",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=26.04.0",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/noarch/poppler-data-0.4.12-hd8ed1ab_0.conda",
+            "https://conda.anaconda.org/conda-forge/osx-64/poppler-26.09.0-hb8a767d_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/poppler/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "poppler",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "poppler-26.02.0_0+boost.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/poppler/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "postgresql@17",
+      "installed_version": "17.10",
+      "target_version": "17.11_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "17.10",
+      "retained_installation_states": [
+        {
+          "version": "17.10",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "postgresql17-service"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "17.11",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "postgresql@17",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "database-service-and-client",
+      "recommended_route": "pixi-project-or-macports-service",
+      "priority_group": "P2-database",
+      "why_still_blocked": "Old conda lock resolves 17.11 within the same major; MacPorts also has postgresql17 17.11, but the checked server subport has no Darwin25 Intel archive. Data/service/extensions are not migrated by a command replacement.",
+      "recommended_next_action": "Inventory service, PGDATA, extensions, locale and backups; preserve major 17 and test the candidate server/extensions with a restored disposable copy before planning a cutover.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "postgresql",
+          "version": "18.6",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "postgresql-18.6-h33ddf05_0.conda",
+              "version": "18.6",
+              "build": "h33ddf05_0",
+              "subdir": "osx-64",
+              "timestamp": 1786642280138,
+              "depends": [
+                "__osx >=13.3",
+                "icu >=78.3,<79.0a0",
+                "krb5 >=1.22.2,<1.23.0a0",
+                "libpq 18.6 h8b30867_0",
+                "libxml2",
+                "libxml2-16 >=2.14.6",
+                "libxslt >=1.1.43,<2.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "lz4-c >=1.10.0,<1.11.0a0",
+                "openldap >=2.6.13,<2.7.0a0",
+                "openssl >=3.5.7,<4.0a0",
+                "readline >=8.3,<9.0a0",
+                "tzcode",
+                "tzdata",
+                "zstd >=1.5.7,<1.6.0a0"
+              ],
+              "sha256": "4a85daa1b124f2683d62ed7596bef0e85b46b40025ecc150d4b0e5c4f1deee18"
+            },
+            {
+              "filename": "postgresql-18.6-hd199a6d_3.conda",
+              "version": "18.6",
+              "build": "hd199a6d_3",
+              "subdir": "osx-64",
+              "timestamp": 1790876085128,
+              "depends": [
+                "__osx >=13.3",
+                "icu >=78.3,<79.0a0",
+                "krb5 >=1.22.2,<1.23.0a0",
+                "libcxx >=21",
+                "libpq 18.6 h58a6bad_3",
+                "libxml2",
+                "libxml2-16 >=2.15.4",
+                "libxslt >=1.1.45,<2.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "lz4-c >=1.10.0,<1.11.0a0",
+                "openldap >=2.6.13,<2.7.0a0",
+                "openssl >=3.5.8,<4.0a0",
+                "readline >=8.3,<9.0a0",
+                "tzcode",
+                "tzdata",
+                "zstd >=1.5.7,<1.6.0a0"
+              ],
+              "sha256": "1a40741ce5c4245650b34f60408b6a5dbbdefd7830059a4a8573d9b04e82f423"
+            },
+            {
+              "filename": "postgresql-18.6-hf4155b0_1.conda",
+              "version": "18.6",
+              "build": "hf4155b0_1",
+              "subdir": "osx-64",
+              "timestamp": 1788540241667,
+              "depends": [
+                "__osx >=13.3",
+                "icu >=78.3,<79.0a0",
+                "krb5 >=1.22.2,<1.23.0a0",
+                "libpq 18.6 h8b30867_1",
+                "libxml2",
+                "libxml2-16 >=2.15.3",
+                "libxslt >=1.1.45,<2.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "lz4-c >=1.10.0,<1.11.0a0",
+                "openldap >=2.6.13,<2.7.0a0",
+                "openssl >=3.5.8,<4.0a0",
+                "readline >=8.3,<9.0a0",
+                "tzcode",
+                "tzdata",
+                "zstd >=1.5.7,<1.6.0a0"
+              ],
+              "sha256": "42694f0f5843ccef8b0e11768b192d625ccd9001d4b28fabc3163549e800af6a"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "postgresql",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=17,<18",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/postgresql-17.11-h2e07ced_1.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/postgresql-17/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "postgresql17",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "postgresql17-17.11_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/postgresql17/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "postgresql17-server",
+          "evidence_status": "no-matching-archive-in-checked-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/postgresql17-server/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "py3cairo",
+      "installed_version": "1.29.0",
+      "target_version": "1.29.2_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.29.0",
+      "retained_installation_states": [
+        {
+          "version": "1.29.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "python-cairo-project"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.29.2",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "py3cairo",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "python-native-extension",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Old conda lock solves pycairo 1.29.2 with Python 3.15, which may not match consumers. PyPI 1.29.2 has zero macOS wheels in the fresh release response.",
+      "recommended_next_action": "Identify the Python ABI used by actual imports; solve pycairo=1.29.2 with that interpreter and Cairo closure; import cairo and render a fixture before migrating the project.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "pycairo",
+          "version": "1.29.2",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "pycairo-1.29.2-py311hfe90974_0.conda",
+              "version": "1.29.2",
+              "build": "py311hfe90974_0",
+              "subdir": "osx-64",
+              "timestamp": 1791297083351,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.11,<3.12.0a0",
+                "python_abi 3.11.* *_cp311"
+              ],
+              "sha256": "4dd126d3cc82c4671d5ce3966eb7380c21a6b4152f8a797e4b1b966302854d1c"
+            },
+            {
+              "filename": "pycairo-1.29.2-py312hb7a0288_0.conda",
+              "version": "1.29.2",
+              "build": "py312hb7a0288_0",
+              "subdir": "osx-64",
+              "timestamp": 1791296776316,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.12,<3.13.0a0",
+                "python_abi 3.12.* *_cp312"
+              ],
+              "sha256": "c5718a78a182d39f14152657a9d41389176ae40a24ecad3333998888669df2f2"
+            },
+            {
+              "filename": "pycairo-1.29.2-py313h80011f2_0.conda",
+              "version": "1.29.2",
+              "build": "py313h80011f2_0",
+              "subdir": "osx-64",
+              "timestamp": 1791296454400,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.13,<3.14.0a0",
+                "python_abi 3.13.* *_cp313"
+              ],
+              "sha256": "1b348395be75cd4db2a949b1b4c3125696cf4fc8090b405176c79595fb672403"
+            },
+            {
+              "filename": "pycairo-1.29.2-py314h2e78e96_0.conda",
+              "version": "1.29.2",
+              "build": "py314h2e78e96_0",
+              "subdir": "osx-64",
+              "timestamp": 1791296674299,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.14,<3.15.0a0",
+                "python_abi 3.14.* *_cp314t"
+              ],
+              "sha256": "167436a0d2ca959e751e997b3fa90c495935a525b49050eccfff70978bb3e0fb"
+            },
+            {
+              "filename": "pycairo-1.29.2-py314he0c7571_0.conda",
+              "version": "1.29.2",
+              "build": "py314he0c7571_0",
+              "subdir": "osx-64",
+              "timestamp": 1791296590921,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.14,<3.15.0a0",
+                "python_abi 3.14.* *_cp314"
+              ],
+              "sha256": "f284488f2ce166ea289adc9e8f4855a0275efe0cce20a53db61750787f95676a"
+            },
+            {
+              "filename": "pycairo-1.29.2-py315h06710d9_0.conda",
+              "version": "1.29.2",
+              "build": "py315h06710d9_0",
+              "subdir": "osx-64",
+              "timestamp": 1791296727807,
+              "depends": [
+                "__osx >=11.0",
+                "cairo >=1.18.6,<2.0a0",
+                "libexpat >=2.8.5,<3.0a0",
+                "libfreetype >=2.14.3",
+                "libfreetype6 >=2.14.3",
+                "libzlib >=1.3.2,<2.0a0",
+                "python >=3.15.0rc2,<3.16.0a0",
+                "python_abi 3.15.* *_cp315"
+              ],
+              "sha256": "a482c1953dfe2d411b3bbd39c5894112fbb03ad5d6a777ae7d77cbcf2c71664e"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "pycairo",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=1.29.0",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/pycairo-1.29.2-py315h06710d9_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/py3cairo/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "py314-cairo",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "py314-cairo-1.29.1_0+quartz+x11.darwin_25.x86_64.tbz2",
+            "py314-cairo-1.29.2_0+quartz+x11.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/py314-cairo/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "py313-cairo",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "py313-cairo-1.29.1_0+quartz+x11.darwin_25.x86_64.tbz2",
+            "py313-cairo-1.29.2_0+quartz+x11.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/py313-cairo/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "simdjson",
+      "installed_version": "4.6.4",
+      "target_version": "5.0.5",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "4.6.4",
+      "retained_installation_states": [
+        {
+          "version": "4.6.4",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "node"
+      ],
+      "installed_reverse_dependents": [
+        "mongodb-community",
+        "node"
+      ],
+      "consumer_groups": [
+        "legacy-homebrew-node"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "5.0.5",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "simdjson",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "linked-cpp-library",
+      "recommended_route": "pixi-project",
+      "priority_group": "P2-library",
+      "why_still_blocked": "Conda has 5.0.5 artifacts without a solve. C++ consumers, headers and ABI must migrate together; simdjson is distinct from the missing simdutf library in merve.",
+      "recommended_next_action": "Map reverse consumers, solve the project closure, rebuild and run JSON parse fixtures; do not treat this package as a fix for merve -> libsimdutf.34.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "simdjson",
+          "version": "5.0.5",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "simdjson-5.0.5-h66869c8_0.conda",
+              "version": "5.0.5",
+              "build": "h66869c8_0",
+              "subdir": "osx-64",
+              "timestamp": 1792026264635,
+              "depends": [
+                "libcxx >=21",
+                "__osx >=11.0"
+              ],
+              "sha256": "ec5e10affd3fed683c0c355447e625f2c5fabcd83ecd1f88b19b4cff67d5b9cf"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        }
+      ]
+    },
+    {
+      "name": "socat",
+      "installed_version": "1.8.1.1",
+      "target_version": "1.8.1.3",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.8.1.1",
+      "retained_installation_states": [
+        {
+          "version": "1.8.1.1",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "standalone-command"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.8.1.3",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "socat",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "cli",
+      "recommended_route": "pixi-isolated-cli",
+      "priority_group": "P1-command",
+      "why_still_blocked": "Old lock solves exact upstream 1.8.1.3; runtime, TLS options and exit-code behavior remain untested.",
+      "recommended_next_action": "Refresh/reuse the retained exact lock and validate a local TCP/stdio round trip plus any required TLS feature before selecting a shim.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "socat",
+          "version": "1.8.1.3",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "socat-1.8.1.3-h08f7681_0.conda",
+              "version": "1.8.1.3",
+              "build": "h08f7681_0",
+              "subdir": "osx-64",
+              "timestamp": 1782475514952,
+              "depends": [
+                "__osx >=11.0",
+                "openssl >=3.5.7,<4.0a0",
+                "readline >=8.3,<9.0a0"
+              ],
+              "sha256": "a1187b000c1eb8f5eccd932d8a4ea65187ef43a219562f2b4c0c419906724c19"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "socat",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=1.8.1.1",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/socat-1.8.1.3-h08f7681_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/socat/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "socat",
+          "evidence_status": "no-matching-archive-in-checked-index",
+          "evidence_date": "2026-10-18",
+          "archives": [],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/socat/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "terminal-notifier",
+      "installed_version": "2.0.0",
+      "target_version": "3.1.0",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "2.0.0",
+      "retained_installation_states": [
+        {
+          "version": "2.0.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "notification-integration"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "3.1.0",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "terminal-notifier",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "notification-app-command",
+      "recommended_route": "native-official-or-macports",
+      "priority_group": "P1-command",
+      "why_still_blocked": "Upstream 3.1.0 ZIP exists and README declares a universal binary; matching MacPorts Intel archive exists. Architecture is publisher-declared, not inspected here; version 3 changes notification APIs/options.",
+      "recommended_next_action": "Verify ZIP digest and executable slices; inspect signature/quarantine and bundle identity; test notification delivery from the packaged app and inspect removed sender/appIcon/ignoreDnD options and new exit codes.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "macports",
+          "package": "terminal-notifier",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "terminal-notifier-2.0.0_0.darwin_25.x86_64.tbz2",
+            "terminal-notifier-3.1.0_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/terminal-notifier/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "native-upstream",
+          "package": "julienXX/terminal-notifier",
+          "version": "3.1.0",
+          "evidence_status": "release-assets-metadata",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "assets": [
+            {
+              "name": "terminal-notifier-3.1.0.zip",
+              "size": 400096,
+              "browser_download_url": "https://github.com/julienXX/terminal-notifier/releases/download/3.1.0/terminal-notifier-3.1.0.zip",
+              "digest": "sha256:e969d4ae20287da1ba55495ae31dcedd8e9069deb8ce4eed24f6561a5fc3e4d5"
+            }
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "runtime_verified": false,
+          "architecture_verified": false
+        }
+      ]
+    },
+    {
+      "name": "tesseract",
+      "installed_version": "5.5.2",
+      "target_version": "5.5.3",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "5.5.2",
+      "retained_installation_states": [
+        {
+          "version": "5.5.2",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [
+        "tesseract-lang"
+      ],
+      "installed_reverse_dependents": [
+        "tesseract-lang"
+      ],
+      "consumer_groups": [
+        "ocr-tesseract"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "5.5.3",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "tesseract",
+          "reason": "source_required"
+        },
+        {
+          "name": "pango",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "ocr-cli-library-and-language-data",
+      "recommended_route": "pixi-isolated-cli",
+      "priority_group": "P1-command",
+      "why_still_blocked": "Old lock solves 5.5.3. Homebrew Pango blocker does not establish that a separate provider needs the same graph; language files, OCR models and any library clients still need validation.",
+      "recommended_next_action": "Validate the 5.5.3 lock and list required traineddata; test Hebrew/English OCR fixtures and data lookup; treat libtesseract consumers as a separate coordinated migration.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "tesseract",
+          "version": "5.5.3",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "tesseract-5.5.3-hf76ddcb_0.conda",
+              "version": "5.5.3",
+              "build": "hf76ddcb_0",
+              "subdir": "osx-64",
+              "timestamp": 1785188845662,
+              "depends": [
+                "libcxx >=19",
+                "__osx >=11.0",
+                "llvm-openmp >=19.1.7",
+                "libarchive >=3.8.8,<3.9.0a0",
+                "openjpeg >=2.5.4,<3.0a0",
+                "libjpeg-turbo >=3.2.0,<4.0a0",
+                "libcurl >=8.21.0,<9.0a0",
+                "liblzma >=5.8.3,<6.0a0",
+                "giflib >=5.2.2,<5.3.0a0",
+                "libpng >=1.6.58,<1.7.0a0",
+                "leptonica >=1.87.0,<1.88.0a0",
+                "libwebp-base >=1.6.0,<2.0a0",
+                "libzlib >=1.3.2,<2.0a0",
+                "libtiff >=4.7.2,<4.8.0a0"
+              ],
+              "sha256": "33e689e1fa98246c7807deed7141f6516a3b961d85b2b893e8db8b3cbd1d3660"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "tesseract",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=5.5.2",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/tesseract-5.5.3-hf76ddcb_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/tesseract/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "tesseract",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "tesseract-5.5.3_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/tesseract/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "unbound",
+      "installed_version": "1.25.0",
+      "target_version": "1.26.1_1",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.25.0",
+      "retained_installation_states": [
+        {
+          "version": "1.25.0",
+          "active_keg": true,
+          "installed_on_request": false,
+          "installed_as_dependency": true,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [
+        "gnupg",
+        "gpgme",
+        "gpgmepp",
+        "poppler"
+      ],
+      "consumer_groups": [
+        "pdf-poppler"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.26.1",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "unbound",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "dns-service-and-library",
+      "recommended_route": "macports-service",
+      "priority_group": "P2-runtime-service",
+      "why_still_blocked": "No target conda release was found in the checks; MacPorts has 1.26.1 Darwin25 Intel archive. Listening ports, trust anchors, config, launchd and libunbound consumers are a migration boundary.",
+      "recommended_next_action": "Verify full binary dependency graph, inspect current config/service use, then validate unbound-checkconf and a separate unprivileged-port resolver fixture before any service cutover.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "macports",
+          "package": "unbound",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "archives": [
+            "unbound-1.26.1_0.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "url": "https://packages.macports.org/unbound/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "wget",
+      "installed_version": "1.25.0",
+      "target_version": "1.25.0_2",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.25.0",
+      "retained_installation_states": [
+        {
+          "version": "1.25.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "standalone-command"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.25.0",
+      "app_provider": "homebrew",
+      "app_blocked_reason": "source_required",
+      "app_blockers": [
+        {
+          "name": "wget",
+          "reason": "source_required"
+        }
+      ],
+      "app_detail": null,
+      "migration_scope": "cli",
+      "recommended_route": "pixi-isolated-cli",
+      "priority_group": "P1-command",
+      "why_still_blocked": "Old lock solves upstream 1.25.0. Homebrew _2 is a provider revision and cannot be equated to conda build _1 by string comparison.",
+      "recommended_next_action": "Inspect the reason for the Homebrew revision, validate the retained conda lock and test HTTPS/certificates/redirects with a local fixture before selecting a command shim.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "wget",
+          "version": "1.25.0",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": true,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "wget-1.25.0-hf06ceb5_1.conda",
+              "version": "1.25.0",
+              "build": "hf06ceb5_1",
+              "subdir": "osx-64",
+              "timestamp": 1772233182753,
+              "depends": [
+                "__osx >=11.0",
+                "libidn2 >=2,<3.0a0",
+                "libunistring >=0,<1.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.5.5,<4.0a0",
+                "pcre2 >=10.47,<10.48.0a0",
+                "zlib"
+              ],
+              "sha256": "08bb2b6a831e9d6483d0213602c7362a7ce2267a5be579297e5a94fd341ef421"
+            },
+            {
+              "filename": "wget-1.25.0-hfb6e5ea_0.conda",
+              "version": "1.25.0",
+              "build": "hfb6e5ea_0",
+              "subdir": "osx-64",
+              "timestamp": 1761206943577,
+              "depends": [
+                "__osx >=10.13",
+                "libidn2 >=2,<3.0a0",
+                "libunistring >=0,<1.0a0",
+                "libzlib >=1.3.1,<2.0a0",
+                "openssl >=3.5.4,<4.0a0",
+                "pcre2 >=10.45,<10.46.0a0",
+                "zlib"
+              ],
+              "sha256": "b5ce13d7f3ba2515ec5d372fd27d1af7be7453d53c3d3e584c482f7fa4e87782"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "wget",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=1.25.0",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/wget-1.25.0-hf06ceb5_1.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/wget/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "wget",
+          "evidence_status": "archive-index",
+          "evidence_date": "2026-10-18",
+          "archives": [
+            "wget-1.25.0_1+gnutls.darwin_25.x86_64.tbz2"
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/wget/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        }
+      ]
+    },
+    {
+      "name": "whisper.cpp",
+      "installed_version": "1.9.1",
+      "target_version": "1.9.5",
+      "installed_version_semantics": "app display snapshot; compare inventory_active_version and retained receipt states",
+      "inventory_active_version": "1.9.1",
+      "retained_installation_states": [
+        {
+          "version": "1.9.1",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "active_direct_reverse_dependents": [],
+      "installed_reverse_dependents": [],
+      "consumer_groups": [
+        "speech-model-runtime"
+      ],
+      "consumer_inventory_source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/inventory/homebrew-rows.json",
+      "target_upstream_version": "1.9.5",
+      "app_provider": "pixi",
+      "app_blocked_reason": "binary_route_unavailable",
+      "app_blockers": [],
+      "app_detail": "Error:   × failed to solve requirements of environment 'default' for platform 'osx-\n  │ 64'\n  ├─▶   × failed to solve the environment\n  │   \n  ╰─▶ Cannot solve the request because of: No candidates were found for\n      whisper.cpp >=1.9.5.",
+      "migration_scope": "cli-and-model-runtime",
+      "recommended_route": "hold-no-target-binary",
+      "priority_group": "P3-version-gap",
+      "why_still_blocked": "Current application solve failed at >=1.9.5; old conda lock is 1.9.3. Upstream v1.9.5 release currently has no attached assets; a target binary was not established.",
+      "recommended_next_action": "Recheck osx-64 target publication; otherwise scope a source build or explicit application alternative. Preserve model hashes/options and test transcription on an Intel sample before selecting a runtime.",
+      "research_status": "candidate-research-only",
+      "runtime_verified": false,
+      "migration_verified": false,
+      "evidence_dates": [
+        "2026-10-18",
+        "2026-10-19"
+      ],
+      "candidates": [
+        {
+          "provider": "conda-forge",
+          "package": "whisper.cpp",
+          "version": "1.9.3",
+          "evidence_status": "catalog-artifact",
+          "evidence_date": "2026-10-18",
+          "meets_upstream_target": false,
+          "provider_revision_equivalence": "not-established",
+          "artifacts": [
+            {
+              "filename": "whisper.cpp-1.9.3-hddf3962_0.conda",
+              "version": "1.9.3",
+              "build": "hddf3962_0",
+              "subdir": "osx-64",
+              "timestamp": 1787728222044,
+              "depends": [
+                "libcxx >=21",
+                "__osx >=11.0",
+                "llvm-openmp >=21.1.8",
+                "sdl2 >=2.32.56,<3.0a0"
+              ],
+              "sha256": "ba402de948fb92fbc9f5ec794eadb13e659fc1af84c36eeee73d1f3ffc35a3c5"
+            }
+          ],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/conda-coverage.json",
+          "runtime_verified": false
+        },
+        {
+          "provider": "pixi/conda-forge",
+          "package": "whisper.cpp",
+          "evidence_status": "dependency-solved",
+          "evidence_date": "2026-10-18T18:22:29.113178+00:00",
+          "constraint": ">=1.9.1",
+          "locked_urls": [
+            "https://conda.anaconda.org/conda-forge/osx-64/whisper.cpp-1.9.3-hddf3962_0.conda"
+          ],
+          "lockfile": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-checks/whisper-cpp/pixi.lock",
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/solver-results.json",
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "macports",
+          "package": "whisper.cpp",
+          "evidence_status": "no-matching-archive-in-checked-index",
+          "evidence_date": "2026-10-18",
+          "archives": [],
+          "source": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/macports-archives.json",
+          "url": "https://packages.macports.org/whisper.cpp/",
+          "dependency_solution_verified": false,
+          "runtime_verified": false,
+          "migration_verified": false
+        },
+        {
+          "provider": "native-upstream",
+          "package": "ggml-org/whisper.cpp",
+          "version": "v1.9.5",
+          "evidence_status": "release-assets-metadata",
+          "evidence_date": "2026-10-19T05:48:11.979628+00:00",
+          "assets": [],
+          "source": "/Users/tzoharlary/Documents/Projects/brew-update-manager/docs/audit-2026-10-19/routes/fresh-metadata.json",
+          "runtime_verified": false,
+          "architecture_verified": false
+        }
+      ]
+    }
+  ]
+}

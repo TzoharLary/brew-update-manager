@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-19T11:02:51.025914+00:00",
+  "status": "passed",
+  "brew_roots": 27,
+  "exact_archive_nodes": 161,
+  "available_with_signature_file": 158,
+  "missing_exact_archives": 3,
+  "root_closures_match_direct_edge_walk": true,
+  "macports_installed_ports_after": 0,
+  "archive_bodies_downloaded": 0,
+  "ngrok_included": false
+}

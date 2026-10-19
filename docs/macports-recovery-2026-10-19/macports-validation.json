@@ -1,0 +1,52 @@
+{
+  "checked_at": "2026-10-19T10:50:20.124733+00:00",
+  "checks": [
+    {
+      "command": [
+        "/opt/local/bin/port",
+        "version"
+      ],
+      "code": 0,
+      "stdout": "Version: 2.12.7\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/opt/local/bin/port",
+        "installed"
+      ],
+      "code": 0,
+      "stdout": "No ports are installed.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/opt/local/bin/port",
+        "-q",
+        "info",
+        "--name",
+        "--version",
+        "wget"
+      ],
+      "code": 0,
+      "stdout": "wget\n1.25.0\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/opt/local/bin/port",
+        "-N",
+        "-b",
+        "-y",
+        "install",
+        "wget"
+      ],
+      "code": 0,
+      "stdout": "--->  Computing dependencies for wget\n--->  Dependencies to be installed: gettext-runtime libiconv libidn2 libproxy libpsl libunistring nettle pcre2 zlib gnutls glib2 gobject-introspection gsettings-desktop-schemas libelf libffi python314 dbus bzip2 expat libedit mpdecimal ncurses openssl sqlite3 xz zstd python_select-314 python3_select-314 openssl3 lz4 python_select python3_select cairo pkgconfig py314-mako py314-markdown py314-setuptools fontconfig freetype libpixman libpng lzo2 xorg-libXext xorg-xcb-util xrender brotli xorg-libX11 xorg-xorgproto xorg-libXdmcp xorg-libXau xorg-libxcb xorg-xcb-proto libxml2 icu py314-markupsafe gmp libtasn1 p11-kit libxslt curl-ca-bundle\nFor libiconv: skipping org.macports.main (dry run)\nFor gettext-runtime: skipping org.macports.main (dry run)\nFor libunistring: skipping org.macports.main (dry run)\nFor libidn2: skipping org.macports.main (dry run)\nFor libpsl: skipping org.macports.main (dry run)\nFor zlib: skipping org.macports.main (dry run)\nFor libelf: skipping org.macports.main (dry run)\nFor libffi: skipping org.macports.main (dry run)\nFor bzip2: skipping org.macports.main (dry run)\nFor expat: skipping org.macports.main (dry run)\nFor dbus: skipping org.macports.main (dry run)\nFor mpdecimal: skipping org.macports.main (dry run)\nFor ncurses: skipping org.macports.main (dry run)\nFor libedit: skipping org.macports.main (dry run)\nFor pcre2: skipping org.macports.main (dry run)\nFor sqlite3: skipping org.macports.main (dry run)\nFor xz: skipping org.macports.main (dry run)\nFor openssl3: skipping org.macports.main (dry run)\nFor openssl: skipping org.macports.main (dry run)\nFor lz4: skipping org.macports.main (dry run)\nFor zstd: skipping org.macports.main (dry run)\nFor python_select: skipping org.macports.main (dry run)\nFor python_select-314: skipping org.macports.main (dry run)\nFor python3_select: skipping org.macports.main (dry run)\nFor python3_select-314: skipping org.macports.main (dry run)\nFor python314: skipping org.macports.main (dry run)\nFor glib2: skipping org.macports.main (dry run)\nFor gsettings-desktop-schemas: skipping org.macports.main (dry run)\nFor pkgconfig: skipping org.macports.main (dry run)\nFor py314-markdown: skipping org.macports.main (dry run)\nFor py314-setuptools: skipping org.macports.main (dry run)\nFor libpixman: skipping org.macports.main (dry run)\nFor libpng: skipping org.macports.main (dry run)\nFor lzo2: skipping org.macports.main (dry run)\nFor brotli: skipping org.macports.main (dry run)\nFor freetype: skipping org.macports.main (dry run)\nFor fontconfig: skipping org.macports.main (dry run)\nFor xorg-xorgproto: skipping org.macports.main (dry run)\nFor xorg-libXdmcp: skipping org.macports.main (dry run)\nFor xorg-libXau: skipping org.macports.main (dry run)\nFor icu: skipping org.macports.main (dry run)\nFor libxml2: skipping org.macports.main (dry run)\nFor xorg-xcb-proto: skipping org.macports.main (dry run)\nFor xorg-libxcb: skipping org.macports.main (dry run)\nFor xorg-xcb-util: skipping org.macports.main (dry run)\nFor xorg-libX11: skipping org.macports.main (dry run)\nFor xorg-libXext: skipping org.macports.main (dry run)\nFor xrender: skipping org.macports.main (dry run)\nFor cairo: skipping org.macports.main (dry run)\nFor py314-markupsafe: skipping org.macports.main (dry run)\nFor py314-mako: skipping org.macports.main (dry run)\nFor gobject-introspection: skipping org.macports.main (dry run)\nFor libproxy: skipping org.macports.main (dry run)\nFor gmp: skipping org.macports.main (dry run)\nFor nettle: skipping org.macports.main (dry run)\nFor libtasn1: skipping org.macports.main (dry run)\nFor libxslt: skipping org.macports.main (dry run)\nFor curl-ca-bundle: skipping org.macports.main (dry run)\nFor p11-kit: skipping org.macports.main (dry run)\nFor gnutls: skipping org.macports.main (dry run)\nFor wget: skipping org.macports.main (dry run)\n",
+      "stderr": ""
+    }
+  ],
+  "ports_installed": 0,
+  "source_build_policy": "never",
+  "binary_archive_closure_verified": false
+}

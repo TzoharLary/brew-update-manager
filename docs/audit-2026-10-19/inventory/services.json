@@ -1,0 +1,125 @@
+{
+  "brew_services": {
+    "command": [
+      "/usr/local/bin/brew",
+      "services",
+      "list",
+      "--json"
+    ],
+    "exit_code": 0,
+    "output": [
+      {
+        "name": "cloudflared",
+        "status": "none",
+        "user": null,
+        "file": "/usr/local/opt/cloudflared/sh.brew.cloudflared.plist",
+        "exit_code": null
+      },
+      {
+        "name": "php",
+        "status": "none",
+        "user": null,
+        "file": "/usr/local/opt/php/homebrew.mxcl.php.plist",
+        "exit_code": null
+      },
+      {
+        "name": "postgresql@17",
+        "status": "none",
+        "user": null,
+        "file": "/usr/local/opt/postgresql@17/homebrew.mxcl.postgresql@17.plist",
+        "exit_code": null
+      },
+      {
+        "name": "unbound",
+        "status": "none",
+        "user": null,
+        "file": "/usr/local/opt/unbound/homebrew.mxcl.unbound.plist",
+        "exit_code": null
+      }
+    ],
+    "stderr": ""
+  },
+  "launch_plists": [],
+  "formula_service_metadata": {
+    "postgresql@17": {
+      "run": [
+        "/usr/local/opt/postgresql@17/bin/postgres",
+        "-D",
+        "/usr/local/var/postgresql@17"
+      ],
+      "run_type": "immediate",
+      "keep_alive": {
+        "always": true
+      },
+      "environment_variables": {
+        "LC_ALL": "en_US.UTF-8"
+      },
+      "working_dir": "/usr/local",
+      "log_path": "/usr/local/var/log/postgresql@17.log",
+      "error_log_path": "/usr/local/var/log/postgresql@17.log",
+      "stop_timeout": 120
+    },
+    "unbound": {
+      "run": [
+        "/usr/local/opt/unbound/sbin/unbound",
+        "-d",
+        "-c",
+        "/usr/local/etc/unbound/unbound.conf"
+      ],
+      "run_type": "immediate",
+      "keep_alive": {
+        "always": true
+      },
+      "require_root": true
+    },
+    "net-snmp": null,
+    "php": {
+      "run": [
+        "/usr/local/opt/php/sbin/php-fpm",
+        "--nodaemonize"
+      ],
+      "run_type": "immediate",
+      "keep_alive": {
+        "always": true
+      },
+      "working_dir": "/usr/local/var",
+      "error_log_path": "/usr/local/var/log/php-fpm.log"
+    }
+  },
+  "data_path_metadata": [
+    {
+      "path": "/usr/local/var/postgresql@17",
+      "exists": true,
+      "is_directory": true
+    },
+    {
+      "path": "/usr/local/var/mongodb",
+      "exists": true,
+      "is_directory": true
+    },
+    {
+      "path": "/usr/local/etc/mongod.conf",
+      "exists": true,
+      "is_directory": false
+    },
+    {
+      "path": "/usr/local/etc/unbound",
+      "exists": true,
+      "is_directory": true
+    },
+    {
+      "path": "/usr/local/etc/snmp",
+      "exists": false,
+      "is_directory": false
+    },
+    {
+      "path": "/usr/local/etc/php",
+      "exists": true,
+      "is_directory": true
+    }
+  ],
+  "limitations": [
+    "No matching PostgreSQL/MongoDB/unbound/net-snmp/php plists found in user/system LaunchAgents or LaunchDaemons. brew services status none is not proof no manually launched daemon exists.",
+    "MongoDB formulae omitted from brew info. Receipt proves installed versions and tap; current service metadata was unavailable from brew info. Existing mongod.conf and data directory were checked only for existence, not read."
+  ]
+}

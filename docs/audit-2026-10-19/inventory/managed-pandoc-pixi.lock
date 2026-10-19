@@ -1,0 +1,23 @@
+version: 7
+platforms:
+- name: osx-64
+  virtual-packages:
+  - __unix=0=0
+  - __osx=13.0
+  - __archspec=0=x86_64
+environments:
+  default:
+    channels:
+    - url: https://conda.anaconda.org/conda-forge/
+    packages:
+      osx-64:
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/pandoc-3.12.1-h694c41f_0.conda
+packages:
+- conda: https://conda.anaconda.org/conda-forge/osx-64/pandoc-3.12.1-h694c41f_0.conda
+  sha256: 8f6db877871e5e1479db70bce95692cc844cd590e6f3edffcfb8abea137e71df
+  md5: cc041fb3a11854e359f938343b1ca409
+  license: GPL-2.0-or-later
+  license_family: GPL
+  run_exports: {}
+  size: 17345185
+  timestamp: 1791465211145

@@ -1,0 +1,1056 @@
+{
+  "captured_at": "2026-10-19T10:05:50.027289+00:00",
+  "scope": "Bounded discovery of node/npm, deno, ansible, uv/uvx, pandoc; no global home recursion, unrelated packages, app bundles, or Codex runtime candidates. Probes only --version. No install/update/remove.",
+  "shells": {
+    "inherited_login_interactive": {
+      "exit_code": 0,
+      "stdout": "PATH=/Users/tzoharlary/.local/share/brew-update-manager/bin:/Users/tzoharlary/.bun/bin:/Users/tzoharlary/.local/codex-bin:/Users/tzoharlary/.antigravity/antigravity/bin:/Users/tzoharlary/ti/ti-openocd-current/bin:/Users/tzoharlary/.dotnet/tools:/usr/local/bin:/usr/local/opt/llvm/bin:/usr/local/sbin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Library/TeX/texbin:/Applications/Wireshark.app/Contents/MacOS:/usr/local/share/dotnet:~/.dotnet/tools:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/tzoharlary/.codex/tmp/arg0-macos/codex-arg0CALnwS:/Users/tzoharlary/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/tzoharlary/.local/bin:/Users/tzoharlary/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS\nTOOL=node\n/Users/tzoharlary/.local/share/brew-update-manager/bin/node\n/usr/local/bin/node\nTOOL=npm\n/Users/tzoharlary/.local/share/brew-update-manager/bin/npm\n/usr/local/bin/npm\nTOOL=deno\n/Users/tzoharlary/.local/share/brew-update-manager/bin/deno\nTOOL=ansible\n/Users/tzoharlary/.local/share/brew-update-manager/bin/ansible\nTOOL=uv\n/Users/tzoharlary/.local/share/brew-update-manager/bin/uv\n/usr/local/bin/uv\n/Users/tzoharlary/.local/bin/uv\nTOOL=uvx\n/Users/tzoharlary/.local/share/brew-update-manager/bin/uvx\n/usr/local/bin/uvx\n/Users/tzoharlary/.local/bin/uvx\nTOOL=pandoc\n/Users/tzoharlary/.local/share/brew-update-manager/bin/pandoc\n/usr/local/bin/pandoc",
+      "stderr": ""
+    },
+    "clean_environment_login_interactive": {
+      "exit_code": 0,
+      "stdout": "PATH=/Users/tzoharlary/.local/share/brew-update-manager/bin:/Users/tzoharlary/.bun/bin:/Users/tzoharlary/.local/codex-bin:/Users/tzoharlary/.antigravity/antigravity/bin:/Users/tzoharlary/ti/ti-openocd-current/bin:/Users/tzoharlary/.local/bin:/Users/tzoharlary/.dotnet/tools:/usr/local/bin:/usr/local/opt/llvm/bin:/usr/local/sbin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Library/TeX/texbin:/Applications/Wireshark.app/Contents/MacOS:/usr/local/share/dotnet:~/.dotnet/tools\nTOOL=node\n/Users/tzoharlary/.local/share/brew-update-manager/bin/node\n/usr/local/bin/node\nTOOL=npm\n/Users/tzoharlary/.local/share/brew-update-manager/bin/npm\n/usr/local/bin/npm\nTOOL=deno\n/Users/tzoharlary/.local/share/brew-update-manager/bin/deno\nTOOL=ansible\n/Users/tzoharlary/.local/share/brew-update-manager/bin/ansible\nTOOL=uv\n/Users/tzoharlary/.local/share/brew-update-manager/bin/uv\n/Users/tzoharlary/.local/bin/uv\n/usr/local/bin/uv\nTOOL=uvx\n/Users/tzoharlary/.local/share/brew-update-manager/bin/uvx\n/Users/tzoharlary/.local/bin/uvx\n/usr/local/bin/uvx\nTOOL=pandoc\n/Users/tzoharlary/.local/share/brew-update-manager/bin/pandoc\n/usr/local/bin/pandoc",
+      "stderr": ""
+    }
+  },
+  "config_path_lines": [
+    {
+      "path": "/Users/tzoharlary/.zprofile",
+      "exists": true,
+      "mtime_utc": "2026-10-19T04:11:11.605200+00:00",
+      "matching_lines": [
+        {
+          "line": 2,
+          "text": "# BEGIN brew-update-manager tools"
+        },
+        {
+          "line": 3,
+          "text": "typeset -U path"
+        },
+        {
+          "line": 4,
+          "text": "path=(\"$HOME/.local/share/brew-update-manager/bin\" $path)"
+        },
+        {
+          "line": 5,
+          "text": "export PATH"
+        },
+        {
+          "line": 6,
+          "text": "# END brew-update-manager tools"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tzoharlary/.zshrc",
+      "exists": true,
+      "mtime_utc": "2026-10-19T04:11:11.609049+00:00",
+      "matching_lines": [
+        {
+          "line": 12,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 15,
+          "text": "export PATH=\"/usr/local/bin:$PATH\""
+        },
+        {
+          "line": 18,
+          "text": "export PATH=\"$HOME/.dotnet/tools:$PATH\""
+        },
+        {
+          "line": 34,
+          "text": "if [ -f \"$HOME/.local/bin/env\" ]; then"
+        },
+        {
+          "line": 35,
+          "text": "    . \"$HOME/.local/bin/env\""
+        },
+        {
+          "line": 38,
+          "text": "# To see the final PATH, run: echo $PATH"
+        },
+        {
+          "line": 44,
+          "text": "export PATH=\"$HOME/ti/ti-openocd-current/bin:$PATH\""
+        },
+        {
+          "line": 50,
+          "text": "export PATH=\"/Users/tzoharlary/.antigravity/antigravity/bin:$PATH\""
+        },
+        {
+          "line": 53,
+          "text": "export PATH=\"$HOME/.local/codex-bin:$PATH\""
+        },
+        {
+          "line": 61,
+          "text": "export PATH=\"$BUN_INSTALL/bin:$PATH\""
+        },
+        {
+          "line": 72,
+          "text": "# BEGIN brew-update-manager tools"
+        },
+        {
+          "line": 73,
+          "text": "typeset -U path"
+        },
+        {
+          "line": 74,
+          "text": "path=(\"$HOME/.local/share/brew-update-manager/bin\" $path)"
+        },
+        {
+          "line": 75,
+          "text": "export PATH"
+        },
+        {
+          "line": 76,
+          "text": "# END brew-update-manager tools"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tzoharlary/.profile",
+      "exists": true,
+      "mtime_utc": "2025-11-06T13:21:23.884335+00:00",
+      "matching_lines": [
+        {
+          "line": 2,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 4,
+          "text": ". \"$HOME/.local/bin/env\""
+        }
+      ]
+    },
+    {
+      "path": "/Users/tzoharlary/.bash_profile",
+      "exists": true,
+      "mtime_utc": "2025-11-06T13:21:23.950897+00:00",
+      "matching_lines": [
+        {
+          "line": 8,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 9,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 10,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 11,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 12,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 13,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 14,
+          "text": "export PATH=\"/usr/local/opt/llvm/bin:$PATH\""
+        },
+        {
+          "line": 15,
+          "text": "export PATH=\"/usr/local/bin:$PATH\""
+        },
+        {
+          "line": 16,
+          "text": "export PATH=\"/usr/local/bin:$PATH\""
+        },
+        {
+          "line": 17,
+          "text": "export PATH=\"/usr/local/bin:$PATH\""
+        },
+        {
+          "line": 18,
+          "text": "export PATH=\"/usr/local/bin:$PATH\""
+        },
+        {
+          "line": 24,
+          "text": "# MacPorts Installer addition on 2024-08-20_at_13:08:41: adding an appropriate PATH variable for use with MacPorts."
+        },
+        {
+          "line": 25,
+          "text": "export PATH=\"/opt/local/bin:/opt/local/sbin:$PATH\""
+        },
+        {
+          "line": 26,
+          "text": "# Finished adapting your PATH environment variable for use with MacPorts."
+        },
+        {
+          "line": 31,
+          "text": "export PATH=\"/Users/tzoharlary/Library/Python/3.9/bin:$PATH\""
+        },
+        {
+          "line": 35,
+          "text": "export PATH=\"$PATH:/usr/local/bin\""
+        },
+        {
+          "line": 44,
+          "text": ". \"$HOME/.local/bin/env\""
+        }
+      ]
+    },
+    {
+      "path": "/Users/tzoharlary/.local/bin/env",
+      "exists": true,
+      "mtime_utc": "2025-11-06T13:21:23.845425+00:00",
+      "matching_lines": [
+        {
+          "line": 2,
+          "text": "# add binaries to PATH if they aren't added yet"
+        },
+        {
+          "line": 3,
+          "text": "# affix colons on either side of $PATH to simplify matching"
+        },
+        {
+          "line": 4,
+          "text": "case \":${PATH}:\" in"
+        },
+        {
+          "line": 5,
+          "text": "    *:\"$HOME/.local/bin\":*)"
+        },
+        {
+          "line": 8,
+          "text": "        # Prepending path in case a system-installed binary needs to be overridden"
+        },
+        {
+          "line": 9,
+          "text": "        export PATH=\"$HOME/.local/bin:$PATH\""
+        }
+      ]
+    }
+  ],
+  "roots": [
+    {
+      "path": "/Users/tzoharlary/.local/bin",
+      "exists": true
+    },
+    {
+      "path": "/Users/tzoharlary/.deno/bin",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.nvm",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.fnm",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.local/share/fnm",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.volta",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.asdf",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/.local/share/mise",
+      "exists": false
+    },
+    {
+      "path": "/Users/tzoharlary/bin",
+      "exists": false
+    },
+    {
+      "path": "/opt/local/bin",
+      "exists": true
+    },
+    {
+      "path": "/Library/Frameworks/Node.framework",
+      "exists": false
+    }
+  ],
+  "candidates": [
+    {
+      "tool": "node",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/node",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/node",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:09:21.290040+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:09:21.290040+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "v26.12.0",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "node",
+      "path": "/usr/local/Cellar/node/26.0.0/bin/node",
+      "resolved_path": "/usr/local/Cellar/node/26.0.0/bin/node",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-03T15:01:28.283900+00:00",
+      "resolved_file_mtime_utc": "2026-06-03T15:01:28.283900+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": -6,
+        "stdout": "",
+        "stderr": "dyld[3236]: Library not loaded: /usr/local/opt/ada-url/lib/libada.3.dylib\n  Referenced from: <7A3A1C44-B808-3B2B-AB75-B012B8030765> /usr/local/Cellar/node/26.0.0/bin/node\n  Reason: tried: '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file)"
+      }
+    },
+    {
+      "tool": "node",
+      "path": "/usr/local/bin/node",
+      "resolved_path": "/usr/local/Cellar/node/26.0.0/bin/node",
+      "is_symlink": true,
+      "link_target": "../Cellar/node/26.0.0/bin/node",
+      "path_mtime_utc": "2026-06-03T15:01:30.712390+00:00",
+      "resolved_file_mtime_utc": "2026-06-03T15:01:28.283900+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": -6,
+        "stdout": "",
+        "stderr": "dyld[3236]: Library not loaded: /usr/local/opt/ada-url/lib/libada.3.dylib\n  Referenced from: <7A3A1C44-B808-3B2B-AB75-B012B8030765> /usr/local/Cellar/node/26.0.0/bin/node\n  Reason: tried: '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file)"
+      }
+    },
+    {
+      "tool": "node",
+      "path": "/usr/local/opt/node/bin/node",
+      "resolved_path": "/usr/local/Cellar/node/26.0.0/bin/node",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-03T15:01:28.283900+00:00",
+      "resolved_file_mtime_utc": "2026-06-03T15:01:28.283900+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": -6,
+        "stdout": "",
+        "stderr": "dyld[3236]: Library not loaded: /usr/local/opt/ada-url/lib/libada.3.dylib\n  Referenced from: <7A3A1C44-B808-3B2B-AB75-B012B8030765> /usr/local/Cellar/node/26.0.0/bin/node\n  Reason: tried: '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/opt/ada-url/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file), '/usr/local/Cellar/ada-url/4.0.0_1/lib/libada.3.dylib' (no such file)"
+      }
+    },
+    {
+      "tool": "npm",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/npm",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/npm",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:09:21.290887+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:09:21.290887+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "11.20.0",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "npm",
+      "path": "/usr/local/Cellar/node/26.0.0/bin/npm",
+      "resolved_path": "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "is_symlink": true,
+      "link_target": "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "path_mtime_utc": "2026-06-03T15:09:18.324532+00:00",
+      "resolved_file_mtime_utc": "2026-06-22T10:21:15.513122+00:00",
+      "exists": true,
+      "provenance_evidence": "independent_location_candidate",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "11.17.0",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "npm",
+      "path": "/usr/local/bin/npm",
+      "resolved_path": "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "is_symlink": true,
+      "link_target": "../lib/node_modules/npm/bin/npm-cli.js",
+      "path_mtime_utc": "2026-06-22T10:21:16.102985+00:00",
+      "resolved_file_mtime_utc": "2026-06-22T10:21:15.513122+00:00",
+      "exists": true,
+      "provenance_evidence": "independent_location_candidate",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "11.17.0",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "npm",
+      "path": "/usr/local/opt/node/bin/npm",
+      "resolved_path": "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "is_symlink": true,
+      "link_target": "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "path_mtime_utc": "2026-06-03T15:09:18.324532+00:00",
+      "resolved_file_mtime_utc": "2026-06-22T10:21:15.513122+00:00",
+      "exists": true,
+      "provenance_evidence": "independent_location_candidate",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "11.17.0",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "deno",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/deno",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/deno",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:12:13.906573+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:12:13.906573+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "deno 2.9.7 (stable, release, x86_64-apple-darwin)\nv8 15.0.245.2-rusty\ntypescript 6.0.3",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "deno",
+      "path": "/usr/local/Cellar/deno/2.7.14/bin/deno",
+      "resolved_path": "/usr/local/Cellar/deno/2.7.14/bin/deno",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-05-03T15:12:32.252404+00:00",
+      "resolved_file_mtime_utc": "2026-05-03T15:12:32.252404+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "deno 2.7.14 (stable, release, x86_64-apple-darwin)\nv8 14.7.173.20-rusty\ntypescript 5.9.2",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "deno",
+      "path": "/usr/local/opt/deno/bin/deno",
+      "resolved_path": "/usr/local/Cellar/deno/2.7.14/bin/deno",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-05-03T15:12:32.252404+00:00",
+      "resolved_file_mtime_utc": "2026-05-03T15:12:32.252404+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "deno 2.7.14 (stable, release, x86_64-apple-darwin)\nv8 14.7.173.20-rusty\ntypescript 5.9.2",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "ansible",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/ansible",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/ansible",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:11:45.153518+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:11:45.153518+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "ansible [core 2.21.5]\n  config file = None\n  configured module search path = ['/Users/tzoharlary/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']\n  ansible python module location = /Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default/lib/python3.14/site-packages/ansible\n  ansible collection location = /Users/tzoharlary/.ansible/collections:/usr/share/ansible/collections\n  executable location = /Users/tzoharlary/.local/share/brew-update-manager/active/ansible/bin/ansible\n  python version = 3.14.8 | packaged by conda-forge | (main, Oct 12 2026, 18:00:01) [Clang 20.1.8 ] (/Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default/bin/python3.14)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "ansible",
+      "path": "/usr/local/Cellar/ansible/13.6.0_1/bin/ansible",
+      "resolved_path": "/usr/local/Cellar/ansible/13.6.0_1/libexec/bin/ansible",
+      "is_symlink": true,
+      "link_target": "../libexec/bin/ansible",
+      "path_mtime_utc": "2026-04-21T15:18:00+00:00",
+      "resolved_file_mtime_utc": "2026-05-20T17:52:42.473334+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "ansible [core 2.20.5]\n  config file = None\n  configured module search path = ['/Users/tzoharlary/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']\n  ansible python module location = /usr/local/Cellar/ansible/13.6.0_1/libexec/lib/python3.14/site-packages/ansible\n  ansible collection location = /Users/tzoharlary/.ansible/collections:/usr/share/ansible/collections\n  executable location = /usr/local/Cellar/ansible/13.6.0_1/bin/ansible\n  python version = 3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.1.1.101)] (/usr/local/Cellar/ansible/13.6.0_1/libexec/bin/python)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "ansible",
+      "path": "/usr/local/opt/ansible/bin/ansible",
+      "resolved_path": "/usr/local/Cellar/ansible/13.6.0_1/libexec/bin/ansible",
+      "is_symlink": true,
+      "link_target": "../libexec/bin/ansible",
+      "path_mtime_utc": "2026-04-21T15:18:00+00:00",
+      "resolved_file_mtime_utc": "2026-05-20T17:52:42.473334+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "ansible [core 2.20.5]\n  config file = None\n  configured module search path = ['/Users/tzoharlary/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']\n  ansible python module location = /usr/local/Cellar/ansible/13.6.0_1/libexec/lib/python3.14/site-packages/ansible\n  ansible collection location = /Users/tzoharlary/.ansible/collections:/usr/share/ansible/collections\n  executable location = /usr/local/Cellar/ansible/13.6.0_1/bin/ansible\n  python version = 3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.1.1.101)] (/usr/local/Cellar/ansible/13.6.0_1/libexec/bin/python)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uv",
+      "path": "/Users/tzoharlary/.local/bin/uv",
+      "resolved_path": "/Users/tzoharlary/.local/bin/uv",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2025-10-30T22:12:20+00:00",
+      "resolved_file_mtime_utc": "2025-10-30T22:12:20+00:00",
+      "exists": true,
+      "provenance_evidence": "independent_location_candidate",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uv 0.9.7 (0adb44480 2025-10-30)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uv",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/uv",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/uv",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:11:57.153307+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:11:57.153307+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uv 0.13.1 (x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uv",
+      "path": "/usr/local/Cellar/uv/0.11.18/bin/uv",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uv",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uv 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uv",
+      "path": "/usr/local/bin/uv",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uv",
+      "is_symlink": true,
+      "link_target": "../Cellar/uv/0.11.18/bin/uv",
+      "path_mtime_utc": "2026-06-03T14:27:38.526982+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uv 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uv",
+      "path": "/usr/local/opt/uv/bin/uv",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uv",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uv 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uvx",
+      "path": "/Users/tzoharlary/.local/bin/uvx",
+      "resolved_path": "/Users/tzoharlary/.local/bin/uvx",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2025-10-30T22:12:20+00:00",
+      "resolved_file_mtime_utc": "2025-10-30T22:12:20+00:00",
+      "exists": true,
+      "provenance_evidence": "independent_location_candidate",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uvx 0.9.7 (0adb44480 2025-10-30)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uvx",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/uvx",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/uvx",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:11:57.154331+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:11:57.154331+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uvx 0.13.1 (x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uvx",
+      "path": "/usr/local/Cellar/uv/0.11.18/bin/uvx",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uvx",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uvx 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uvx",
+      "path": "/usr/local/bin/uvx",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uvx",
+      "is_symlink": true,
+      "link_target": "../Cellar/uv/0.11.18/bin/uvx",
+      "path_mtime_utc": "2026-06-03T14:27:38.527410+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uvx 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "uvx",
+      "path": "/usr/local/opt/uv/bin/uvx",
+      "resolved_path": "/usr/local/Cellar/uv/0.11.18/bin/uvx",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "resolved_file_mtime_utc": "2026-06-01T19:05:49+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "uvx 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "pandoc",
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/pandoc",
+      "resolved_path": "/Users/tzoharlary/.local/share/brew-update-manager/bin/pandoc",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-10-19T04:21:14.453975+00:00",
+      "resolved_file_mtime_utc": "2026-10-19T04:21:14.453975+00:00",
+      "exists": true,
+      "provenance_evidence": "managed_registry",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "pandoc 3.12.1\nFeatures: +server +lua\nScripting engine: Lua 5.4\nUser data directory: /Users/tzoharlary/.local/share/pandoc\nCopyright (C) 2006-2025 John MacFarlane. Web:  https://pandoc.org\nThis is free software; see the source for copying conditions. There is no\nwarranty, not even for merchantability or fitness for a particular purpose.",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "pandoc",
+      "path": "/usr/local/Cellar/pandoc/3.9.0.2/bin/pandoc",
+      "resolved_path": "/usr/local/Cellar/pandoc/3.9.0.2/bin/pandoc",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-04-26T08:14:18.405418+00:00",
+      "resolved_file_mtime_utc": "2026-04-26T08:14:18.405418+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "pandoc 3.9.0.2\nFeatures: +server +lua\nScripting engine: Lua 5.4\nUser data directory: /Users/tzoharlary/.local/share/pandoc\nCopyright (C) 2006-2025 John MacFarlane. Web:  https://pandoc.org\nThis is free software; see the source for copying conditions. There is no\nwarranty, not even for merchantability or fitness for a particular purpose.",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "pandoc",
+      "path": "/usr/local/bin/pandoc",
+      "resolved_path": "/usr/local/Cellar/pandoc/3.9.0.2/bin/pandoc",
+      "is_symlink": true,
+      "link_target": "../Cellar/pandoc/3.9.0.2/bin/pandoc",
+      "path_mtime_utc": "2026-04-26T08:14:18.546559+00:00",
+      "resolved_file_mtime_utc": "2026-04-26T08:14:18.405418+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "pandoc 3.9.0.2\nFeatures: +server +lua\nScripting engine: Lua 5.4\nUser data directory: /Users/tzoharlary/.local/share/pandoc\nCopyright (C) 2006-2025 John MacFarlane. Web:  https://pandoc.org\nThis is free software; see the source for copying conditions. There is no\nwarranty, not even for merchantability or fitness for a particular purpose.",
+        "stderr": ""
+      }
+    },
+    {
+      "tool": "pandoc",
+      "path": "/usr/local/opt/pandoc/bin/pandoc",
+      "resolved_path": "/usr/local/Cellar/pandoc/3.9.0.2/bin/pandoc",
+      "is_symlink": false,
+      "link_target": null,
+      "path_mtime_utc": "2026-04-26T08:14:18.405418+00:00",
+      "resolved_file_mtime_utc": "2026-04-26T08:14:18.405418+00:00",
+      "exists": true,
+      "provenance_evidence": "homebrew_cellar",
+      "version_probe": {
+        "exit_code": 0,
+        "stdout": "pandoc 3.9.0.2\nFeatures: +server +lua\nScripting engine: Lua 5.4\nUser data directory: /Users/tzoharlary/.local/share/pandoc\nCopyright (C) 2006-2025 John MacFarlane. Web:  https://pandoc.org\nThis is free software; see the source for copying conditions. There is no\nwarranty, not even for merchantability or fitness for a particular purpose.",
+        "stderr": ""
+      }
+    }
+  ],
+  "installer_receipts": {
+    "org.nodejs.npm.pkg": {
+      "exit_code": 0,
+      "stdout": "package-id: org.nodejs.npm.pkg\nversion: v10.9.2\nvolume: /\nlocation: /\ninstall-time: 1746581421",
+      "stderr": ""
+    },
+    "org.nodejs.node.pkg": {
+      "exit_code": 0,
+      "stdout": "package-id: org.nodejs.node.pkg\nversion: v22.15.0\nvolume: /\nlocation: /\ninstall-time: 1746581421",
+      "stderr": ""
+    }
+  },
+  "managed_registry": {
+    "node": {
+      "provider": "native",
+      "version": "26.12.0",
+      "prefix": "/Users/tzoharlary/.local/share/brew-update-manager/environments/node/1792382943096118000/prefix",
+      "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/node/1792382943096118000",
+      "executables": [
+        "node",
+        "npm",
+        "npx"
+      ],
+      "verified_at": 1792382961.2921479,
+      "probe_output": "v26.12.0"
+    },
+    "ansible": {
+      "provider": "pixi",
+      "version": "14.5.0",
+      "prefix": "/Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default",
+      "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000",
+      "executables": [
+        "ansible",
+        "ansible-playbook",
+        "ansible-galaxy",
+        "ansible-vault"
+      ],
+      "verified_at": 1792383105.157184,
+      "probe_output": "ansible [core 2.21.5]\n  config file = None\n  configured module search path = ['/Users/tzoharlary/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']\n  ansible python module location = /Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default/lib/python3.14/site-packages/ansible\n  ansible collection location = /Users/tzoharlary/.ansible/collections:/usr/share/ansible/collections\n  executable location = /Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default/bin/ansible\n  python version = 3.14.8 | packaged by conda-forge | (main, Oct 12 2026, 18:00:01) [Clang 20.1.8 ] (/Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/.pixi/envs/default/bin/python3.14)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)"
+    },
+    "uv": {
+      "provider": "pixi",
+      "version": "0.13.1",
+      "prefix": "/Users/tzoharlary/.local/share/brew-update-manager/environments/uv/1792383110454394000/.pixi/envs/default",
+      "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/uv/1792383110454394000",
+      "executables": [
+        "uv",
+        "uvx"
+      ],
+      "verified_at": 1792383117.1554601,
+      "probe_output": "uv 0.13.1 (x86_64-apple-darwin)"
+    },
+    "deno": {
+      "provider": "native",
+      "version": "2.9.7",
+      "prefix": "/Users/tzoharlary/.local/share/brew-update-manager/environments/deno/1792383123207719000/prefix",
+      "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/deno/1792383123207719000",
+      "executables": [
+        "deno"
+      ],
+      "verified_at": 1792383133.9074628,
+      "probe_output": "deno 2.9.7 (stable, release, x86_64-apple-darwin)\nv8 15.0.245.2-rusty\ntypescript 6.0.3"
+    },
+    "pandoc": {
+      "provider": "pixi",
+      "version": "3.12.1",
+      "prefix": "/Users/tzoharlary/.local/share/brew-update-manager/environments/pandoc/1792383588182922000/.pixi/envs/default",
+      "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/pandoc/1792383588182922000",
+      "executables": [
+        "pandoc"
+      ],
+      "verified_at": 1792383674.454885,
+      "probe_output": "pandoc 3.12.1\nFeatures: +server +lua\nScripting engine: Lua 5.4\nUser data directory: /Users/tzoharlary/.local/share/pandoc\nCopyright (C) 2006-2025 John MacFarlane. Web:  https://pandoc.org\nThis is free software; see the source for copying conditions. There is no\nwarranty, not even for merchantability or fitness for a particular purpose."
+    }
+  },
+  "prior_audit_homebrew_rows": [
+    {
+      "id": "formula:ansible",
+      "name": "ansible",
+      "kind": "formula",
+      "tap": "homebrew/core",
+      "installed": [
+        {
+          "version": "13.6.0_1",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "installed_versions": [
+        "13.6.0_1"
+      ],
+      "active_version": "13.6.0_1",
+      "linked_keg": null,
+      "keg_only": false,
+      "installed_on_request": true,
+      "installed_as_dependency": null,
+      "role": "requested_root",
+      "metadata_source": "brew_info_installed",
+      "latest_metadata_version": "14.5.0",
+      "current_metadata_dependencies": [
+        "certifi",
+        "cryptography",
+        "libsodium",
+        "libssh",
+        "libyaml",
+        "python@3.14",
+        "tree"
+      ],
+      "current_metadata_build_dependencies": [
+        "pkgconf",
+        "rust"
+      ],
+      "outdated": true,
+      "pinned": false,
+      "excluded_from_actions": false,
+      "installed_reverse_dependents": [],
+      "installed_direct_reverse_dependents": [],
+      "active_keg_direct_reverse_dependents": [],
+      "installed_reverse_dependent_count": 0
+    },
+    {
+      "id": "formula:deno",
+      "name": "deno",
+      "kind": "formula",
+      "tap": "homebrew/core",
+      "installed": [
+        {
+          "version": "2.7.14",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "installed_versions": [
+        "2.7.14"
+      ],
+      "active_version": "2.7.14",
+      "linked_keg": null,
+      "keg_only": false,
+      "installed_on_request": true,
+      "installed_as_dependency": false,
+      "role": "requested_root",
+      "metadata_source": "brew_info_installed",
+      "latest_metadata_version": "2.9.7",
+      "current_metadata_dependencies": [
+        "little-cms2",
+        "sqlite"
+      ],
+      "current_metadata_build_dependencies": [
+        "cmake",
+        "lld",
+        "llvm",
+        "ninja",
+        "pkgconf",
+        "rust"
+      ],
+      "outdated": true,
+      "pinned": false,
+      "excluded_from_actions": false,
+      "installed_reverse_dependents": [],
+      "installed_direct_reverse_dependents": [],
+      "active_keg_direct_reverse_dependents": [],
+      "installed_reverse_dependent_count": 0
+    },
+    {
+      "id": "formula:node",
+      "name": "node",
+      "kind": "formula",
+      "tap": "homebrew/core",
+      "installed": [
+        {
+          "version": "26.0.0",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "installed_versions": [
+        "26.0.0"
+      ],
+      "active_version": "26.0.0",
+      "linked_keg": "26.0.0",
+      "keg_only": false,
+      "installed_on_request": true,
+      "installed_as_dependency": null,
+      "role": "requested_root",
+      "metadata_source": "brew_info_installed",
+      "latest_metadata_version": "26.12.0",
+      "current_metadata_dependencies": [
+        "abseil",
+        "ada-url",
+        "brotli",
+        "c-ares",
+        "hdrhistogram_c",
+        "icu4c@78",
+        "libffi",
+        "libnghttp2",
+        "libuv",
+        "llhttp",
+        "merve",
+        "nbytes",
+        "openssl@4",
+        "simdjson",
+        "simdutf",
+        "sqlite",
+        "uvwasi",
+        "zstd",
+        "highway"
+      ],
+      "current_metadata_build_dependencies": [
+        "pkgconf",
+        "python@3.15",
+        "rust"
+      ],
+      "outdated": true,
+      "pinned": false,
+      "excluded_from_actions": false,
+      "installed_reverse_dependents": [
+        "mongodb-community"
+      ],
+      "installed_direct_reverse_dependents": [],
+      "active_keg_direct_reverse_dependents": [],
+      "installed_reverse_dependent_count": 1
+    },
+    {
+      "id": "formula:pandoc",
+      "name": "pandoc",
+      "kind": "formula",
+      "tap": "homebrew/core",
+      "installed": [
+        {
+          "version": "3.9.0.2",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": false,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "installed_versions": [
+        "3.9.0.2"
+      ],
+      "active_version": "3.9.0.2",
+      "linked_keg": "3.9.0.2",
+      "keg_only": false,
+      "installed_on_request": true,
+      "installed_as_dependency": false,
+      "role": "requested_root",
+      "metadata_source": "brew_info_installed",
+      "latest_metadata_version": "3.12.1",
+      "current_metadata_dependencies": [
+        "gmp"
+      ],
+      "current_metadata_build_dependencies": [
+        "cabal-install",
+        "ghc"
+      ],
+      "outdated": true,
+      "pinned": false,
+      "excluded_from_actions": false,
+      "installed_reverse_dependents": [],
+      "installed_direct_reverse_dependents": [],
+      "active_keg_direct_reverse_dependents": [],
+      "installed_reverse_dependent_count": 0
+    },
+    {
+      "id": "formula:uv",
+      "name": "uv",
+      "kind": "formula",
+      "tap": "homebrew/core",
+      "installed": [
+        {
+          "version": "0.11.18",
+          "active_keg": true,
+          "installed_on_request": true,
+          "installed_as_dependency": null,
+          "receipt_exists": true,
+          "install_status": "receipt_present"
+        }
+      ],
+      "installed_versions": [
+        "0.11.18"
+      ],
+      "active_version": "0.11.18",
+      "linked_keg": "0.11.18",
+      "keg_only": false,
+      "installed_on_request": true,
+      "installed_as_dependency": null,
+      "role": "requested_root",
+      "metadata_source": "brew_info_installed",
+      "latest_metadata_version": "0.13.1",
+      "current_metadata_dependencies": [],
+      "current_metadata_build_dependencies": [
+        "pkgconf",
+        "rust"
+      ],
+      "outdated": true,
+      "pinned": false,
+      "excluded_from_actions": false,
+      "installed_reverse_dependents": [],
+      "installed_direct_reverse_dependents": [],
+      "active_keg_direct_reverse_dependents": [],
+      "installed_reverse_dependent_count": 0
+    }
+  ],
+  "limitations": [
+    "Independent path is evidence of a separate installation, not proof of preferred user intent.",
+    "Historic installer receipts do not establish which current files came from that installer.",
+    "npm under /usr/local/lib/node_modules is outside Brew Cellar; its current writer is unproven.",
+    "Inherited shell PATH includes agent-provided environment; clean-environment login interactive shell removes this inherited PATH influence.",
+    "Absence applies only to enumerated locations and patterns.",
+    "Ansible --version reports ansible-core, not the community ansible distribution version.",
+    "npm --version used the existing PATH and therefore the managed Node runtime. Its success does not establish that the old Brew Node executable works."
+  ],
+  "important_findings": [
+    "Current /usr/local/bin/node resolves to Brew node 26.0.0 but --version aborts with missing /usr/local/opt/ada-url/lib/libada.3.dylib.",
+    "Non-managed npm 11.17.0 is a shared /usr/local/lib/node_modules/npm installation reached by both /usr/local/bin/npm and Brew node/bin/npm; version probe used currently managed Node via PATH.",
+    "Only uv/uvx independently located user binaries were found within enumerated roots; both are 0.9.7.",
+    "Managed tools are newer than measured earlier working copies; this does not prove the user wanted new duplicate environments."
+  ]
+}

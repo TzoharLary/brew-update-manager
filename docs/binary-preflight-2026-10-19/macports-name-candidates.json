@@ -1,0 +1,176 @@
+[
+  {
+    "homebrew_name": "cryptography",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "gnupg",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "gpgme",
+    "macports_candidates": [
+      "gpgme"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "gpgmepp",
+    "macports_candidates": [
+      "gpgmepp"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "include-what-you-use",
+    "macports_candidates": [
+      "include-what-you-use"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "libtensorflow",
+    "macports_candidates": [
+      "libtensorflow",
+      "tensorflow"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "llvm",
+    "macports_candidates": [
+      "llvm-23"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "merve",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "net-snmp",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "nmap",
+    "macports_candidates": [
+      "nmap"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "nss",
+    "macports_candidates": [
+      "nss"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "open-mpi",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "openjpeg",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "openldap",
+    "macports_candidates": [
+      "openldap"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "p11-kit",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "pango",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "php",
+    "macports_candidates": [
+      "php85"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "poppler",
+    "macports_candidates": [
+      "poppler"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "postgresql@17",
+    "macports_candidates": [
+      "postgresql17",
+      "postgresql17-server"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "py3cairo",
+    "macports_candidates": [
+      "py314-cairo",
+      "py313-cairo"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "simdjson",
+    "macports_candidates": [],
+    "mapping_status": "unmapped"
+  },
+  {
+    "homebrew_name": "socat",
+    "macports_candidates": [
+      "socat"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "terminal-notifier",
+    "macports_candidates": [
+      "terminal-notifier"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "tesseract",
+    "macports_candidates": [
+      "tesseract"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "unbound",
+    "macports_candidates": [
+      "unbound"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "wget",
+    "macports_candidates": [
+      "wget"
+    ],
+    "mapping_status": "candidate_mapping"
+  },
+  {
+    "homebrew_name": "whisper.cpp",
+    "macports_candidates": [
+      "whisper.cpp"
+    ],
+    "mapping_status": "candidate_mapping"
+  }
+]

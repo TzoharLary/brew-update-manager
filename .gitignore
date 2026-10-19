@@ -22,3 +22,7 @@ data/state.json
 .DS_Store
 .idea/
 .vscode/
+
+# Downloaded MacPorts installer and extracted vendor files (keep locally)
+/docs/macports-recovery-2026-10-19/MacPorts-2.12.7-26-Tahoe.pkg
+/docs/macports-recovery-2026-10-19/installer-expanded/

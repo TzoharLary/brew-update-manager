@@ -1,0 +1,29 @@
+| חבילה | מותקן | יעד האפליקציה | מועמד להמשך | סדר/גבול מעבר |
+|---|---|---|---|---|
+| cryptography | 48.0.0 | 50.0.2_2 | pixi-project | P2-library / python-library |
+| gnupg | 2.5.20 | 2.5.24_1 | pixi-project | P2-keyring / cli-and-agent-state |
+| gpgme | 2.1.0 | 2.2.0 | macports-cohort | P2-library / linked-c-library |
+| gpgmepp | 2.1.0 | 2.2.0 | macports-cohort | P2-library / linked-cpp-library |
+| include-what-you-use | 0.26 | 0.27 | pixi-project | P1-command / project-toolchain-command |
+| libtensorflow | 2.21.0 | 2.21.0_1 | hold-no-target-binary | P3-version-gap / linked-c-library |
+| llvm | 23.1.3_2 | 23.1.3_2 | pixi-project-or-macports-cohort | P0-broken-linkage / toolchain-and-linked-library |
+| merve | 1.2.2_1 | 1.2.2_4 | hold-source-or-consumer-migration | P0-broken-linkage / linked-cpp-library |
+| net-snmp | 5.9.5.2 | 5.9.5.2_2 | pixi-project | P2-library / library-cli-and-possible-service |
+| nmap | 7.99 | 7.992 | native-official | P1-command / cli-suite-and-privileged-features |
+| nss | 3.124 | 3.131 | macports-cohort | P2-library / linked-security-library |
+| open-mpi | 5.0.9 | 5.0.11 | pixi-project | P2-library / project-mpi-toolchain-and-library |
+| openjpeg | 2.5.4 | 2.5.4_1 | pixi-project | P2-library / linked-library-and-cli |
+| openldap | 2.6.13 | 2.7.1_1 | hold-no-target-binary | P3-version-gap / linked-library-and-possible-service |
+| p11-kit | 0.26.2 | 0.26.5 | pixi-project | P2-library / linked-library-and-trust-configuration |
+| pango | 1.57.1 | 1.58.2 | pixi-project | P2-library / linked-text-rendering-library |
+| php | 8.5.6 | 8.5.11_1 | macports-cohort | P2-runtime-service / runtime-extensions-and-possible-service |
+| poppler | 26.04.0 | 26.10.0 | hold-no-target-binary | P3-version-gap / pdf-cli-and-linked-library |
+| postgresql@17 | 17.10 | 17.11_1 | pixi-project-or-macports-service | P2-database / database-service-and-client |
+| py3cairo | 1.29.0 | 1.29.2_1 | pixi-project | P2-library / python-native-extension |
+| simdjson | 4.6.4 | 5.0.5 | pixi-project | P2-library / linked-cpp-library |
+| socat | 1.8.1.1 | 1.8.1.3 | pixi-isolated-cli | P1-command / cli |
+| terminal-notifier | 2.0.0 | 3.1.0 | native-official-or-macports | P1-command / notification-app-command |
+| tesseract | 5.5.2 | 5.5.3 | pixi-isolated-cli | P1-command / ocr-cli-library-and-language-data |
+| unbound | 1.25.0 | 1.26.1_1 | macports-service | P2-runtime-service / dns-service-and-library |
+| wget | 1.25.0 | 1.25.0_2 | pixi-isolated-cli | P1-command / cli |
+| whisper.cpp | 1.9.1 | 1.9.5 | hold-no-target-binary | P3-version-gap / cli-and-model-runtime |

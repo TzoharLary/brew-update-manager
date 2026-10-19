@@ -1,6 +1,6 @@
-# Brew Update Manager (Desktop macOS App)
+# Mac Update Manager (Desktop macOS App)
 
-Electron desktop app for managing Homebrew updates locally on macOS.
+Electron desktop app for Homebrew, MacPorts and managed tool updates on macOS.
 
 ## Distribution goal
 
@@ -24,6 +24,20 @@ The project is prepared to be published as a GitHub repository with downloadable
 - Automatic checks with user-configurable frequency/time (managed from app settings)
 - In-app Homebrew path settings (auto-detect + manual override)
 - Recent update history with search, filter, and sorting controls
+- Live update explanations in English/Hebrew: downloads, required packages,
+  source builds, and installation, with elapsed times and optional technical details.
+  Stages follow Homebrew output; silence is reported without claiming a stall or
+  inventing a completion percentage. Homebrew build logs can supply a task count
+  or compiler percentage; this is labelled separately from time remaining.
+- Persisted exclusions apply to every update entry point, counts and notifications.
+  Excluded software remains installed, labelled in the installed inventory.
+- Preflight checks the runtime dependency tree before using Homebrew bottles.
+  Binary-only mode defers unavailable/source builds with a visible reason.
+- Optional Pixi/conda-forge routes for selected CLI tools, official Intel/ARM
+  Node and Deno downloads with publisher SHA-256 verification, and a uv route
+  for Azure CLI. Isolated installations are activated only after runtime probes.
+- A durable run journal preserves completed results. A failed command stops the
+  batch before later packages can repeat the same failed shared build.
 
 ## Consolidated Project Layout
 
@@ -36,9 +50,55 @@ The project is prepared to be published as a GitHub repository with downloadable
 
 ## Runtime dependencies
 
-- Python 3.14 (auto-detected from common macOS paths or `PATH`)
+- Python 3.14 (prefers the app-owned `runtime/python/current/bin/python3.14`
+  under its Application Support directory, then common macOS paths or `PATH`)
 - Homebrew
-- Node + npm (Electron runtime)
+- Node + npm for development/builds; the installed app contains Electron.
+
+## Update routes and recovery
+
+The Update policy panel controls binary-only mode and explicit exclusions such
+as `cask:ngrok`. Missing binary routes remain outdated; deferral is not success.
+The app does not replace Homebrew libraries, migrate database data, remove
+formulae, or globally substitute compilers. Binary tool ownership is configured
+in `settings.json` (`binary_tools`); supported tool names live in
+`backend/update_routes.py`. The locally provisioned Pixi and uv executables live
+in the app's `runtime/bin/`, independently of Homebrew.
+
+Tools are staged under `~/.local/share/brew-update-manager/environments/`;
+verified commands are exposed through `~/.local/share/brew-update-manager/bin`.
+The local setup adds this directory to the user's zsh PATH and preserves prior
+startup files in its recovery receipt. Existing Homebrew installations remain.
+Ansible environments pin Python 3.14, avoiding an observed Python 3.15 startup
+failure. Azure CLI uses binary wheels with an explicit prerelease policy for its
+SDK dependencies; no PyPI source builds are allowed.
+
+Upgrades have no arbitrary two-hour limit by default. An optional
+`upgrade_timeout_seconds` setting accepts 60–86400 seconds (0 means unlimited).
+Cancellation still terminates the active process group. Homebrew automatic
+metadata refresh and install cleanup are disabled per command; Check Now
+explicitly refreshes metadata. Automatic dependent upgrades are disabled for
+planned Homebrew upgrades so that they cannot launch unplanned source builds.
+Tools with broken Homebrew linkage require separate diagnosis; an isolated CLI
+replacement does not repair the retained Homebrew keg.
+
+Managed tools remain in the inventory after their redundant Homebrew keg is
+removed. Their catalog metadata is currently still queried from Homebrew;
+independent provider release discovery remains part of the architecture plan.
+An adopted standalone uv installation updates in its existing user directory
+using `uv self update`, rather than creating another Pixi environment.
+See `docs/tool-installation-reconciliation-2026-10-19/README.md` for the measured
+local consolidation, preserved backups, and the retained Homebrew Node dependency.
+The subsequent `docs/macports-recovery-2026-10-19/README.md` records the consumer
+checks and removal of that redundant Node keg, its compatibility command link,
+and recovery of MacPorts 2.12.7 with binary-only installation policy. No Homebrew
+packages have been migrated to MacPorts as part of that recovery.
+
+`update-plan.json` records ready/deferred routes. `last-update-run.json` is
+written after every result, and completed results remain in update history.
+After a batch, inventory refresh reuses cached descriptions/dates rather than
+performing network enrichment. No previous successful update is reinstalled
+merely because the earlier batch was canceled.
 
 ## Run locally after clone (exact order)
 
@@ -91,9 +151,9 @@ Release artifacts are created under `dist/` for:
 
 Artifacts include:
 
-- `Homebrew Update Manager-<version>-<arch>.dmg`
-- `Homebrew Update Manager-<version>-<arch>-full.tar.gz`
-- `Homebrew Update Manager-<prev>-to-<version>-<arch>-delta.tar.gz` (when previous release assets are available — manifest full package or DMG fallback)
+- `Mac Update Manager-<version>-<arch>.dmg`
+- `Mac Update Manager-<version>-<arch>-full.tar.gz`
+- `Mac Update Manager-<prev>-to-<version>-<arch>-delta.tar.gz` (when previous release assets are available — manifest full package or DMG fallback)
 - `update-manifest.json`
 - `update-checksums.txt`
 
@@ -108,7 +168,7 @@ Release builds now run strict delta round-trip validation by default (`STRICT_DE
 ## Install from GitHub Release (for end users)
 
 1. Download the latest `.dmg` from the repository Releases page.
-2. Open the `.dmg` and drag **Homebrew Update Manager** into **Applications**.
+2. Open the `.dmg` and drag **Mac Update Manager** into **Applications**.
 3. Launch from **Applications**.
 
 If macOS blocks the first launch (unsigned build), open:
@@ -159,3 +219,17 @@ The release CI workflow already uploads these assets automatically.
 
 - Development mode: `./data/`
 - Packaged app mode: `~/Library/Application Support/Homebrew Update Manager/`
+
+Package upgrades also append both output streams to `logs/brew-upgrades.log`.
+The live panel keeps only the latest 12 lines in its collapsed technical details.
+
+Offline progress checks (do not run Homebrew):
+`python3 -m unittest discover -s tests -v`
+
+UI fixture checks in Hebrew and English (mock IPC, no backend):
+`node_modules/.bin/electron tests/progress-ui.cjs`
+
+
+## Mac Update Manager 1.2
+
+See [combined provider behavior and local rollout](docs/MAC_MANAGER.md).

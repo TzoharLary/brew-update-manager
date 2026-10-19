@@ -1,0 +1,81 @@
+{
+  "cryptography": [
+    "py314-cryptography"
+  ],
+  "gnupg": [
+    "gnupg2"
+  ],
+  "gpgme": [
+    "gpgme"
+  ],
+  "gpgmepp": [
+    "gpgmepp"
+  ],
+  "include-what-you-use": [
+    "include-what-you-use"
+  ],
+  "libtensorflow": [],
+  "llvm": [
+    "llvm-23",
+    "clang-23"
+  ],
+  "merve": [],
+  "net-snmp": [
+    "net-snmp"
+  ],
+  "nmap": [
+    "nmap"
+  ],
+  "nss": [
+    "nss"
+  ],
+  "open-mpi": [
+    "openmpi-default"
+  ],
+  "openjpeg": [
+    "openjpeg"
+  ],
+  "openldap": [
+    "openldap"
+  ],
+  "p11-kit": [
+    "p11-kit"
+  ],
+  "pango": [
+    "pango"
+  ],
+  "php": [
+    "php85"
+  ],
+  "poppler": [
+    "poppler"
+  ],
+  "postgresql@17": [
+    "postgresql17",
+    "postgresql17-server"
+  ],
+  "py3cairo": [
+    "py314-cairo"
+  ],
+  "simdjson": [
+    "simdjson"
+  ],
+  "socat": [
+    "socat"
+  ],
+  "terminal-notifier": [
+    "terminal-notifier"
+  ],
+  "tesseract": [
+    "tesseract"
+  ],
+  "unbound": [
+    "unbound"
+  ],
+  "wget": [
+    "wget"
+  ],
+  "whisper.cpp": [
+    "whisper.cpp"
+  ]
+}

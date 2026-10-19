@@ -31,6 +31,7 @@ const loaderProgressFillEl = document.getElementById('loaderProgressFill');
 const loaderPhaseValueEl = document.getElementById('loaderPhaseValue');
 const loaderCurrentValueEl = document.getElementById('loaderCurrentValue');
 const loaderEtaValueEl = document.getElementById('loaderEtaValue');
+const loaderStepEls = Array.from(document.querySelectorAll('#loaderSteps [data-step]'));
 const loaderCancelBtn = document.getElementById('loaderCancelBtn');
 const updateLivePanelEl = document.getElementById('updateLivePanel');
 const updateLiveTotalEl = document.getElementById('updateLiveTotal');
@@ -40,10 +41,6 @@ const updateLiveFailedEl = document.getElementById('updateLiveFailed');
 const updateLiveCompletedItemsEl = document.getElementById('updateLiveCompletedItems');
 const updateLiveRemainingItemsEl = document.getElementById('updateLiveRemainingItems');
 const updateLiveFailedItemsEl = document.getElementById('updateLiveFailedItems');
-const operationReportEl = document.getElementById('operationReport');
-const operationReportTitleEl = document.getElementById('operationReportTitle');
-const operationReportBodyEl = document.getElementById('operationReportBody');
-const operationReportCloseBtn = document.getElementById('operationReportCloseBtn');
 const checkNowBtn = document.getElementById('checkNowBtn');
 const updateAllBtn = document.getElementById('updateAllBtn');
 const updateSelectedBtn = document.getElementById('updateSelectedBtn');
@@ -96,7 +93,6 @@ const historyKindFilterEl = document.getElementById('historyKindFilter');
 const historyStatusFilterEl = document.getElementById('historyStatusFilter');
 const historySortSelectEl = document.getElementById('historySortSelect');
 const historyFiltersClearBtnEl = document.getElementById('historyFiltersClearBtn');
-const historyPanelEnabled = !!updateHistoryListEl;
 
 let progressPollTimer = null;
 let progressPollInFlight = false;
@@ -129,6 +125,21 @@ let lastKnownParallelCheckFinishedAt = '';
 const failedItemOpenKeys = new Set();
 
 const APP_UPDATE_AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const LOADER_PHASE_ORDER = [
+  'idle',
+  'starting',
+  'preparing',
+  'brew_update',
+  'updating_packages',
+  'collecting_outdated',
+  'collecting_installed',
+  'resolving_dates',
+  'translating_descriptions',
+  'canceled',
+  'completed',
+  'error',
+];
+
 function formatBytes(value) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -396,13 +407,13 @@ async function installAppUpdate() {
 }
 
 function isBrewPathConfigured() {
-  return !!String(settingsState?.settings?.brew_path || '').trim();
+  return !!String(settingsState?.settings?.brew_path || '').trim() || !!snapshot?.providers?.macports?.ok;
 }
 
 function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
   const selectedCount = selectedPackagesFromSnapshot().length;
-  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated).length;
+  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason).length;
   const operationRunning = !!lastKnownOperationRunning;
   const checkBlockedByBusy = !!busyLoading && !isUpdateOperationRunning();
 
@@ -440,7 +451,6 @@ function setLoading(on, messageKey = 'message.loadingState', params = {}) {
   busyLoading = !!on;
   loaderTextEl.textContent = i18n.t(messageKey, params);
   if (on) {
-    hideOperationReport();
     resetLoaderProgress();
     if (loaderEl) {
       loaderEl.classList.add('visible');
@@ -584,9 +594,7 @@ async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } 
     await syncParallelCheckState(parallelCheck, { showFeedback });
 
     await loadSettings();
-    if (historyPanelEnabled) {
-      await loadUpdateHistory();
-    }
+    await loadUpdateHistory();
 
     if (reloadState && !progress?.running && !parallelCheck?.running) {
       await loadState({ showLoader: false });
@@ -632,8 +640,6 @@ async function syncParallelCheckState(parallelCheck, { showFeedback = false } = 
     showMessage(i18n.t('message.checkParallelFailed', { error: lastError }), true);
     return;
   }
-
-  showCheckCompletionReport(snapshot || {});
 
   if (showFeedback || wasRunning) {
     showMessage(i18n.t('message.checkParallelCompleted'));
@@ -882,7 +888,50 @@ function renderFailedProgressList(container, items) {
   });
 }
 
+function renderPackageActivity(progress) {
+  const panel = document.getElementById('packageActivity');
+  if (!panel) return;
+  const activity = progress?.package_activity;
+  panel.hidden = !(progress?.running && progress.phase === 'updating_packages' && activity);
+  if (panel.hidden) return;
+  const subject = String(activity.subject || activity.target || '');
+  const target = String(activity.target || '');
+  const stage = ['preparing', 'downloading', 'dependency', 'building', 'installing', 'finishing']
+    .includes(activity.stage) ? activity.stage : 'preparing';
+  const dependency = subject !== target;
+  document.getElementById('packageActivityTitle').textContent = i18n.t(`progress.activityStage.${stage}`, { name: subject });
+  document.getElementById('packageActivityExplanation').textContent = i18n.t(
+    activity.provider && activity.provider !== 'homebrew' ? 'policy.providerActivity' : stage === 'building'
+      ? (dependency ? 'progress.activityBuildDependency' : 'progress.activityBuildTarget')
+      : (dependency ? 'progress.activityDependency' : 'progress.activityTarget'),
+    { name: subject, target, provider: activity.provider },
+  );
+  const secondsSince = (value) => {
+    const timestamp = Date.parse(value || '');
+    return Number.isFinite(timestamp) ? Math.max(0, Math.floor((Date.now() - timestamp) / 1000)) : 0;
+  };
+  const duration = (seconds) => i18n.t('progress.activityDuration', {
+    minutes: i18n.formatNumber(Math.floor(seconds / 60)),
+    seconds: i18n.formatNumber(seconds % 60),
+  });
+  document.getElementById('packageActivityTiming').textContent = i18n.t('progress.activityTiming', {
+    packageTime: duration(secondsSince(activity.started_at)),
+    stageTime: duration(secondsSince(activity.stage_started_at)),
+  });
+  const quietSeconds = secondsSince(activity.last_output_at || activity.started_at);
+  document.getElementById('packageActivityQuiet').textContent = quietSeconds >= 30
+    ? i18n.t('progress.activityQuiet', { time: duration(quietSeconds) })
+    : i18n.t('progress.activityNoEstimate');
+  const technical = document.getElementById('packageActivityTechnical');
+  const output = Array.isArray(activity.technical_tail) ? activity.technical_tail.join('\n') : '';
+  if (technical.textContent !== output) technical.textContent = output;
+  const measured = activity.build_progress;
+  document.getElementById('packageActivityBuildProgress').textContent = measured
+    ? i18n.t(measured.kind === 'reported_percent' ? 'policy.buildPercent' : 'policy.buildProgress', { done: i18n.formatNumber(measured.done), total: i18n.formatNumber(measured.total), percent: i18n.formatNumber(measured.percent) }) : '';
+}
+
 function renderUpdateLivePanel(progress) {
+  renderPackageActivity(progress);
   if (!updateLivePanelEl) return;
 
   const operationName = String(progress?.operation_name || '').trim().toLowerCase();
@@ -890,6 +939,10 @@ function renderUpdateLivePanel(progress) {
   const completed = Array.isArray(progress?.completed_packages) ? progress.completed_packages : [];
   const remaining = Array.isArray(progress?.remaining_packages) ? progress.remaining_packages : [];
   const failed = Array.isArray(progress?.failed_packages) ? progress.failed_packages : [];
+  const deferred = Array.isArray(progress?.deferred_packages) ? progress.deferred_packages : [];
+  const deferredEl = document.getElementById('deferredUpdateSummary');
+  deferredEl.hidden = deferred.length === 0;
+  deferredEl.textContent = i18n.t('policy.deferred', { count: i18n.formatNumber(deferred.length), names: deferred.map(p => p.name).join(', ') });
   const isUpdateOperation = operationName.startsWith('update');
 
   if (!isUpdateOperation) {
@@ -912,147 +965,6 @@ function renderUpdateLivePanel(progress) {
   renderSimpleProgressList(updateLiveCompletedItemsEl, completed, { mode: 'completed' });
   renderSimpleProgressList(updateLiveRemainingItemsEl, remaining, { mode: 'generic' });
   renderFailedProgressList(updateLiveFailedItemsEl, failed);
-}
-
-function hideOperationReport() {
-  if (!operationReportEl) return;
-  operationReportEl.classList.remove('visible');
-  if (operationReportTitleEl) operationReportTitleEl.textContent = '';
-  if (operationReportBodyEl) operationReportBodyEl.innerHTML = '';
-}
-
-function makeOperationReportSection(title, items, emptyText) {
-  const section = document.createElement('section');
-  section.className = 'operation-report-section';
-
-  const heading = document.createElement('h4');
-  heading.textContent = title;
-  section.appendChild(heading);
-
-  const list = Array.isArray(items) ? items.filter((item) => String(item || '').trim()) : [];
-  if (!list.length) {
-    const empty = document.createElement('div');
-    empty.className = 'operation-report-empty';
-    empty.textContent = String(emptyText || i18n.t('report.noneItems'));
-    section.appendChild(empty);
-    return section;
-  }
-
-  const ul = document.createElement('ul');
-  ul.className = 'operation-report-list';
-  list.forEach((item) => {
-    const li = document.createElement('li');
-    li.textContent = String(item || '');
-    ul.appendChild(li);
-  });
-  section.appendChild(ul);
-  return section;
-}
-
-function showOperationReport({ title, sections }) {
-  if (!operationReportEl || !operationReportTitleEl || !operationReportBodyEl) return;
-
-  operationReportTitleEl.textContent = String(title || i18n.t('report.operationSummary'));
-  operationReportBodyEl.innerHTML = '';
-
-  const safeSections = Array.isArray(sections) ? sections : [];
-  safeSections.forEach((section) => {
-    const root = makeOperationReportSection(
-      section?.title,
-      section?.items,
-      section?.emptyText,
-    );
-    operationReportBodyEl.appendChild(root);
-  });
-
-  if (!operationReportBodyEl.childElementCount) {
-    operationReportBodyEl.appendChild(
-      makeOperationReportSection(
-        i18n.t('report.operationSummary'),
-        [],
-        i18n.t('report.noneItems'),
-      ),
-    );
-  }
-
-  operationReportEl.classList.add('visible');
-}
-
-function reportPackageLabel(item) {
-  const name = String(item?.name || '').trim() || i18n.t('common.unknown');
-  const kind = kindLabel(item?.kind);
-  return `${name} (${kind})`;
-}
-
-function showCheckCompletionReport(snapshotData) {
-  const packages = Array.isArray(snapshotData?.packages) ? snapshotData.packages : [];
-  const outdated = packages
-    .filter((pkg) => pkg?.outdated)
-    .map((pkg) => String(pkg?.name || '').trim() || i18n.t('common.unknown'))
-    .sort((a, b) => compareTextValues(a, b, 'asc'));
-
-  const maxItems = 40;
-  const visible = outdated.slice(0, maxItems);
-  const extraCount = Math.max(0, outdated.length - visible.length);
-  if (extraCount > 0) {
-    visible.push(i18n.t('report.moreItems', { count: i18n.formatNumber(extraCount) }));
-  }
-
-  showOperationReport({
-    title: i18n.t('report.checkSummaryTitle'),
-    sections: [
-      {
-        title: i18n.t('report.outdatedPackages'),
-        items: visible,
-        emptyText: i18n.t('report.noneOutdated'),
-      },
-    ],
-  });
-}
-
-function showUpdateCompletionReport(results, { includeSkipped = false } = {}) {
-  const list = Array.isArray(results) ? results : [];
-
-  const updated = list
-    .filter((item) => item?.ok && !item?.skipped)
-    .map((item) => reportPackageLabel(item));
-  const failed = list
-    .filter((item) => !item?.ok && !item?.skipped)
-    .map((item) => `${reportPackageLabel(item)} — ${failureHumanExplanation(item)}`);
-  const skipped = includeSkipped
-    ? list
-      .filter((item) => item?.skipped)
-      .map((item) => `${reportPackageLabel(item)} — ${skippedReasonLabel(item?.reason)}`)
-    : [];
-
-  const sections = [
-    {
-      title: i18n.t('report.updatedPackages'),
-      items: updated,
-      emptyText: i18n.t('report.noneUpdated'),
-    },
-  ];
-
-  if (failed.length > 0) {
-    sections.push({
-      title: i18n.t('report.failedPackages'),
-      items: failed,
-      emptyText: i18n.t('report.noneFailed'),
-    });
-  }
-
-  if (skipped.length > 0) {
-    sections.push({
-      title: i18n.t('report.skippedPackages'),
-      items: skipped,
-      emptyText: i18n.t('report.noneSkipped'),
-    });
-  }
-
-  showOperationReport({
-    title: i18n.t('report.updateSummaryTitle'),
-    sections,
-  });
 }
 
 function setUpdateHistoryStatus(text, isError = false) {
@@ -1159,6 +1071,9 @@ function updateSchedulerFieldVisibility() {
 }
 
 function renderSettings() {
+  const policy = settingsState?.settings || {};
+  document.getElementById('binaryOnlyInput').checked = policy.binary_only !== false;
+  document.getElementById('excludedPackagesInput').value = (policy.excluded_packages || []).join(', ');
   const scheduler = settingsState?.scheduler;
   const brewPath = String(settingsState?.settings?.brew_path || '');
 
@@ -1288,6 +1203,9 @@ function resetLoaderProgress() {
   if (loaderPhaseValueEl) loaderPhaseValueEl.textContent = i18n.t('progress.phase.idle');
   if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = i18n.t('progress.currentNone');
   if (loaderEtaValueEl) loaderEtaValueEl.textContent = i18n.t('common.dash');
+  loaderStepEls.forEach((stepEl) => {
+    stepEl.classList.remove('active', 'done');
+  });
 
   if (loaderCancelBtn) {
     loaderCancelBtn.disabled = true;
@@ -1329,64 +1247,23 @@ function progressPhaseLabel(phase) {
   return translated === key ? i18n.t('progress.phase.idle') : translated;
 }
 
-function progressLoaderTitle(operationName, progress) {
-  const op = String(operationName || '').trim();
-  if (op.startsWith('update')) {
-    return i18n.t('message.runningUpdateSimple');
-  }
-  if (op.startsWith('check')) {
-    return i18n.t('message.runningCheckSimple');
-  }
-  return progress.message || i18n.t('message.runningCheckSimple');
-}
+function renderLoaderSteps(phase) {
+  const currentIndex = LOADER_PHASE_ORDER.indexOf(String(phase || 'idle'));
+  loaderStepEls.forEach((stepEl) => {
+    stepEl.classList.remove('active', 'done');
+    const step = String(stepEl.dataset.step || '').trim();
+    const stepIndex = LOADER_PHASE_ORDER.indexOf(step);
+    if (stepIndex === -1 || currentIndex === -1) return;
 
-function progressPhaseSummary(operationName, phase, done, total, running) {
-  const op = String(operationName || '').trim();
-  const totalSafe = Math.max(0, Number(total || 0));
-  const doneSafe = Math.max(0, Number(done || 0));
-
-  if (op.startsWith('update')) {
-    if (phase === 'brew_update') {
-      return i18n.t('progress.updatePhaseBrewUpdate');
+    if (stepIndex < currentIndex) {
+      stepEl.classList.add('done');
+      return;
     }
 
-    if (totalSafe <= 0) {
-      return i18n.t('progress.updateNoPackages');
+    if (stepIndex === currentIndex) {
+      stepEl.classList.add('active');
     }
-
-    const current = running
-      ? Math.min(totalSafe, Math.max(1, doneSafe + 1))
-      : Math.min(totalSafe, Math.max(0, doneSafe));
-    return i18n.t('progress.updatePhasePackageCounter', {
-      current: i18n.formatNumber(current),
-      total: i18n.formatNumber(totalSafe),
-    });
-  }
-
-  if (op.startsWith('check')) {
-    if (totalSafe <= 1 && running) {
-      return i18n.t('progress.checkPreparing');
-    }
-    const current = Math.min(totalSafe, Math.max(0, doneSafe));
-    return i18n.t('progress.checkPhasePackageCounter', {
-      current: i18n.formatNumber(current),
-      total: i18n.formatNumber(totalSafe),
-    });
-  }
-
-  return progressPhaseLabel(phase);
-}
-
-function progressCurrentItem(operationName, progress, total) {
-  const current = String(progress.current_package || '').trim();
-  const op = String(operationName || '').trim();
-  const totalSafe = Math.max(0, Number(total || 0));
-
-  if (op.startsWith('check') && totalSafe <= 1) {
-    return i18n.t('progress.currentNone');
-  }
-
-  return current || i18n.t('progress.currentNone');
+  });
 }
 
 function renderCheckProgress(progress) {
@@ -1396,7 +1273,8 @@ function renderCheckProgress(progress) {
 
   lastKnownOperationRunning = !!progress.running;
   lastKnownOperationName = String(progress.operation_name || '').trim().toLowerCase();
-  if (progress.running) {
+  if (progress.running || (String(progress.operation_name || '').startsWith('update') &&
+      ((progress.planned_packages || []).length || (progress.deferred_packages || []).length))) {
     loaderEl.classList.add('visible');
   }
 
@@ -1411,38 +1289,35 @@ function renderCheckProgress(progress) {
   const percent = Number(progress.percent ?? (total > 0 ? Math.round((done / total) * 100) : 0));
   const clampedPercent = Math.max(0, Math.min(100, percent));
   loaderProgressFillEl.style.width = `${clampedPercent}%`;
-  const operationName = String(progress.operation_name || '').trim().toLowerCase();
-  const phase = String(progress.phase || '').trim().toLowerCase();
-  const isCheckOperation = operationName.startsWith('check');
 
-  const phaseLabel = progressPhaseSummary(operationName, phase, done, total, !!progress.running);
-  const showNumericSummary = total > 0 && (!isCheckOperation || total > 1 || !progress.running);
-  const countLabel = showNumericSummary
+  const phaseLabel = progressPhaseLabel(progress.phase);
+  const countLabel = total > 0
     ? i18n.t('progress.summary', {
       done: i18n.formatNumber(done),
       total: i18n.formatNumber(total),
       percent: i18n.formatNumber(clampedPercent),
     })
-    : (isCheckOperation && !!progress.running
-      ? i18n.t('progress.summaryPreparingCheck')
-      : i18n.t('progress.summaryUnknown'));
+    : i18n.t('progress.summaryUnknown');
   const etaText = typeof progress.eta_seconds === 'number' && progress.eta_seconds > 0
     ? i18n.t('progress.eta', { eta: formatEta(progress.eta_seconds) })
-    : (progress.running ? i18n.t('progress.noEta') : i18n.t('progress.doneNow'));
-  const current = progressCurrentItem(operationName, progress, total);
+    : (progress.running ? i18n.t('progress.noEta') :
+        (progress.phase === 'completed' ? i18n.t('progress.doneNow') : '—'));
+  const current = String(progress.current_package || '').trim();
 
-  loaderTextEl.textContent = progressLoaderTitle(operationName, progress);
+  loaderTextEl.textContent = progress.message || i18n.t('message.runningCheck');
   if (loaderPercentEl) loaderPercentEl.textContent = `${clampedPercent}%`;
   if (loaderPhaseValueEl) loaderPhaseValueEl.textContent = phaseLabel;
-  if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = current;
+  if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = current || (progress.running ? i18n.t('progress.currentNone') : '—');
   if (loaderEtaValueEl) loaderEtaValueEl.textContent = etaText;
 
   if (loaderCancelBtn) {
+    const operationName = String(progress.operation_name || '').trim().toLowerCase();
     const canCancel = !!progress.running && !!operationName;
     const cancelAlreadyRequested = !!progress.cancel_requested;
     loaderCancelBtn.disabled = !canCancel || cancelInFlight || cancelAlreadyRequested;
   }
 
+  renderLoaderSteps(progress.phase);
   renderUpdateLivePanel(progress);
 
   loaderProgressMetaEl.textContent = countLabel;
@@ -1458,11 +1333,15 @@ function renderCheckProgress(progress) {
   }
 }
 
+let progressPollEpoch = 0;
+
 async function pollCheckProgress() {
+  const epoch = progressPollEpoch;
   if (progressPollInFlight) return;
   progressPollInFlight = true;
   try {
     const payload = await window.brewApp.getProgress();
+    if (epoch !== progressPollEpoch) return;
     if (payload?.progress) {
       renderCheckProgress(payload.progress);
     }
@@ -1470,7 +1349,7 @@ async function pollCheckProgress() {
   } catch {
     // Ignore transient polling errors while check is in progress.
   } finally {
-    progressPollInFlight = false;
+    if (epoch === progressPollEpoch) progressPollInFlight = false;
   }
 }
 
@@ -1481,6 +1360,7 @@ function startProgressPolling() {
 }
 
 function stopProgressPolling() {
+  progressPollEpoch += 1;
   if (progressPollTimer) {
     clearInterval(progressPollTimer);
     progressPollTimer = null;
@@ -1605,19 +1485,19 @@ function packageSelectionKeyFromPkg(pkg) {
 function selectedPackagesFromSnapshot() {
   const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   return pkgs
-    .filter((pkg) => pkg?.outdated && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))
+    .filter((pkg) => !pkg?.excluded && !pkg?.update_block_reason && pkg?.outdated && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))
     .map((pkg) => ({
       name: String(pkg?.name || '').trim(),
       kind: packageKindValue(pkg),
     }))
-    .filter((pkg) => pkg.name && (pkg.kind === 'formula' || pkg.kind === 'cask'));
+    .filter((pkg) => pkg.name && (pkg.kind === 'formula' || pkg.kind === 'cask' || pkg.kind === 'port' || pkg.kind === 'tool'));
 }
 
 function pruneSelectedPackages() {
   const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   const validKeys = new Set(
     pkgs
-      .filter((pkg) => pkg?.outdated)
+      .filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason)
       .map((pkg) => packageSelectionKeyFromPkg(pkg))
       .filter(Boolean),
   );
@@ -1646,7 +1526,7 @@ function updateSelectionSummary(filteredList = null) {
   }
 
   const visibleList = Array.isArray(filteredList) ? filteredList : getFilteredPackages();
-  const visibleOutdated = visibleList.filter((pkg) => pkg?.outdated).length;
+  const visibleOutdated = visibleList.filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason).length;
   const operationRunning = !!lastKnownOperationRunning;
 
   if (selectVisibleOutdatedBtn) {
@@ -1669,7 +1549,7 @@ function togglePackageSelected(pkg, shouldSelect) {
 }
 
 function selectVisibleOutdated() {
-  const visible = getFilteredPackages().filter((pkg) => pkg?.outdated);
+  const visible = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason);
   if (!visible.length) return;
   visible.forEach((pkg) => {
     const key = packageSelectionKeyFromPkg(pkg);
@@ -2065,10 +1945,6 @@ function renderHistoryPanel() {
 }
 
 async function loadUpdateHistory() {
-  if (!historyPanelEnabled) {
-    return;
-  }
-
   historyLoadInFlight = true;
   historyLoadError = '';
   renderHistoryPanel();
@@ -2099,6 +1975,8 @@ function formatDaysOutdated(pkg) {
 }
 
 function kindLabel(kind) {
+  if (kind === 'port') return 'MacPorts';
+  if (kind === 'tool') return i18n.lang === 'he' ? 'כלי מנוהל' : 'Managed tool';
   const value = String(kind || 'formula');
   if (i18n.lang !== 'he') {
     return value;
@@ -2160,6 +2038,11 @@ function getFilteredPackages() {
 }
 
 function renderTable() {
+  renderMacManager();
+  const deferred = (snapshot?.update_plan?.items || []).filter(p => !p.ready && (snapshot?.packages || []).some(x => x.outdated && x.name === p.name));
+  document.getElementById('updatePolicySummary').textContent = i18n.t('policy.summary', {
+    excluded: i18n.formatNumber(snapshot?.counts?.excluded_total || 0), managed: i18n.formatNumber(snapshot?.counts?.managed_total || 0), deferred: i18n.formatNumber(deferred.length),
+  });
   renderTableSortIndicators();
   pruneSelectedPackages();
 
@@ -2223,6 +2106,12 @@ function renderTable() {
 
     const tdKind = document.createElement('td');
     tdKind.innerHTML = `<span class="kind">${kindLabel(pkg.kind)}</span>`;
+    if (pkg.provider) {
+      const provider = document.createElement('div');
+      provider.className = 'small muted';
+      provider.textContent = i18n.t('policy.provider', { provider: pkg.provider });
+      tdKind.appendChild(provider);
+    }
 
     const tdCurrentVersion = document.createElement('td');
     tdCurrentVersion.className = 'mono small';
@@ -2248,9 +2137,18 @@ function renderTable() {
     tdStatus.innerHTML = pkg.outdated
       ? `<span class="status-warn">${i18n.t('status.needsUpdate')}</span>`
       : `<span class="status-ok">${i18n.t('status.upToDate')}</span>`;
+    if (pkg.excluded) tdStatus.textContent = i18n.t('policy.excludedStatus');
+    else if (pkg.update_block_reason) tdStatus.textContent = i18n.t('policy.deferredStatus');
 
+    if (pkg.alternative_status) {
+      const alternative = document.createElement('div'); alternative.className='small muted';
+      alternative.textContent = macAlternativeLabel(pkg.alternative_status);
+      if(pkg.alternative_target)alternative.textContent+=` · ${pkg.installed_version} → ${pkg.alternative_target}`;
+      alternative.title = pkg.alternative_detail || '';
+      tdStatus.appendChild(alternative);
+    }
     const tdSelect = document.createElement('td');
-    if (pkg.outdated) {
+    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason) {
       const wrap = document.createElement('label');
       wrap.className = 'row-select-wrap';
 
@@ -2272,7 +2170,7 @@ function renderTable() {
     }
 
     const tdAction = document.createElement('td');
-    if (pkg.outdated) {
+    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason) {
       const btn = document.createElement('button');
       btn.className = 'row-update-btn';
       btn.textContent = i18n.t('buttons.update');
@@ -2359,9 +2257,12 @@ async function loadState({ showLoader = true } = {}) {
   }
 }
 
+function showCheckResult(state) {
+  showMessage(i18n.t(state?.partial ? 'message.checkPartial' : 'message.checkSuccess'), !!state?.partial);
+}
+
 async function checkNow() {
   if (!ensureBrewConfiguredForActions()) return;
-  hideOperationReport();
   clearMessage();
 
   let liveProgress = null;
@@ -2397,8 +2298,7 @@ async function checkNow() {
         renderCards(snapshot);
         renderTable();
         updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
-        showMessage(i18n.t('message.checkSuccess'));
-        showCheckCompletionReport(snapshot);
+        showCheckResult(snapshot);
       } else {
         showMessage(i18n.t('message.statusRefreshed'));
       }
@@ -2409,16 +2309,19 @@ async function checkNow() {
     return;
   }
 
-  setLoading(true, 'message.runningCheckSimple');
+  setLoading(true, 'message.runningCheck');
   startProgressPolling();
   try {
     const res = await window.brewApp.runCheckNow();
+    if (res?.canceled) {
+      showMessage(i18n.t('message.checkCanceled'));
+      return;
+    }
     snapshot = res.snapshot || res;
     renderCards(snapshot);
     renderTable();
     updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
-    showMessage(i18n.t('message.checkSuccess'));
-    showCheckCompletionReport(snapshot);
+    showCheckResult(snapshot);
   } catch (err) {
     showMessage(i18n.t('message.checkFailed', { error: formatOperationErrorMessage(err) }), true);
     if (/fetch failed/i.test(String(err?.message || ''))) {
@@ -2426,6 +2329,10 @@ async function checkNow() {
     }
   } finally {
     stopProgressPolling();
+    try {
+      const finalStatus = await window.brewApp.getProgress();
+      if (finalStatus?.progress) renderCheckProgress(finalStatus.progress);
+    } catch { /* Keep the last known status when the service is unavailable. */ }
     setLoading(false, 'message.loadingState');
   }
 }
@@ -2452,11 +2359,6 @@ async function updateOne(name, kind, sourceBtn = null) {
 
     if (res?.result?.ok) {
       let messageText = i18n.t('message.updateOneSuccess', { name });
-      if (res?.brew_update_warning) {
-        messageText = `${messageText}\n${i18n.t('message.brewUpdateWarning', {
-          error: res.brew_update_warning,
-        })}`;
-      }
       if (res?.inventory_refresh_error) {
         messageText = `${messageText}\n${i18n.t('message.inventoryRefreshWarning', {
           error: res.inventory_refresh_error,
@@ -2471,11 +2373,11 @@ async function updateOne(name, kind, sourceBtn = null) {
         alert(i18n.t('message.updateOneLatestConfirmed', { name, version }));
       }
     } else {
-      const detail = res?.result?.stderr || res?.result?.stdout || res?.brew_update_warning || i18n.t('common.unknown');
+      const detail = res?.result?.stderr || res?.result?.stdout || i18n.t('common.unknown');
       showMessage(i18n.t('message.updateOneFailed', { name, error: detail }), true);
     }
 
-    showUpdateCompletionReport([res?.result || {}]);
+    await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateOneRequestFailed', { error: formatOperationErrorMessage(err) }), true);
     if (/fetch failed/i.test(String(err?.message || ''))) {
@@ -2548,12 +2450,6 @@ ${i18n.t('message.inventoryRefreshWarning', {
       })}`;
     }
 
-    if (res?.brew_update_warning) {
-      messageText = `${messageText}\n${i18n.t('message.brewUpdateWarning', {
-        error: res.brew_update_warning,
-      })}`;
-    }
-
     showMessage(messageText, Number(res?.failed_count || 0) > 0);
 
     const verifiedLatestCount = results.reduce((acc, result) => {
@@ -2565,7 +2461,7 @@ ${i18n.t('message.inventoryRefreshWarning', {
       alert(i18n.t('message.updateSelectedLatestConfirmed', { count: i18n.formatNumber(verifiedLatestCount) }));
     }
 
-    showUpdateCompletionReport(res?.results || [], { includeSkipped: true });
+    await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateSelectedFailed', { error: formatOperationErrorMessage(err) }), true);
     if (/fetch failed/i.test(String(err?.message || ''))) {
@@ -2599,12 +2495,6 @@ async function updateAll() {
       failed: i18n.formatNumber(res.failed_count || 0),
     }));
 
-    if (res?.brew_update_warning) {
-      showMessage(`${msgEl.textContent}\n${i18n.t('message.brewUpdateWarning', {
-        error: res.brew_update_warning,
-      })}`);
-    }
-
     if (res?.inventory_refresh_error) {
       showMessage(`${msgEl.textContent}\n${i18n.t('message.inventoryRefreshWarning', {
         error: res.inventory_refresh_error,
@@ -2621,7 +2511,7 @@ async function updateAll() {
       alert(i18n.t('message.updateAllLatestConfirmed', { count: i18n.formatNumber(verifiedLatestCount) }));
     }
 
-    showUpdateCompletionReport(res?.results || []);
+    await loadUpdateHistory();
   } catch (err) {
     showMessage(i18n.t('message.updateAllFailed', { error: formatOperationErrorMessage(err) }), true);
     if (/fetch failed/i.test(String(err?.message || ''))) {
@@ -2820,7 +2710,6 @@ if (settingsBtn) settingsBtn.addEventListener('click', toggleSettingsModal);
 if (settingsModalCloseBtn) settingsModalCloseBtn.addEventListener('click', () => setSettingsModalOpen(false));
 if (settingsModalBackdropEl) settingsModalBackdropEl.addEventListener('click', () => setSettingsModalOpen(false));
 if (loaderCancelBtn) loaderCancelBtn.addEventListener('click', cancelCurrentOperation);
-if (operationReportCloseBtn) operationReportCloseBtn.addEventListener('click', hideOperationReport);
 checkAppUpdateBtn.addEventListener('click', () => checkAppUpdate({ silent: false }));
 installAppUpdateBtn.addEventListener('click', installAppUpdate);
 scheduleEnabledEl.addEventListener('change', updateSchedulerFieldVisibility);
@@ -2853,9 +2742,7 @@ initAppUpdateProgressBridge();
 
 async function initializeApp() {
   await loadSettings();
-  if (historyPanelEnabled) {
-    await loadUpdateHistory();
-  }
+  await loadUpdateHistory();
   applyActionAvailability();
   await loadState();
   await refreshRuntimeStatus({ showFeedback: false, reloadState: false });
@@ -2863,5 +2750,18 @@ async function initializeApp() {
   await checkAppUpdate({ silent: true });
   startAutoAppUpdateChecks();
 }
+
+document.getElementById('saveUpdatePolicyBtn').addEventListener('click', async () => {
+  const status = document.getElementById('updatePolicyStatus');
+  try {
+    const excluded = document.getElementById('excludedPackagesInput').value.split(',').map(x => x.trim()).filter(Boolean);
+    const payload = await window.brewApp.updatePolicy({
+      excluded_packages: excluded, binary_only: document.getElementById('binaryOnlyInput').checked,
+    });
+    settingsState = { ...settingsState, settings: payload.settings };
+    status.textContent = i18n.t('policy.saved');
+    await loadState();
+  } catch (error) { status.textContent = error.message; }
+});
 
 initializeApp();

@@ -1,0 +1,38 @@
+{
+  "backup": "/Users/tzoharlary/.local/share/brew-update-manager/recovery/macports-20261019T134415",
+  "node_files_verified": 1876,
+  "original_command_links": {
+    "node": {
+      "path": "/usr/local/bin/node",
+      "symlink": "../Cellar/node/26.0.0/bin/node",
+      "exists": true
+    },
+    "npm": {
+      "path": "/usr/local/bin/npm",
+      "symlink": "../lib/node_modules/npm/bin/npm-cli.js",
+      "exists": true
+    },
+    "npx": {
+      "path": "/usr/local/bin/npx",
+      "symlink": "../lib/node_modules/npm/bin/npx-cli.js",
+      "exists": true
+    }
+  },
+  "macports_ports_before": 0,
+  "macports_target_version": "2.12.7",
+  "macports_target_os": "26 Tahoe",
+  "node_target_version": "26.12.0",
+  "node_brew_removed": true,
+  "node_compatibility_link": "/Users/tzoharlary/.local/share/brew-update-manager/bin/node",
+  "node_post_checks": "node-after.json",
+  "installer_staged_path": "/private/tmp/brew-macports-79ns5kh9/MacPorts-2.12.7-26-Tahoe.pkg",
+  "installer_staged_log": "/private/tmp/brew-macports-79ns5kh9/installer.log",
+  "macports_install_success": true,
+  "macports_version_verified": "2.12.7",
+  "macports_source_build_policy": "never",
+  "macports_port_count_after": 0,
+  "macports_checks": "macports-validation.json",
+  "installer_digest": "588f14ccd3c6199559a070a80e6cddd6871721a08cc434775bf54378fd667910",
+  "installer_certificate": "Developer ID Installer: Joshua Root (QTA3A3B7F3)",
+  "installer_notarization": "trusted"
+}

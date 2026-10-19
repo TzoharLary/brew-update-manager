@@ -2,9 +2,12 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const net = require('node:net');
+const http = require('node:http');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { createAppUpdater } = require('./app-updater');
+
+app.setPath('userData', path.join(os.homedir(), 'Library', 'Application Support', 'Homebrew Update Manager'));
 
 const DEV_APP_ROOT = path.join(__dirname, '..');
 const PACKAGED_ASAR_ROOT = path.join(process.resourcesPath, 'app.asar');
@@ -48,6 +51,7 @@ let resolvedPythonBin = null;
 
 let mainWindow = null;
 let appUpdater = null;
+let ownedServiceChild = null;
 
 function broadcastAppUpdateProgress(payload) {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -80,6 +84,8 @@ function resolvePythonBin() {
   const fromEnv = process.env.PYTHON_BIN ? [process.env.PYTHON_BIN] : [];
   const candidates = [
     ...fromEnv,
+    path.join(os.homedir(), 'Library', 'Application Support', 'Homebrew Update Manager',
+      'runtime', 'python', 'current', 'bin', 'python3.14'),
     '/opt/homebrew/bin/python3.14',
     '/opt/homebrew/bin/python3',
     '/usr/local/bin/python3.14',
@@ -122,13 +128,28 @@ function serviceUrl(pathname) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = payload.detail || payload.error || `HTTP ${response.status}`;
-    throw new Error(detail);
-  }
-  return payload;
+  // Upgrade responses may legitimately take hours. Keep their connection open
+  // without fetch's response-header deadline; progress uses separate requests.
+  return new Promise((resolve, reject) => {
+    const headers = { ...(options.headers || {}) };
+    if (options.body) headers['Content-Length'] = Buffer.byteLength(options.body);
+    const request = http.request(url, { method: options.method || 'GET', headers, timeout: 0 }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('error', reject);
+      response.on('end', () => {
+        let payload;
+        try { payload = JSON.parse(body); } catch { reject(new Error('Invalid backend response')); return; }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(payload.detail || payload.error || `HTTP ${response.statusCode}`));
+        } else resolve(payload);
+      });
+    });
+    request.on('error', reject);
+    if (options.body) request.write(options.body);
+    request.end();
+  });
 }
 
 async function serviceHealthyOnPort(port) {
@@ -138,7 +159,7 @@ async function serviceHealthyOnPort(port) {
 
     const payload = await res.json().catch(() => null);
     if (!payload || typeof payload !== 'object') return false;
-    return payload.ok === true && payload.app === 'Homebrew Update Manager';
+    return payload.ok === true && payload.app === 'Mac Update Manager' && payload.protocol === 6;
   } catch {
     return false;
   }
@@ -201,10 +222,13 @@ async function ensureServiceRunning() {
     '--port',
     String(activeServicePort),
   ], {
-    detached: true,
+    detached: false,
     stdio: 'ignore',
   });
-  child.unref();
+  ownedServiceChild = child;
+  child.once('exit', () => {
+    if (ownedServiceChild === child) ownedServiceChild = null;
+  });
 
   for (let i = 0; i < 60; i += 1) {
     // eslint-disable-next-line no-await-in-loop
@@ -222,7 +246,7 @@ function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Homebrew Update Manager',
+    title: 'Mac Update Manager',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -274,14 +298,14 @@ app.whenReady().then(async () => {
     const marker = appUpdater.readAndConsumeUpdateMarker();
     if (marker?.status === 'rolled_back') {
       dialog.showErrorBox(
-        'Homebrew Update Manager',
+        'Mac Update Manager',
         'The previous app update failed to start correctly and was rolled back to the last working version.',
       );
     }
 
     await bootstrap();
   } catch (error) {
-    dialog.showErrorBox('Homebrew Update Manager', `Failed to start backend service:\n${error.message}`);
+    dialog.showErrorBox('Mac Update Manager', `Failed to start backend service:\n${error.message}`);
     app.quit();
     return;
   }
@@ -296,8 +320,14 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+  app.quit();
+});
+
+app.on('before-quit', () => {
+  if (ownedServiceChild && ownedServiceChild.exitCode === null) {
+    // The backend drains any active check/update before stopping its server.
+    ownedServiceChild.kill('SIGTERM');
+    ownedServiceChild = null;
   }
 });
 
@@ -305,6 +335,9 @@ ipcMain.handle('state:get', async () => fetchJson(serviceUrl('/api/state')));
 ipcMain.handle('progress:get', async () => fetchJson(serviceUrl('/api/progress')));
 ipcMain.handle('updates:history:get', async () => fetchJson(serviceUrl('/api/update-history')));
 ipcMain.handle('settings:get', async () => fetchJson(serviceUrl('/api/settings')));
+ipcMain.handle('settings:update-policy', async (_event, payload) => fetchJson(serviceUrl('/api/settings/update-policy'), {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}),
+}));
 ipcMain.handle('settings:scheduler:update', async (_event, payload) => fetchJson(serviceUrl('/api/settings/scheduler'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -359,3 +392,10 @@ ipcMain.handle('operation:cancel', async () => fetchJson(serviceUrl('/api/cancel
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({}),
 }));
+
+for (const [channel, endpoint] of [['migration:plan','/api/migrations/plan'],
+  ['migration:approve','/api/migrations/approve'], ['macports:sync','/api/macports/sync']]) {
+  ipcMain.handle(channel, async (_event, payload) => fetchJson(serviceUrl(endpoint), {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload || {}),
+  }));
+}

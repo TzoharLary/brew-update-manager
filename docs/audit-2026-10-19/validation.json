@@ -1,0 +1,23 @@
+{
+  "result": "passed",
+  "checks": [
+    "240 unique Homebrew identities",
+    "5 separate managed installations",
+    "27 deferred targets match application snapshot",
+    "ngrok excluded with no candidate route",
+    "all managed tools retain separately visible Brew records",
+    "unique installation IDs"
+  ],
+  "scope": "Artifact consistency only; no installation, benchmark, dependency solve or runtime test.",
+  "input_sha256": {
+    "inventory/homebrew-rows.json": "7262bbc36c8b6e041332b1d95e305ddc50ea37ba98d3ce394ae38bde31bb9e21",
+    "inventory/app-snapshot.json": "c28ce20e6204763c2d503c11529543f079dff125e381bd5d8c17a253c0e690f3",
+    "routes/deferred-route-matrix.json": "7cc5e079b0a946f5a7778f0417253227e32993007a9c4a761637bbad53a1cdd6",
+    "prior-root-candidates.json": "27eb1c87040ed72cd21f2293ced244fed850749ec5087acc69459d36625daf8b"
+  },
+  "row_counts_by_owner": {
+    "homebrew": 240,
+    "pixi": 3,
+    "native": 2
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "node",
+    "code": 0,
+    "stdout": "ok\n",
+    "stderr": ""
+  },
+  {
+    "name": "deno",
+    "code": 0,
+    "stdout": "example.com\n",
+    "stderr": ""
+  },
+  {
+    "name": "ansible",
+    "code": 0,
+    "stdout": "localhost | SUCCESS => {\n    \"ansible_facts\": {\n        \"discovered_interpreter_python\": \"/Users/tzoharlary/.local/share/brew-update-manager/active/ansible/bin/python3.14\"\n    },\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\n",
+    "stderr": "[WARNING]: Host 'localhost' is using the discovered Python interpreter at '/Users/tzoharlary/.local/share/brew-update-manager/active/ansible/bin/python3.14', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.\n"
+  },
+  {
+    "name": "pandoc",
+    "code": 0,
+    "stdout": "<h1 id=\"verified\">verified</h1>\n",
+    "stderr": ""
+  },
+  {
+    "name": "uv",
+    "code": 0,
+    "stdout": "uv 0.13.1 (62faed335 2026-10-13 x86_64-apple-darwin)\n",
+    "stderr": ""
+  }
+]

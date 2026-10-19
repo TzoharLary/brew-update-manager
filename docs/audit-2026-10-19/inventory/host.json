@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-10-19T05:48:42.817330+00:00",
+  "uname": {
+    "command": [
+      "/usr/bin/uname",
+      "-smr"
+    ],
+    "exit_code": 0,
+    "output": "Darwin 25.6.0 x86_64",
+    "stderr": ""
+  },
+  "macos": {
+    "command": [
+      "/usr/bin/sw_vers"
+    ],
+    "exit_code": 0,
+    "output": "ProductName:\t\tmacOS\nProductVersion:\t\t26.7.1\nBuildVersion:\t\t25G241",
+    "stderr": ""
+  },
+  "cpu": {
+    "command": [
+      "/usr/sbin/sysctl",
+      "-n",
+      "machdep.cpu.brand_string"
+    ],
+    "exit_code": 0,
+    "output": "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz",
+    "stderr": ""
+  },
+  "logical_cpus": {
+    "command": [
+      "/usr/sbin/sysctl",
+      "-n",
+      "hw.logicalcpu"
+    ],
+    "exit_code": 0,
+    "output": 16,
+    "stderr": ""
+  },
+  "memory_bytes": {
+    "command": [
+      "/usr/sbin/sysctl",
+      "-n",
+      "hw.memsize"
+    ],
+    "exit_code": 0,
+    "output": 17179869184,
+    "stderr": ""
+  }
+}

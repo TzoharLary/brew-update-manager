@@ -1,0 +1,387 @@
+{
+  "scope": "Bounded global-tool/env discovery only. No project traversal or package installation.",
+  "path_resolution": {
+    "uv": "/Users/tzoharlary/.local/share/brew-update-manager/bin/uv",
+    "pipx": null,
+    "pixi": null,
+    "conda": null,
+    "mise": null,
+    "pyenv": null,
+    "nvm": null,
+    "fnm": null,
+    "bun": "/Users/tzoharlary/.bun/bin/bun",
+    "npm": "/Users/tzoharlary/.local/share/brew-update-manager/bin/npm",
+    "node": "/Users/tzoharlary/.local/share/brew-update-manager/bin/node",
+    "cargo": null,
+    "rustup": null,
+    "gem": "/usr/bin/gem",
+    "pnpm": "/Users/tzoharlary/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback/pnpm"
+  },
+  "commands": [
+    {
+      "command": [
+        "/Users/tzoharlary/.local/share/brew-update-manager/bin/uv",
+        "--version"
+      ],
+      "exit_code": 0,
+      "output": "uv 0.13.1 (x86_64-apple-darwin)",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/share/brew-update-manager/bin/uv",
+        "tool",
+        "list"
+      ],
+      "exit_code": 0,
+      "output": "notebooklm-mcp-cli v0.9.11\n- nlm\n- notebooklm-mcp",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/runtime/bin/uv",
+        "--version"
+      ],
+      "exit_code": 0,
+      "output": "uv 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/runtime/bin/uv",
+        "tool",
+        "list"
+      ],
+      "exit_code": 0,
+      "output": "notebooklm-mcp-cli v0.9.11\n- nlm\n- notebooklm-mcp",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/bin/uv",
+        "--version"
+      ],
+      "exit_code": 0,
+      "output": "uv 0.9.7 (0adb44480 2025-10-30)",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/bin/uv",
+        "tool",
+        "list"
+      ],
+      "exit_code": 0,
+      "output": "notebooklm-mcp-cli v0.9.11\n- nlm\n- notebooklm-mcp",
+      "stderr": "WARN Broken interpreter cache entry at /Users/tzoharlary/.cache/uv/interpreter-v4/13d0300639fb5014/1b17f4b895e5f2c5.msgpack, removing: wrong msgpack marker FixArray(3)"
+    },
+    {
+      "command": [
+        "/usr/local/bin/uv",
+        "--version"
+      ],
+      "exit_code": 0,
+      "output": "uv 0.11.18 (Homebrew 2026-06-01 x86_64-apple-darwin)",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/usr/local/bin/uv",
+        "tool",
+        "list"
+      ],
+      "exit_code": 0,
+      "output": "notebooklm-mcp-cli v0.9.11\n- nlm\n- notebooklm-mcp",
+      "stderr": "WARN Broken interpreter cache entry at /Users/tzoharlary/.cache/uv/interpreter-v4/13d0300639fb5014/1b17f4b895e5f2c5.msgpack, removing: invalid type: boolean `true`, expected a sequence"
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/share/brew-update-manager/bin/node",
+        "--version"
+      ],
+      "exit_code": 0,
+      "output": "v26.12.0",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/share/brew-update-manager/bin/npm",
+        "ls",
+        "-g",
+        "--depth=0",
+        "--json"
+      ],
+      "exit_code": 0,
+      "output": {
+        "name": "lib",
+        "dependencies": {
+          "@github/copilot": {
+            "version": "0.0.410",
+            "overridden": false
+          },
+          "@remotion/cli": {
+            "version": "4.0.461",
+            "overridden": false
+          },
+          "@vscode/vsce": {
+            "version": "3.5.0",
+            "overridden": false
+          },
+          "base44": {
+            "version": "0.1.5",
+            "overridden": false
+          },
+          "chrome-devtools-mcp": {
+            "version": "1.4.0",
+            "overridden": false
+          },
+          "corepack": {
+            "version": "0.32.0",
+            "overridden": false
+          },
+          "generator-code": {
+            "version": "1.11.9",
+            "overridden": false
+          },
+          "npm": {
+            "version": "11.17.0",
+            "overridden": false
+          },
+          "tailwindcss": {
+            "version": "4.1.7",
+            "overridden": false
+          },
+          "yo": {
+            "version": "5.1.0",
+            "overridden": false
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.local/share/brew-update-manager/bin/npm",
+        "config",
+        "get",
+        "prefix"
+      ],
+      "exit_code": 0,
+      "output": "/usr/local",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/runtime/bin/pixi",
+        "global",
+        "list",
+        "--json"
+      ],
+      "exit_code": 0,
+      "output": [],
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.bun/bin/bun",
+        "pm",
+        "ls",
+        "-g"
+      ],
+      "exit_code": 0,
+      "output": "/Users/tzoharlary node_modules (284)\n├── @prisma/client@6.10.1\n├── bcryptjs@3.0.2\n├── md-to-docx@1.6.1\n├── next@15.3.4\n├── prisma@6.10.1\n└── sonner@2.0.3",
+      "stderr": "[1.07ms] \".env\"\n[7.59ms] migrated lockfile from package-lock.json"
+    },
+    {
+      "command": [
+        "/usr/bin/gem",
+        "list",
+        "--local"
+      ],
+      "exit_code": 0,
+      "output": "bigdecimal (default: 1.4.1)\nbundler (default: 1.17.2)\nCFPropertyList (2.3.6)\ncmath (default: 1.0.0)\ncsv (default: 3.0.9)\ndate (default: 2.0.3)\ndbm (default: 1.0.0)\ndid_you_mean (1.3.0)\ne2mmap (default: 0.1.0)\netc (default: 1.0.1)\nfcntl (default: 1.0.0)\nfiddle (default: 1.0.0)\nfileutils (default: 1.1.0)\nforwardable (default: 1.2.0)\nio-console (default: 0.4.7)\nipaddr (default: 1.2.2)\nirb (default: 1.0.0)\njson (default: 2.1.0)\nlibxml-ruby (3.2.1)\nlogger (default: 1.3.0)\nmatrix (default: 0.1.0)\nmini_portile2 (2.8.0)\nminitest (5.11.3)\nmutex_m (default: 0.1.0)\nnet-telnet (0.2.0)\nnokogiri (1.13.8)\nopenssl (default: 2.1.2)\nostruct (default: 0.1.0)\npower_assert (1.1.3)\nprime (default: 0.1.0)\npsych (default: 3.1.0)\nrake (12.3.3)\nrdoc (default: 6.1.2.1)\nrexml (default: 3.4.2)\nrss (default: 0.2.7)\nscanf (default: 1.0.0)\nsdbm (default: 1.0.0)\nshell (default: 0.7)\nsqlite3 (1.3.13)\nstringio (default: 0.0.2)\nstrscan (default: 1.0.0)\nsync (default: 0.5.0)\ntest-unit (3.2.9)\nthwait (default: 0.1.0)\ntracer (default: 0.1.0)\nwebrick (default: 1.9.1)\nxmlrpc (0.3.0)\nzlib (default: 1.0.0)",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/Users/tzoharlary/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback/pnpm",
+        "list",
+        "-g",
+        "--depth=0",
+        "--json"
+      ],
+      "exit_code": 1,
+      "output": "",
+      "stderr": "[ERROR] The configured global bin directory \"/Users/tzoharlary/Library/pnpm/bin\" is not in PATH\nRun \"pnpm setup\" to update your shell configuration."
+    }
+  ],
+  "known_directories": {
+    ".cargo/bin": {
+      "exists": false,
+      "children": []
+    },
+    ".rustup/toolchains": {
+      "exists": false,
+      "children": []
+    },
+    ".pixi/bin": {
+      "exists": true,
+      "children": []
+    },
+    ".pixi/envs": {
+      "exists": true,
+      "children": []
+    },
+    ".conda/envs": {
+      "exists": false,
+      "children": []
+    },
+    "miniconda3/envs": {
+      "exists": false,
+      "children": []
+    },
+    "anaconda3/envs": {
+      "exists": false,
+      "children": []
+    },
+    ".nvm/versions/node": {
+      "exists": false,
+      "children": []
+    },
+    ".fnm/node-versions": {
+      "exists": false,
+      "children": []
+    },
+    ".pyenv/versions": {
+      "exists": false,
+      "children": []
+    },
+    ".local/share/mise/installs": {
+      "exists": false,
+      "children": []
+    },
+    ".local/share/uv/tools": {
+      "exists": true,
+      "children": [
+        ".DS_Store",
+        ".gitignore",
+        ".lock",
+        "notebooklm-mcp-cli"
+      ]
+    },
+    ".local/share/pipx/venvs": {
+      "exists": false,
+      "children": []
+    },
+    ".local/pipx/venvs": {
+      "exists": true,
+      "children": [
+        ".DS_Store",
+        "imagesorcery-mcp"
+      ]
+    },
+    ".bun/install/global/node_modules": {
+      "exists": false,
+      "children": []
+    },
+    "Library/pnpm": {
+      "exists": true,
+      "children": [
+        "bin"
+      ]
+    },
+    "Library/Application Support/pypoetry/venv": {
+      "exists": false,
+      "children": []
+    }
+  },
+  "legacy_usr_local_npm_global_packages": [
+    {
+      "name": "chrome-devtools-mcp",
+      "version": "1.4.0",
+      "path": "/usr/local/lib/node_modules/chrome-devtools-mcp"
+    },
+    {
+      "name": "yo",
+      "version": "5.1.0",
+      "path": "/usr/local/lib/node_modules/yo"
+    },
+    {
+      "name": "base44",
+      "version": "0.1.5",
+      "path": "/usr/local/lib/node_modules/base44"
+    },
+    {
+      "name": "corepack",
+      "version": "0.32.0",
+      "path": "/usr/local/lib/node_modules/corepack"
+    },
+    {
+      "name": "tailwindcss",
+      "version": "4.1.7",
+      "path": "/usr/local/lib/node_modules/tailwindcss"
+    },
+    {
+      "name": "generator-code",
+      "version": "1.11.9",
+      "path": "/usr/local/lib/node_modules/generator-code"
+    },
+    {
+      "name": "npm",
+      "version": "11.17.0",
+      "path": "/usr/local/lib/node_modules/npm"
+    },
+    {
+      "name": "@vscode/vsce",
+      "version": "3.5.0",
+      "path": "/usr/local/lib/node_modules/@vscode/vsce"
+    },
+    {
+      "name": "@github/copilot",
+      "version": "0.0.410",
+      "path": "/usr/local/lib/node_modules/@github/copilot"
+    },
+    {
+      "name": "@remotion/cli",
+      "version": "4.0.461",
+      "path": "/usr/local/lib/node_modules/@remotion/cli"
+    }
+  ],
+  "managed_environment_locks": [
+    {
+      "name": "ansible",
+      "source": "/Users/tzoharlary/.local/share/brew-update-manager/environments/ansible/1792383044336914000/pixi.lock",
+      "audit_copy": "managed-ansible-pixi.lock"
+    },
+    {
+      "name": "uv",
+      "source": "/Users/tzoharlary/.local/share/brew-update-manager/environments/uv/1792383110454394000/pixi.lock",
+      "audit_copy": "managed-uv-pixi.lock"
+    },
+    {
+      "name": "pandoc",
+      "source": "/Users/tzoharlary/.local/share/brew-update-manager/environments/pandoc/1792383588182922000/pixi.lock",
+      "audit_copy": "managed-pandoc-pixi.lock"
+    }
+  ],
+  "incidental_effects_and_limits": {
+    "old_uv": "Old uv tool list reported evicting malformed interpreter cache entries. Cache entries cannot be reconstructed; no package install/remove/update invoked.",
+    "bun": "bun pm ls -g unexpectedly enumerated home project (284 packages,6 top level), reported reading .env and migrating package-lock. Output is wrong scope, NOT a global Bun inventory. No .env values were printed or retained. No persisted Bun lock exists in home, repo, or ~/.bun/install/global; home package and npm lock mtime remain January2026. No user files restored/deleted.",
+    "reproduction": "Collector excludes Bun list and only probes current managed uv tool list; finalize script invokes no managers."
+  },
+  "pipx_filesystem_metadata": [
+    {
+      "metadata_path": "/Users/tzoharlary/.local/pipx/venvs/imagesorcery-mcp/pipx_metadata.json",
+      "package": "imagesorcery-mcp",
+      "package_version": "0.11.4",
+      "apps": [
+        "create-model-descriptions",
+        "download-clip-models",
+        "download-yolo-models",
+        "imagesorcery-mcp",
+        "post-install-imagesorcery"
+      ],
+      "python_version": "Python 3.12.0"
+    }
+  ]
+}

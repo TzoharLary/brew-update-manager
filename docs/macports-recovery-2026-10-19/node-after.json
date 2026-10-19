@@ -1,0 +1,39 @@
+[
+  {
+    "command": [
+      "/usr/local/bin/node",
+      "--version"
+    ],
+    "code": 0,
+    "stdout": "v26.12.0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/local/bin/npm",
+      "--version"
+    ],
+    "code": 0,
+    "stdout": "11.17.0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/local/bin/node",
+      "-e",
+      "console.log(new URL('https://example.com').hostname)"
+    ],
+    "code": 0,
+    "stdout": "example.com\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/local/opt/mongodb-community/bin/mongod",
+      "--version"
+    ],
+    "code": 0,
+    "stdout": "db version v8.2.9\nBuild Info: {\n    \"version\": \"8.2.9\",\n    \"gitVersion\": \"18cf44d54b9dcdc0df43a984da7c6b12006c4217\",\n    \"modules\": [],\n    \"allocator\": \"system\",\n    \"environment\": {\n        \"distarch\": \"x86_64\",\n        \"target_arch\": \"x86_64\"\n    }\n}\n",
+    "stderr": ""
+  }
+]

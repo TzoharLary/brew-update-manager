@@ -1,0 +1,16 @@
+{
+  "brew_info_formula_count": 231,
+  "cellar_directory_count": 234,
+  "canonical_cellar_formula_count": 233,
+  "omitted_formulae": [
+    "mongodb-community",
+    "mongodb-database-tools"
+  ],
+  "omission_cause": "Not proven. Both omitted receipts name mongodb/brew; runtime warned separately that tap was untrusted.",
+  "alias_directories": [
+    {
+      "path": "/usr/local/Cellar/whisper-cpp",
+      "canonical_path": "/usr/local/Cellar/whisper.cpp"
+    }
+  ]
+}

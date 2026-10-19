@@ -1,10 +1,10 @@
 {
   "name": "brew-update-manager",
-  "version": "1.1.16",
+  "version": "1.3.1",
   "private": true,
   "author": "Tzoharlary",
   "license": "MIT",
-  "description": "macOS desktop app for Homebrew update management",
+  "description": "macOS desktop app for Homebrew, MacPorts and managed tool updates",
   "main": "electron/main.js",
   "scripts": {
     "start-app": "electron .",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.tzoharlary.brewupdatemanager",
-    "productName": "Homebrew Update Manager",
+    "productName": "Mac Update Manager",
     "directories": {
       "output": "dist",
       "buildResources": "build"

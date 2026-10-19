@@ -1,0 +1,23 @@
+[
+  {
+    "name": "libunistring",
+    "url": "https://packages.macports.org/libunistring/",
+    "status": 200,
+    "darwin25_x86_64_archives": [
+      "libunistring-1.4.2_0.darwin_25.x86_64.tbz2"
+    ]
+  },
+  {
+    "name": "nmap",
+    "url": "https://packages.macports.org/nmap/",
+    "status": 200,
+    "darwin25_x86_64_archives": [
+      "nmap-7.991_0+pcre+ssl.darwin_25.x86_64.tbz2"
+    ]
+  },
+  {
+    "name": "socat",
+    "url": "https://packages.macports.org/socat/",
+    "status": 404
+  }
+]

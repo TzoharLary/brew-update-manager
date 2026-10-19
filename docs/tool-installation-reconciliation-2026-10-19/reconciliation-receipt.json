@@ -1,0 +1,78 @@
+{
+  "backup_path": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619",
+  "created_at": "2026-10-19T10:06:19.152838+00:00",
+  "files": [
+    {
+      "path": "/Users/tzoharlary/.local/bin/uv",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/before/.local/bin/uv",
+      "sha256": "3b403ba4d102d763f5f461ae636064cfad79bad4ce444d42767dfb35ac352c29"
+    },
+    {
+      "path": "/Users/tzoharlary/.local/bin/uvx",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/before/.local/bin/uvx",
+      "sha256": "07fdc1406b6d4f42b2def789e14932286783bfde9558004c62b1b714df886e06"
+    },
+    {
+      "path": "/Users/tzoharlary/.config/uv/uv-receipt.json",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/before/.config/uv/uv-receipt.json",
+      "sha256": "993cded1fdc020aca668ced7457aa6b6c675441cbfa95c2ff839d0cb9757c6e4"
+    },
+    {
+      "path": "/Users/tzoharlary/Library/Application Support/Homebrew Update Manager/settings.json",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/before/Library/Application Support/Homebrew Update Manager/settings.json",
+      "sha256": "ef9dae5fd6bde10c3b29844fbc519fd5d2d0a49b59d512b94dcdc8f0432cb15e"
+    },
+    {
+      "path": "/Users/tzoharlary/.local/share/brew-update-manager/installed.json",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/before/.local/share/brew-update-manager/installed.json",
+      "sha256": "b588ec60b81cdb8df182adb87fec8084b572a3dde2ed2da6f3a256e5f057ab00"
+    }
+  ],
+  "kegs": [
+    {
+      "name": "ansible",
+      "source": "/usr/local/Cellar/ansible",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/homebrew-kegs/ansible",
+      "files_verified": 36819
+    },
+    {
+      "name": "deno",
+      "source": "/usr/local/Cellar/deno",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/homebrew-kegs/deno",
+      "files_verified": 11
+    },
+    {
+      "name": "pandoc",
+      "source": "/usr/local/Cellar/pandoc",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/homebrew-kegs/pandoc",
+      "files_verified": 11
+    },
+    {
+      "name": "uv",
+      "source": "/usr/local/Cellar/uv",
+      "backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/homebrew-kegs/uv",
+      "files_verified": 17
+    }
+  ],
+  "uv_adopted_path": "/Users/tzoharlary/.local/bin/uv",
+  "uv_version": "0.13.1",
+  "uv_managed_environment_archived": "/Users/tzoharlary/.local/share/brew-update-manager/environments/uv/1792383110454394000",
+  "installed_app_version": "1.1.19",
+  "old_app_backup": "/Users/tzoharlary/.Trash/brew-tool-reconciliation-20261019T130619/Homebrew Update Manager-1.1.18.app",
+  "installed_backend_sha256": {
+    "brew-updates-service.py": "69688c525039ef2334232a39077d59d403d86e8095488185ed05610d0a3a5da6",
+    "update_engine.py": "23607e68ced88a4ff65b348c07d8d94a7e4e2ee9a9833751381e64c5e744e82d",
+    "update_routes.py": "f92531369516d4d6ac84fd1c8568def0ee82bb41eaee704b44fe8390d480d1d4"
+  },
+  "removed_brew_formulae": [
+    "ansible",
+    "deno",
+    "pandoc",
+    "uv"
+  ],
+  "retained_brew_node_reason": "Recorded MongoDB dependency; old keg linkage still broken",
+  "tests_passed": 14,
+  "app_version_verified": "1.1.19",
+  "settings_unchanged": true,
+  "functional_checks": "functional-checks.json"
+}

@@ -1,12 +1,16 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('brewApp', {
+  migrationPlan: (name) => ipcRenderer.invoke('migration:plan', {name}),
+  migrationApprove: (id) => ipcRenderer.invoke('migration:approve', {id}),
+  macportsSync: () => ipcRenderer.invoke('macports:sync'),
   getState: () => ipcRenderer.invoke('state:get'),
   getProgress: () => ipcRenderer.invoke('progress:get'),
   getUpdateHistory: () => ipcRenderer.invoke('updates:history:get'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateScheduler: (scheduler) => ipcRenderer.invoke('settings:scheduler:update', { scheduler }),
   updateBrewPath: (brewPath) => ipcRenderer.invoke('settings:brew-path:update', { brew_path: brewPath }),
+  updatePolicy: (policy) => ipcRenderer.invoke('settings:update-policy', policy),
   autoDetectBrewPath: () => ipcRenderer.invoke('settings:brew-path:auto-detect'),
   checkAppUpdate: () => ipcRenderer.invoke('app-update:check'),
   downloadAndInstallAppUpdate: () => ipcRenderer.invoke('app-update:download-install'),

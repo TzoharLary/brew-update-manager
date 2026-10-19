@@ -1,0 +1,1186 @@
+{
+  "plan_created_at": "2026-10-19T04:19:49.202517+00:00",
+  "state_updated_at": "2026-10-19T04:22:29.030602+00:00",
+  "items": [
+    {
+      "plan": {
+        "name": "cryptography",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "50.0.2_2",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "cryptography",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "cryptography",
+        "kind": "formula",
+        "display_name": "cryptography",
+        "description": "Cryptographic recipes and primitives for Python",
+        "description_he": "מתכונים קריפטוגרפיים ופרימיטיבים לפייתון",
+        "homepage": "https://cryptography.io/en/latest/",
+        "installed_version": "48.0.0",
+        "latest_version": "50.0.2_2",
+        "installed_versions": [
+          "48.0.0"
+        ],
+        "outdated": true,
+        "current_release_date": "2026-05-06T02:08:01Z",
+        "current_release_date_source": "github_commit_message_match:Formula/c/cryptography.rb",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/c/cryptography.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "gnupg",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.5.24_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "gnupg",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "gnupg",
+        "kind": "formula",
+        "display_name": "gnupg",
+        "description": "GNU Privacy Guard (OpenPGP)",
+        "description_he": "משמר הפרטיות של גנו (OpenPGP)",
+        "homepage": "https://gnupg.org/",
+        "installed_version": "2.5.20",
+        "latest_version": "2.5.24_1",
+        "installed_versions": [
+          "2.5.20"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/g/gnupg.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "gpgme",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.2.0",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "gpgme",
+            "reason": "source_required"
+          },
+          {
+            "name": "gnupg",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "gpgme",
+        "kind": "formula",
+        "display_name": "gpgme",
+        "description": "Library access to GnuPG",
+        "description_he": "גישה לספרייה ל-GnuPG",
+        "homepage": "https://www.gnupg.org/related_software/gpgme/",
+        "installed_version": "2.1.0",
+        "latest_version": "2.2.0",
+        "installed_versions": [
+          "2.1.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/g/gpgme.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "gpgmepp",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.2.0",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "gpgmepp",
+            "reason": "source_required"
+          },
+          {
+            "name": "gpgme",
+            "reason": "source_required"
+          },
+          {
+            "name": "gnupg",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "gpgmepp",
+        "kind": "formula",
+        "display_name": "gpgmepp",
+        "description": "C++ bindings for gpgme",
+        "description_he": "כריכות C++ עבור gpgme",
+        "homepage": "https://www.gnupg.org/related_software/gpgme/",
+        "installed_version": "2.1.0",
+        "latest_version": "2.2.0",
+        "installed_versions": [
+          "2.1.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/g/gpgmepp.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "include-what-you-use",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "0.27",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "include-what-you-use",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "include-what-you-use",
+        "kind": "formula",
+        "display_name": "include-what-you-use",
+        "description": "Tool to analyze #includes in C and C++ source files",
+        "description_he": "כלי לניתוח #includes בקובצי המקור של C ו-C++",
+        "homepage": "https://include-what-you-use.org/",
+        "installed_version": "0.26",
+        "latest_version": "0.27",
+        "installed_versions": [
+          "0.26"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/i/include-what-you-use.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "libtensorflow",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.21.0_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "libtensorflow",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "libtensorflow",
+        "kind": "formula",
+        "display_name": "libtensorflow",
+        "description": "C interface for Google's OS library for Machine Intelligence",
+        "description_he": "ממשק C לספריית מערכת ההפעלה של גוגל עבור Machine Intelligence",
+        "homepage": "https://www.tensorflow.org/",
+        "installed_version": "2.21.0",
+        "latest_version": "2.21.0_1",
+        "installed_versions": [
+          "2.21.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/lib/libtensorflow.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "llvm",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "23.1.3_2",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "llvm",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "llvm",
+        "kind": "formula",
+        "display_name": "llvm",
+        "description": "Next-gen compiler infrastructure",
+        "description_he": "תשתית מהדר מהדור הבא",
+        "homepage": "https://llvm.org/",
+        "installed_version": "23.1.3_2",
+        "latest_version": "23.1.3_2",
+        "installed_versions": [
+          "22.1.5",
+          "23.1.3_2"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": null,
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": null,
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/l/llvm.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "merve",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.2.2_4",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "merve",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "merve",
+        "kind": "formula",
+        "display_name": "merve",
+        "description": "C++ lexer for extracting named exports from CommonJS modules",
+        "description_he": "C++ lexer לחילוץ יצוא בשם ממודולי CommonJS",
+        "homepage": "https://github.com/nodejs/merve",
+        "installed_version": "1.2.2_1",
+        "latest_version": "1.2.2_4",
+        "installed_versions": [
+          "1.2.2_1"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/m/merve.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "net-snmp",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "5.9.5.2_2",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "net-snmp",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "net-snmp",
+        "kind": "formula",
+        "display_name": "net-snmp",
+        "description": "Implements SNMP v1, v2c, and v3, using IPv4 and IPv6",
+        "description_he": "מיישמת SNMP v1, v2c ו-v3, באמצעות IPv4 ו- IPv6",
+        "homepage": "http://www.net-snmp.org/",
+        "installed_version": "5.9.5.2",
+        "latest_version": "5.9.5.2_2",
+        "installed_versions": [
+          "5.9.5.2"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/n/net-snmp.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "nmap",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "7.992",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "nmap",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "nmap",
+        "kind": "formula",
+        "display_name": "nmap",
+        "description": "Port scanning utility for large networks",
+        "description_he": "כלי עזר לסריקת יציאות עבור רשתות גדולות",
+        "homepage": "https://nmap.org/",
+        "installed_version": "7.99",
+        "latest_version": "7.992",
+        "installed_versions": [
+          "7.99"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/n/nmap.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "nss",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "3.131",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "nss",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "nss",
+        "kind": "formula",
+        "display_name": "nss",
+        "description": "Libraries for security-enabled client and server applications",
+        "description_he": "ספריות ליישומי לקוח ושרת התומכים באבטחה",
+        "homepage": "https://firefox-source-docs.mozilla.org/security/nss/index.html",
+        "installed_version": "3.124",
+        "latest_version": "3.131",
+        "installed_versions": [
+          "3.124"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/n/nss.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "open-mpi",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "5.0.11",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "open-mpi",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "open-mpi",
+        "kind": "formula",
+        "display_name": "open-mpi",
+        "description": "High performance message passing library",
+        "description_he": "ספריית העברת הודעות בביצועים גבוהים",
+        "homepage": "https://www.open-mpi.org/",
+        "installed_version": "5.0.9",
+        "latest_version": "5.0.11",
+        "installed_versions": [
+          "5.0.9"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/o/open-mpi.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "openjpeg",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.5.4_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "openjpeg",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "openjpeg",
+        "kind": "formula",
+        "display_name": "openjpeg",
+        "description": "Library for JPEG-2000 image manipulation",
+        "description_he": "ספרייה למניפולציה של תמונות JPEG-2000",
+        "homepage": "https://www.openjpeg.org/",
+        "installed_version": "2.5.4",
+        "latest_version": "2.5.4_1",
+        "installed_versions": [
+          "2.5.4"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/o/openjpeg.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "openldap",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "2.7.1_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "openldap",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "openldap",
+        "kind": "formula",
+        "display_name": "openldap",
+        "description": "Open source suite of directory software",
+        "description_he": "חבילת קוד פתוח של תוכנות ספריות",
+        "homepage": "https://www.openldap.org/software/",
+        "installed_version": "2.6.13",
+        "latest_version": "2.7.1_1",
+        "installed_versions": [
+          "2.6.13"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/o/openldap.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "p11-kit",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "0.26.5",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "p11-kit",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "p11-kit",
+        "kind": "formula",
+        "display_name": "p11-kit",
+        "description": "Library to load and enumerate PKCS#11 modules",
+        "description_he": "ספריה לטעינה ולספירה של מודולי PKCS#11",
+        "homepage": "https://p11-glue.github.io/p11-glue/p11-kit.html",
+        "installed_version": "0.26.2",
+        "latest_version": "0.26.5",
+        "installed_versions": [
+          "0.26.2"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/p11-kit.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "pango",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.58.2",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "pango",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "pango",
+        "kind": "formula",
+        "display_name": "pango",
+        "description": "Framework for layout and rendering of i18n text",
+        "description_he": "מסגרת לפריסה ורינדור של טקסט i18n",
+        "homepage": "https://www.gtk.org/docs/architecture/pango",
+        "installed_version": "1.57.1",
+        "latest_version": "1.58.2",
+        "installed_versions": [
+          "1.57.1"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/pango.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "php",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "8.5.11_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "php",
+            "reason": "source_required"
+          },
+          {
+            "name": "net-snmp",
+            "reason": "source_required"
+          },
+          {
+            "name": "openldap",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "php",
+        "kind": "formula",
+        "display_name": "php",
+        "description": "General-purpose scripting language",
+        "description_he": "שפת סקריפטים לשימוש כללי",
+        "homepage": "https://www.php.net/",
+        "installed_version": "8.5.6",
+        "latest_version": "8.5.11_1",
+        "installed_versions": [
+          "8.5.6"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/php.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "poppler",
+        "kind": "formula",
+        "provider": "pixi",
+        "version": "26.10.0",
+        "ready": false,
+        "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/poppler/1792383588691222000",
+        "manifest": "/Users/tzoharlary/.local/share/brew-update-manager/environments/poppler/1792383588691222000/pixi.toml",
+        "reason": "binary_route_unavailable",
+        "detail": "Error:   × failed to solve requirements of environment 'default' for platform 'osx-\n  │ 64'\n  ├─▶   × failed to solve the environment\n  │   \n  ╰─▶ Cannot solve the request because of: No candidates were found for\n      poppler >=26.10.0."
+      },
+      "inventory": {
+        "name": "poppler",
+        "kind": "formula",
+        "display_name": "poppler",
+        "description": "PDF rendering library (based on the xpdf-3.0 code base)",
+        "description_he": "ספריית עיבוד PDF (מבוסס על בסיס הקוד xpdf-3.0)",
+        "homepage": "https://poppler.freedesktop.org/",
+        "installed_version": "26.04.0",
+        "latest_version": "26.10.0",
+        "installed_versions": [
+          "26.04.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/poppler.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "postgresql@17",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "17.11_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "postgresql@17",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "postgresql@17",
+        "kind": "formula",
+        "display_name": "postgresql@17",
+        "description": "Object-relational database system",
+        "description_he": "מערכת מסד נתונים יחס אובייקטיבית",
+        "homepage": "https://www.postgresql.org/",
+        "installed_version": "17.10",
+        "latest_version": "17.11_1",
+        "installed_versions": [
+          "17.10"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/postgresql@17.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "py3cairo",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.29.2_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "py3cairo",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "py3cairo",
+        "kind": "formula",
+        "display_name": "py3cairo",
+        "description": "Python 3 bindings for the Cairo graphics library",
+        "description_he": "כריכות Python 3 עבור ספריית הגרפיקה של קהיר",
+        "homepage": "https://cairographics.org/pycairo/",
+        "installed_version": "1.29.0",
+        "latest_version": "1.29.2_1",
+        "installed_versions": [
+          "1.29.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/p/py3cairo.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "simdjson",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "5.0.5",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "simdjson",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "simdjson",
+        "kind": "formula",
+        "display_name": "simdjson",
+        "description": "SIMD-accelerated C++ JSON parser",
+        "description_he": "מנתח JSON C++ המואצת ב- SIMD",
+        "homepage": "https://simdjson.org",
+        "installed_version": "4.6.4",
+        "latest_version": "5.0.5",
+        "installed_versions": [
+          "4.6.4"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/s/simdjson.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "socat",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.8.1.3",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "socat",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "socat",
+        "kind": "formula",
+        "display_name": "socat",
+        "description": "SOcket CAT: netcat on steroids",
+        "description_he": "Socket CAT: netcat על סטרואידים",
+        "homepage": "http://www.dest-unreach.org/socat/",
+        "installed_version": "1.8.1.1",
+        "latest_version": "1.8.1.3",
+        "installed_versions": [
+          "1.8.1.1"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/s/socat.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "terminal-notifier",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "3.1.0",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "terminal-notifier",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "terminal-notifier",
+        "kind": "formula",
+        "display_name": "terminal-notifier",
+        "description": "Send macOS User Notifications from the command-line",
+        "description_he": "שלח הודעות משתמש של macOS משורת הפקודה",
+        "homepage": "https://github.com/julienXX/terminal-notifier",
+        "installed_version": "2.0.0",
+        "latest_version": "3.1.0",
+        "installed_versions": [
+          "2.0.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/t/terminal-notifier.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "tesseract",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "5.5.3",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "tesseract",
+            "reason": "source_required"
+          },
+          {
+            "name": "pango",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "tesseract",
+        "kind": "formula",
+        "display_name": "tesseract",
+        "description": "OCR (Optical Character Recognition) engine",
+        "description_he": "מנוע OCR (זיהוי תווים אופטי).",
+        "homepage": "https://tesseract-ocr.github.io/",
+        "installed_version": "5.5.2",
+        "latest_version": "5.5.3",
+        "installed_versions": [
+          "5.5.2"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/t/tesseract.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "unbound",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.26.1_1",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "unbound",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "unbound",
+        "kind": "formula",
+        "display_name": "unbound",
+        "description": "Validating, recursive, caching DNS resolver",
+        "description_he": "פותר DNS מאמת, רקורסיבי, מטמון",
+        "homepage": "https://www.unbound.net",
+        "installed_version": "1.25.0",
+        "latest_version": "1.26.1_1",
+        "installed_versions": [
+          "1.25.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/u/unbound.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "wget",
+        "kind": "formula",
+        "provider": "homebrew",
+        "version": "1.25.0_2",
+        "ready": false,
+        "reason": "source_required",
+        "blockers": [
+          {
+            "name": "wget",
+            "reason": "source_required"
+          }
+        ]
+      },
+      "inventory": {
+        "name": "wget",
+        "kind": "formula",
+        "display_name": "wget",
+        "description": "Internet file retriever",
+        "description_he": "מאחזר קבצים באינטרנט",
+        "homepage": "https://www.gnu.org/software/wget/",
+        "installed_version": "1.25.0",
+        "latest_version": "1.25.0_2",
+        "installed_versions": [
+          "1.25.0"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/w/wget.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    },
+    {
+      "plan": {
+        "name": "whisper.cpp",
+        "kind": "formula",
+        "provider": "pixi",
+        "version": "1.9.5",
+        "ready": false,
+        "workspace": "/Users/tzoharlary/.local/share/brew-update-manager/environments/whisper.cpp/1792383588952553000",
+        "manifest": "/Users/tzoharlary/.local/share/brew-update-manager/environments/whisper.cpp/1792383588952553000/pixi.toml",
+        "reason": "binary_route_unavailable",
+        "detail": "Error:   × failed to solve requirements of environment 'default' for platform 'osx-\n  │ 64'\n  ├─▶   × failed to solve the environment\n  │   \n  ╰─▶ Cannot solve the request because of: No candidates were found for\n      whisper.cpp >=1.9.5."
+      },
+      "inventory": {
+        "name": "whisper.cpp",
+        "kind": "formula",
+        "display_name": "whisper.cpp",
+        "description": "Port of OpenAI's Whisper model in C/C++",
+        "description_he": "דגם Whisper של Port of OpenAI ב-C/C++",
+        "homepage": "https://github.com/ggml-org/whisper.cpp",
+        "installed_version": "1.9.1",
+        "latest_version": "1.9.5",
+        "installed_versions": [
+          "1.9.1"
+        ],
+        "outdated": true,
+        "current_release_date": null,
+        "current_release_date_source": "unavailable",
+        "latest_release_date": null,
+        "latest_release_date_source": "unavailable",
+        "outdated_since": null,
+        "days_since_outdated": null,
+        "release_date": null,
+        "release_date_source": "unavailable",
+        "tap": "homebrew/core",
+        "ruby_source_path": "Formula/w/whisper.cpp.rb",
+        "excluded": false,
+        "provider": "homebrew",
+        "update_available": true
+      }
+    }
+  ]
+}

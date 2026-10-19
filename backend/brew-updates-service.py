@@ -19,11 +19,13 @@ import os
 import plistlib
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
 import threading
 import time
+import platform
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,12 +33,17 @@ from typing import Any, Callable, Iterator
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import update_routes as routes
+import macports_provider
+import mac_manager
+
 try:
     import fcntl
 except Exception:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
-APP_NAME = "Homebrew Update Manager"
+APP_NAME = "Mac Update Manager"
 REQUIRED_PYTHON = (3, 14)
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -45,7 +52,6 @@ MAX_TRANSLATIONS_PER_RUN = 40
 GITHUB_COMMITS_PER_FILE = 80
 MAX_GITHUB_FALLBACK_PER_RUN = 25
 VERSION_SEARCH_COMMITS_LIMIT = 60
-BREW_LOG_COMMITS_LIMIT = 120
 GITHUB_PATH_CANDIDATES_LIMIT = 5
 BREW_SCAN_TIMEOUT_SECONDS = 20
 BREW_SCAN_MAX_RESULTS = 50
@@ -55,6 +61,7 @@ if (PROJECT_ROOT / "package.json").exists():
     DATA_DIR = PROJECT_ROOT / "data"
 else:
     DATA_DIR = Path.home() / "Library" / "Application Support" / "Homebrew Update Manager"
+DATA_DIR = Path(os.environ.get("BREW_UPDATE_DATA_DIR", str(DATA_DIR)))
 LOG_DIR = DATA_DIR / "logs"
 CACHE_DIR = DATA_DIR / "cache"
 
@@ -65,6 +72,9 @@ RELEASE_CACHE_FILE = CACHE_DIR / "release-dates.json"
 DESCRIPTION_HE_CACHE_FILE = CACHE_DIR / "description-he.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 UPDATE_HISTORY_FILE = DATA_DIR / "update-history.json"
+RUN_JOURNAL_FILE = DATA_DIR / "last-update-run.json"
+UPDATE_PLAN_FILE = DATA_DIR / "update-plan.json"
+TOOLS_ROOT = Path.home() / ".local" / "share" / "brew-update-manager"
 UPDATE_HISTORY_LOCK_FILE = UPDATE_HISTORY_FILE.with_suffix(UPDATE_HISTORY_FILE.suffix + ".lock")
 UPDATE_HISTORY_LOCK_TIMEOUT_SECONDS = 8.0
 OPEN_APP_SCRIPT = PROJECT_ROOT / "tools" / "open-brew-updates-app.sh"
@@ -127,6 +137,7 @@ def new_check_progress_state() -> dict[str, Any]:
         "percent": 0,
         "eta_seconds": None,
         "current_package": None,
+        "package_activity": None,
         "planned_packages": [],
         "completed_packages": [],
         "failed_packages": [],
@@ -141,7 +152,6 @@ CHECK_PROGRESS: dict[str, Any] = new_check_progress_state()
 UNSET = object()
 
 REPO_CACHE: dict[str, Path] = {}
-BREW_LOG_CACHE: dict[tuple[str, str], list[dict[str, str]]] = {}
 
 TAP_GITHUB_REPO = {
     "homebrew/core": "Homebrew/homebrew-core",
@@ -152,6 +162,10 @@ SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9@._+\-]+$")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "brew_path": "",
+    "excluded_packages": [],
+    "binary_only": True,
+    "binary_tools": [],
+    "upgrade_timeout_seconds": 0,
     "scheduler": {
         "enabled": False,
         "frequency": "daily",  # daily | weekly | interval
@@ -620,6 +634,7 @@ def load_settings() -> dict[str, Any]:
     raw = read_json(SETTINGS_FILE)
 
     if isinstance(raw, dict):
+        settings.update(normalize_update_policy(raw))
         settings["brew_path"] = str(raw.get("brew_path") or "").strip()
         try:
             settings["scheduler"] = normalize_scheduler_payload(raw.get("scheduler"))
@@ -639,9 +654,57 @@ def load_settings() -> dict[str, Any]:
 def save_settings(settings: dict[str, Any]) -> None:
     ensure_dirs()
     normalized = settings_defaults()
+    normalized.update(normalize_update_policy(settings))
     normalized["brew_path"] = str(settings.get("brew_path") or "").strip()
     normalized["scheduler"] = normalize_scheduler_payload(settings.get("scheduler"))
     atomic_write_json(SETTINGS_FILE, normalized)
+
+
+def normalize_update_policy(raw: dict[str, Any]) -> dict[str, Any]:
+    excluded = raw.get("excluded_packages", [])
+    if not isinstance(excluded, list):
+        raise ValueError("excluded_packages must be an array")
+    for value in excluded:
+        if not isinstance(value, str) or not re.fullmatch(r"(?:formula|cask|port):[A-Za-z0-9@._+\-]+", value):
+            raise ValueError("Excluded packages must use formula:name or cask:name")
+    names = raw.get("binary_tools", [])
+    allowed = set(routes.PIXI_TOOLS) | {"azure-cli"}
+    if not isinstance(names, list) or any(name not in allowed for name in names):
+        raise ValueError("Unsupported binary tool route")
+    timeout = int(raw.get("upgrade_timeout_seconds", 0))
+    if timeout != 0 and not 60 <= timeout <= 86400:
+        raise ValueError("upgrade_timeout_seconds must be 0 or between 60 and 86400")
+    return {"excluded_packages": sorted(set(excluded)), "binary_only": bool(raw.get("binary_only", True)),
+            "binary_tools": sorted(set(names)), "upgrade_timeout_seconds": timeout}
+
+
+def is_excluded(name: str, kind: str) -> bool:
+    return f"{kind}:{name}" in load_settings()["excluded_packages"]
+
+
+def apply_update_policy(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    settings = load_settings()
+    records = routes.read_records(TOOLS_ROOT)
+    for pkg in packages:
+        name, kind = pkg.get("name"), pkg.get("kind")
+        excluded = f"{'formula' if kind == 'tool' else kind}:{name}" in settings["excluded_packages"] or (kind == "port" and name == "ngrok")
+        pkg["excluded"] = excluded
+        if kind not in {"port", "tool"}:
+            pkg["provider"] = "homebrew"
+        if excluded:
+            pkg["excluded_outdated"] = bool(pkg.get("excluded_outdated") or pkg.get("outdated"))
+            pkg["outdated"] = False
+        elif pkg.pop("excluded_outdated", False):
+            pkg["outdated"] = True
+        record = records.get(name) if kind == "formula" and not pkg.get("installation_id") else None
+        if record:
+            pkg["brew_installed_version"] = pkg.get("brew_installed_version", pkg["installed_version"])
+            pkg["installed_version"] = record["version"]
+            pkg["provider"] = record["provider"]
+            pkg["provider_verified_at"] = record["verified_at"]
+            pkg["outdated"] = not excluded and routes.version_key(record["version"]) < routes.version_key(pkg.get("latest_version"))
+        pkg["update_available"] = bool(pkg.get("outdated")) and not excluded
+    return packages
 
 
 def load_update_history() -> list[dict[str, Any]]:
@@ -848,8 +911,8 @@ def launch_agent_payload_for_scheduler(scheduler: dict[str, Any]) -> dict[str, A
             "--check-only",
             "--notify",
         ],
-        "StandardOutPath": "/dev/null",
-        "StandardErrorPath": "/dev/null",
+        "StandardOutPath": str(LOG_DIR / "brew-scheduled-stdout.log"),
+        "StandardErrorPath": str(LOG_DIR / "brew-scheduled-stderr.log"),
         "WorkingDirectory": str(Path.home()),
         "KeepAlive": False,
         "RunAtLoad": False,
@@ -964,13 +1027,14 @@ def process_env() -> dict[str, str]:
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
-        "HOMEBREW_NO_PAGER": "1",
-        "GIT_PAGER": "cat",
-        "PAGER": "cat",
     }
     for key, value in os.environ.items():
         if key.startswith("HOMEBREW_"):
             env[key] = value
+    # Refresh metadata once through Check Now, not once per package. Retain old
+    # kegs while a batch is in progress so unrelated tools keep their libraries.
+    env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+    env["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
     return env
 
 
@@ -1017,13 +1081,28 @@ def terminate_process(proc: subprocess.Popen[str] | None, *, force_kill_after_se
         return False
 
 
-def run_cmd(args: list[str], timeout: int = 1800, *, cancellable: bool = False) -> CommandResult:
+def run_cmd(args: list[str], timeout: int | None = 1800, *, cancellable: bool = False,
+            on_output: Callable[[str, str], None] | None = None,
+            env_override: dict[str, str] | None = None) -> CommandResult:
+    tracked_scan = getattr(mac_manager.SCAN_CONTEXT, 'active', False)
+    if tracked_scan:
+        raise_if_cancel_requested()
+    result = _run_cmd_impl(args, timeout, cancellable=cancellable or tracked_scan,
+                           on_output=on_output, env_override=env_override)
+    if tracked_scan:
+        raise_if_cancel_requested()
+    return result
+
+
+def _run_cmd_impl(args: list[str], timeout: int | None = 1800, *, cancellable: bool = False,
+            on_output: Callable[[str, str], None] | None = None,
+            env_override: dict[str, str] | None = None) -> CommandResult:
     proc = subprocess.Popen(
         args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=process_env(),
+        env={**process_env(), **(env_override or {})},
         start_new_session=True,
     )
 
@@ -1033,6 +1112,38 @@ def run_cmd(args: list[str], timeout: int = 1800, *, cancellable: bool = False) 
             ACTIVE_COMMAND["args"] = list(args)
 
     try:
+        if on_output is not None:
+            # Drain both pipes concurrently so a quiet stdout cannot block stderr.
+            captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+            def drain(stream: Any, source: str) -> None:
+                try:
+                    for line in stream:
+                        captured[source].append(line)
+                        try:
+                            on_output(line, source)
+                        except Exception as exc:
+                            append_service_log(f"Upgrade progress observer failed: {exc}")
+                finally:
+                    stream.close()
+
+            readers = [threading.Thread(target=drain, args=(stream, source), daemon=True)
+                       for stream, source in ((proc.stdout, "stdout"), (proc.stderr, "stderr"))]
+            for reader in readers:
+                reader.start()
+            timed_out = False
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                terminate_process(proc)
+            for reader in readers:
+                reader.join()
+            stdout = "".join(captured["stdout"]).strip()
+            stderr = "".join(captured["stderr"]).strip()
+            if timed_out:
+                stderr = f"{stderr}\nCommand timed out after {int(timeout)}s".strip()
+            return CommandResult(124 if timed_out else proc.returncode, stdout, stderr)
         stdout, stderr = proc.communicate(timeout=timeout)
         return CommandResult(proc.returncode, (stdout or "").strip(), (stderr or "").strip())
     except subprocess.TimeoutExpired:
@@ -1142,9 +1253,17 @@ def run_exclusive(op_name: str, fn):
         CURRENT_OPERATION["name"] = op_name
         CURRENT_OPERATION["started_at"] = now_iso()
 
+    prior_scan = getattr(mac_manager.SCAN_CONTEXT, 'active', False)
+    if op_name in {'update_plan', 'migration'}:
+        mac_manager.SCAN_CONTEXT.active = True
     try:
         return fn()
+    except OperationCancelledError:
+        set_check_progress(running=False, phase='canceled', message='Operation canceled',
+                           canceled=True, current_package=None, eta_seconds=None, completed_at=now_iso())
+        raise
     finally:
+        mac_manager.SCAN_CONTEXT.active = prior_scan
         reset_cancel_state()
         with CURRENT_OPERATION_LOCK:
             CURRENT_OPERATION["running"] = False
@@ -1177,13 +1296,13 @@ def fetch_outdated_index() -> dict[tuple[str, str], dict[str, str]]:
     res = run_cmd([b, "outdated", "--json=v2"], timeout=300)
     if res.code != 0:
         append_check_log(f"Warning: brew outdated failed: {res.stderr or res.stdout}")
-        return {}
+        raise RuntimeError(f"Cannot verify outdated inventory: {res.stderr or res.stdout}")
 
     try:
         payload = json.loads(res.stdout or "{}")
     except json.JSONDecodeError:
         append_check_log("Warning: failed to parse brew outdated JSON")
-        return {}
+        raise RuntimeError("Cannot verify outdated inventory: invalid Homebrew JSON")
 
     index: dict[tuple[str, str], dict[str, str]] = {}
 
@@ -1345,6 +1464,34 @@ def fetch_installed_inventory(outdated_index: dict[tuple[str, str], dict[str, st
             }
         )
 
+    # Managed tools remain installed after their redundant Brew keg is removed.
+    # Query catalog metadata separately; never infer "current" from a missing row.
+    records = routes.read_records(TOOLS_ROOT)
+    existing = {(pkg["kind"], pkg["name"]) for pkg in packages}
+    missing = sorted(name for name in records if ("formula", name) not in existing)
+    if missing:
+        for name in missing:
+            validate_package_name(name)
+        result = run_cmd([b, "info", "--json=v2", "--formula", *missing], timeout=120)
+        if result.code:
+            raise RuntimeError("Cannot check catalog metadata for separately installed tools: " + result.stderr)
+        catalog = {row["name"]: row for row in json.loads(result.stdout).get("formulae", [])}
+        for name in missing:
+            meta = catalog.get(name)
+            if not meta:
+                raise RuntimeError(f"Missing catalog metadata for separately installed tool: {name}")
+            latest = str(meta["versions"]["stable"])
+            if meta.get("revision"):
+                latest += "_" + str(meta["revision"])
+            record = records[name]
+            packages.append({"name": name, "kind": "formula", "display_name": name,
+                             "description": meta.get("desc", ""), "description_he": "",
+                             "homepage": meta.get("homepage", ""), "tap": meta.get("tap", "homebrew/core"),
+                             "installed_version": record["version"], "installed_versions": [record["version"]],
+                             "latest_version": latest, "outdated": False, "brew_installation_present": False,
+                             "current_release_date": None, "latest_release_date": None,
+                             "outdated_since": None, "days_since_outdated": None,
+                             "release_date": None, "release_date_source": None})
     return packages
 
 
@@ -1512,123 +1659,6 @@ def git_version_intro_iso(repo: Path, target_file: Path, version: str) -> str | 
     return res.stdout.splitlines()[0].strip()
 
 
-def parse_brew_log_date_iso(raw: str) -> str | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-
-    try:
-        parsed = dt.datetime.strptime(text, "%a %b %d %H:%M:%S %Y %z")
-    except ValueError:
-        return None
-
-    return parsed.astimezone(dt.timezone.utc).isoformat()
-
-
-def parse_brew_log_commits(raw: str) -> list[dict[str, str]]:
-    commits: list[dict[str, str]] = []
-    current_hash = ""
-    current_date_raw = ""
-    current_subject = ""
-
-    def flush_current() -> None:
-        nonlocal current_hash, current_date_raw, current_subject
-        if not current_hash:
-            return
-        commit_iso = parse_brew_log_date_iso(current_date_raw) or ""
-        commits.append(
-            {
-                "hash": current_hash,
-                "date": commit_iso,
-                "subject": current_subject,
-            }
-        )
-        current_hash = ""
-        current_date_raw = ""
-        current_subject = ""
-
-    for line in str(raw or "").splitlines():
-        if line.startswith("commit "):
-            flush_current()
-            current_hash = line.split(" ", 1)[1].strip()
-            continue
-
-        if not current_hash:
-            continue
-
-        if line.startswith("Date:"):
-            current_date_raw = line.split("Date:", 1)[1].strip()
-            continue
-
-        if not current_subject:
-            stripped = line.strip()
-            if stripped and line.startswith("    "):
-                current_subject = stripped
-
-    flush_current()
-    return commits
-
-
-def brew_log_commits(kind: str, name: str) -> list[dict[str, str]]:
-    normalized_kind = str(kind or "").strip()
-    normalized_name = str(name or "").strip()
-    if normalized_kind not in {"formula", "cask"} or not normalized_name:
-        return []
-
-    key = (normalized_kind, normalized_name)
-    cached = BREW_LOG_CACHE.get(key)
-    if cached is not None:
-        return cached
-
-    b = brew_bin()
-    args = [b, "log", f"--max-count={BREW_LOG_COMMITS_LIMIT}"]
-    if normalized_kind == "cask":
-        args.extend(["--cask", normalized_name])
-    else:
-        args.extend(["--formula", normalized_name])
-
-    res = run_cmd(args, timeout=120)
-    if res.code != 0 or not res.stdout:
-        fallback = run_cmd([b, "log", f"--max-count={BREW_LOG_COMMITS_LIMIT}", normalized_name], timeout=120)
-        if fallback.code != 0 or not fallback.stdout:
-            BREW_LOG_CACHE[key] = []
-            return []
-        parsed_fallback = parse_brew_log_commits(fallback.stdout)
-        BREW_LOG_CACHE[key] = parsed_fallback
-        return parsed_fallback
-
-    parsed = parse_brew_log_commits(res.stdout)
-    BREW_LOG_CACHE[key] = parsed
-    return parsed
-
-
-def brew_log_version_intro_iso(kind: str, name: str, version: str) -> str | None:
-    normalized_version = str(version or "").strip()
-    if not normalized_version or normalized_version in {"unknown", "latest"}:
-        return None
-
-    commits = brew_log_commits(kind, name)
-    if not commits:
-        return None
-
-    for commit in reversed(commits):
-        commit_date = str(commit.get("date") or "").strip()
-        subject = str(commit.get("subject") or "")
-        if commit_date and version_in_text(subject, normalized_version):
-            return commit_date
-
-    return None
-
-
-def brew_log_latest_change_iso(kind: str, name: str) -> str | None:
-    commits = brew_log_commits(kind, name)
-    for commit in commits:
-        commit_date = str(commit.get("date") or "").strip()
-        if commit_date:
-            return commit_date
-    return None
-
-
 def github_commits_for_path(repo_slug: str, relative_path: str) -> list[dict[str, Any]]:
     encoded_path = quote(relative_path, safe="")
     url = (
@@ -1792,11 +1822,6 @@ def cache_entry_fresh(entry: dict[str, Any]) -> bool:
     return age <= dt.timedelta(days=RELEASE_CACHE_TTL_DAYS)
 
 
-def is_homebrew_latest_source(source: str) -> bool:
-    normalized = str(source or "").strip()
-    return normalized.startswith("tap_git_") or normalized.startswith("brew_log_")
-
-
 def resolve_release_dates(
     pkg: dict[str, Any],
     cache: dict[str, Any],
@@ -1805,21 +1830,15 @@ def resolve_release_dates(
     key = release_cache_key(pkg)
     cached = cache.get(key)
     if isinstance(cached, dict) and cache_entry_fresh(cached):
-        cached_latest = cached.get("latest_release_date")
-        cached_latest_source = str(cached.get("latest_release_date_source") or "unavailable")
-        if not (cached_latest and not is_homebrew_latest_source(cached_latest_source)):
-            return (
-                cached.get("current_release_date"),
-                str(cached.get("current_release_date_source") or "unavailable"),
-                cached_latest,
-                cached_latest_source,
-            )
+        return (
+            cached.get("current_release_date"),
+            str(cached.get("current_release_date_source") or "unavailable"),
+            cached.get("latest_release_date"),
+            str(cached.get("latest_release_date_source") or "unavailable"),
+        )
 
     tap = normalize_tap(str(pkg.get("tap") or ""), str(pkg.get("kind") or ""))
     repo = resolve_repo_path(tap)
-    kind = str(pkg.get("kind") or "").strip()
-    name = str(pkg.get("name") or "").strip()
-    is_outdated = bool(pkg.get("outdated"))
 
     current_release_date: str | None = None
     latest_release_date: str | None = None
@@ -1843,30 +1862,17 @@ def resolve_release_dates(
             if current_release_date:
                 current_source = "tap_git_version_intro"
 
-    if kind in {"formula", "cask"} and name and is_outdated:
-        brew_latest_intro = brew_log_version_intro_iso(kind, name, str(pkg.get("latest_version") or ""))
-        if brew_latest_intro:
-            latest_release_date = brew_latest_intro
-            latest_source = "brew_log_latest_version_intro"
-
-    if not latest_release_date and kind in {"formula", "cask"} and name and is_outdated:
-        latest_release_date = brew_log_latest_change_iso(kind, name)
-        if latest_release_date:
-            latest_source = "brew_log_latest_change"
-
-    if not current_release_date and kind in {"formula", "cask"} and name and is_outdated:
-        current_release_date = brew_log_version_intro_iso(kind, name, str(pkg.get("installed_version") or ""))
-        if current_release_date:
-            current_source = "brew_log_version_intro"
-
-    if not current_release_date and allow_github_fallback and bool(pkg.get("outdated")):
+    if (not latest_release_date or not current_release_date) and allow_github_fallback and bool(pkg.get("outdated")):
         candidate_paths = github_candidate_paths(pkg, repo, target_file)
-        gh_current, gh_current_source, _gh_latest, _gh_latest_source = github_release_dates_for_package(
+        gh_current, gh_current_source, gh_latest, gh_latest_source = github_release_dates_for_package(
             tap,
             candidate_paths,
             str(pkg.get("installed_version") or ""),
             str(pkg.get("latest_version") or ""),
         )
+        if not latest_release_date and gh_latest:
+            latest_release_date = gh_latest
+            latest_source = gh_latest_source
         if not current_release_date and gh_current:
             current_release_date = gh_current
             current_source = gh_current_source
@@ -2019,13 +2025,22 @@ def enrich_hebrew_descriptions(
         atomic_write_json(DESCRIPTION_HE_CACHE_FILE, cache)
 
 
+def compute_snapshot(run_brew_update, track_progress=False, *, enrich_details=True):
+    return mac_manager.combined(sys.modules[__name__], compute_homebrew_snapshot,
+                                run_brew_update, track_progress, enrich_details)
+
+
 def summarize_counts(packages: list[dict[str, Any]]) -> dict[str, int]:
     formulas = [pkg for pkg in packages if pkg.get("kind") == "formula"]
     casks = [pkg for pkg in packages if pkg.get("kind") == "cask"]
     outdated = [pkg for pkg in packages if pkg.get("outdated")]
     return {
+        "excluded_total": sum(bool(pkg.get("excluded")) for pkg in packages),
+        "managed_total": sum(pkg.get("provider", "homebrew") != "homebrew" for pkg in packages),
         "total": len(packages),
         "formulae": len(formulas),
+        "ports": sum(p.get("kind") == "port" for p in packages),
+        "tools": sum(p.get("kind") == "tool" for p in packages),
         "casks": len(casks),
         "outdated_total": len(outdated),
         "outdated_formulae": sum(1 for pkg in outdated if pkg.get("kind") == "formula"),
@@ -2033,7 +2048,33 @@ def summarize_counts(packages: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dict[str, Any]:
+def reuse_cached_package_details(packages: list[dict[str, Any]]) -> None:
+    previous = read_json(STATE_FILE) or {}
+    cached = {(p.get("kind"), p.get("name")): p for p in previous.get("packages", []) if isinstance(p, dict)}
+    for pkg in packages:
+        old = cached.get((pkg.get("kind"), pkg.get("name")), {})
+        same_installed = pkg.get("installed_version") == old.get("installed_version")
+        same_latest = pkg.get("latest_version") == old.get("latest_version")
+        if same_installed:
+            for key in ("current_release_date", "current_release_date_source"):
+                if key in old:
+                    pkg[key] = old[key]
+        if same_latest:
+            for key in ("latest_release_date", "latest_release_date_source"):
+                if key in old:
+                    pkg[key] = old[key]
+        if same_installed and same_latest:
+            for key in ("release_date", "release_date_source"):
+                if key in old:
+                    pkg[key] = old[key]
+        if pkg.get("description") == old.get("description") and old.get("description_he"):
+            pkg["description_he"] = old["description_he"]
+        if pkg.get("outdated") and pkg.get("latest_release_date"):
+            pkg["outdated_since"] = pkg["latest_release_date"]
+            pkg["days_since_outdated"] = compute_days_since(pkg["outdated_since"])
+
+
+def compute_homebrew_snapshot(run_brew_update: bool, track_progress: bool = False, *, enrich_details: bool = True, complete_progress: bool = True) -> dict[str, Any]:
     append_check_log("Starting Homebrew check")
     errors: list[str] = []
 
@@ -2102,6 +2143,7 @@ def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dic
         def _release_progress(done: int, total: int, pkg: dict[str, Any]) -> None:
             if not track_progress:
                 return
+            raise_if_cancel_requested()
             eta = estimate_eta_seconds(progress_started_at, done, total)
             current = f"{pkg.get('kind')}:{pkg.get('name')}"
             set_check_progress(
@@ -2123,11 +2165,15 @@ def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dic
                 current_package="",
             )
 
-        enrich_release_dates(packages, progress_callback=_release_progress if track_progress else None)
+        if enrich_details:
+            enrich_release_dates(packages, progress_callback=_release_progress if track_progress else None)
+        else:
+            reuse_cached_package_details(packages)
 
         def _translation_progress(done: int, total: int, pkg: dict[str, Any]) -> None:
             if not track_progress:
                 return
+            raise_if_cancel_requested()
             eta = estimate_eta_seconds(progress_started_at, done, total)
             current = f"{pkg.get('kind')}:{pkg.get('name')}"
             set_check_progress(
@@ -2149,8 +2195,10 @@ def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dic
                 current_package="",
             )
 
-        enrich_hebrew_descriptions(packages, progress_callback=_translation_progress if track_progress else None)
+        if enrich_details:
+            enrich_hebrew_descriptions(packages, progress_callback=_translation_progress if track_progress else None)
 
+        apply_update_policy(packages)
         packages.sort(key=lambda item: (str(item.get("kind")), str(item.get("name"))))
 
         snapshot = {
@@ -2161,12 +2209,12 @@ def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dic
             "packages": packages,
         }
 
-        atomic_write_json(STATE_FILE, snapshot)
+        # The combined inventory wrapper persists a complete snapshot.
         append_check_log(
             f"Check completed. total={snapshot['counts']['total']} outdated={snapshot['counts']['outdated_total']}"
         )
 
-        if track_progress:
+        if track_progress and complete_progress:
             set_check_progress(
                 running=False,
                 phase="completed",
@@ -2181,7 +2229,7 @@ def compute_snapshot(run_brew_update: bool, track_progress: bool = False) -> dic
 
         return snapshot
     except Exception as exc:
-        if track_progress:
+        if track_progress and complete_progress:
             set_check_progress(
                 running=False,
                 phase="error",
@@ -2212,7 +2260,7 @@ def normalize_selected_packages(raw_packages: Any) -> list[dict[str, str]]:
         kind = str(item.get("kind") or "").strip()
 
         validate_package_name(name)
-        if kind not in {"formula", "cask"}:
+        if kind not in {"formula", "cask", "port", "tool"}:
             raise ValueError("kind must be 'formula' or 'cask'")
 
         key = (kind, name)
@@ -2265,8 +2313,143 @@ def progress_result_item(result: dict[str, Any], *, started_at: str | None = Non
     }
     return item
 
+class UpgradeActivity:
+    """Translate explicit Homebrew output into conservative UI stage identifiers."""
+
+    def __init__(self, name: str):
+        self.lock = threading.Lock()
+        self.started_epoch = time.time()
+        self.monitor_stop = threading.Event()
+        self.state: dict[str, Any] = {
+            "target": name, "subject": name, "stage": "preparing",
+            "started_at": now_iso(), "stage_started_at": now_iso(),
+            "last_output_at": None, "technical_tail": [],
+        }
+        self.publish()
+
+    def monitor_build_logs(self) -> None:
+        def follow():
+            last_signature = None
+            while not self.monitor_stop.wait(1.5):
+                subject = self.state["subject"]
+                directory = Path.home() / "Library/Logs/Homebrew" / subject
+                candidates = [p for p in directory.glob("*.log") if not p.name.endswith(".cc.log")
+                              and p.stat().st_mtime >= self.started_epoch]
+                if not candidates:
+                    continue
+                path = max(candidates, key=lambda p: p.stat().st_mtime)
+                signature = (str(path), path.stat().st_size, path.stat().st_mtime_ns)
+                if signature == last_signature:
+                    continue
+                last_signature = signature
+                try:
+                    with path.open("rb") as stream:
+                        stream.seek(max(0, path.stat().st_size - 18000))
+                        tail = stream.read().decode(errors="replace")
+                    tasks = re.findall(r"\[(\d+)/(\d+)\]", tail)
+                    percentages = re.findall(r"\[\s*(\d+)%\]", tail)
+                    with self.lock:
+                        self.state["last_output_at"] = now_iso()
+                        if tasks:
+                            done, total = map(int, tasks[-1])
+                            self.state["build_progress"] = {"kind": "tasks", "done": done, "total": total, "percent": round(100 * done / max(1, total))}
+                            self.state["stage"] = "building"
+                        elif percentages:
+                            self.state["build_progress"] = {"kind": "reported_percent", "percent": int(percentages[-1])}
+                            self.state["stage"] = "building"
+                        self.publish()
+                except OSError:
+                    continue
+        self.monitor_thread = threading.Thread(target=follow, daemon=True)
+        self.monitor_thread.start()
+
+    def stop_monitor(self) -> None:
+        self.monitor_stop.set()
+        if hasattr(self, "monitor_thread"):
+            self.monitor_thread.join(timeout=2)
+
+    def publish(self) -> None:
+        with CHECK_PROGRESS_LOCK:
+            CHECK_PROGRESS["package_activity"] = {
+                **self.state, "technical_tail": list(self.state["technical_tail"]),
+            }
+
+    def observe(self, raw: str, source: str) -> None:
+        line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw).strip()
+        if not line:
+            return
+        with self.lock:
+            append_log(LOG_DIR / "brew-upgrades.log", f"[{source}] {line}")
+            self.state["last_output_at"] = now_iso()
+            self.state["technical_tail"] = (self.state["technical_tail"] + [line[-1000:]])[-12:]
+            stage = self.state["stage"]
+            subject = self.state["subject"]
+            dependency = re.match(r"==> (?:Installing|Upgrading) .+? dependency: (\S+)", line)
+            target = re.match(r"==> (?:Installing|Upgrading) (\S+)", line)
+            if source == "provider" and line.startswith("Downloading ready-to-use"):
+                stage = "downloading"
+            elif source == "provider" and line == "Verifying installed commands":
+                stage = "finishing"
+            elif dependency:
+                subject, stage = dependency.group(1), "dependency"
+            elif line.startswith("==> Fetching downloads for:") or line.startswith("==> Downloading "):
+                stage = "downloading"
+            elif line.startswith("==> Pouring "):
+                stage = "installing"
+            elif line.startswith("==> ") and re.match(
+                r"(?:\./bootstrap|\./configure|cmake\b|make\b|gmake\b|ninja\b|meson\b|cargo\b|go build\b)", line[4:]
+            ):
+                stage = "building"
+            elif target and target.group(1) == self.state["target"]:
+                subject, stage = self.state["target"], "installing"
+            elif line.startswith("==> Caveats") or line.startswith("==> Running `brew cleanup"):
+                stage = "finishing"
+            if stage != self.state["stage"] or subject != self.state["subject"]:
+                self.state["stage_started_at"] = now_iso()
+                self.state.pop("build_progress", None)
+            self.state.update(stage=stage, subject=subject)
+            self.publish()
+
+
 def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     validate_package_name(name)
+    if is_excluded(name, kind):
+        return {"ok": False, "skipped": True, "reason": "excluded", "name": name, "kind": kind,
+                "code": 78, "stdout": "", "stderr": "Package is excluded from updates"}
+    if kind == "tool":
+        from update_engine import Engine
+        engine = Engine(sys.modules[__name__])
+        state = compute_snapshot(False, enrich_details=False)
+        pkg = package_from_snapshot(state, name, kind)
+        if not pkg:
+            raise ValueError("Managed installation not found")
+        item = engine.plan([pkg])[0]
+        if not item['ready']:
+            raise ValueError(item.get('detail', item.get('reason', 'Unavailable')))
+        return dict(engine.install_tool(item), kind='tool')
+    if kind == "port":
+        pkg = next((p for p in macports_provider.inventory(sys.modules[__name__]) if p["name"] == name), None)
+        if not pkg:
+            raise ValueError("MacPorts package is not installed; use migration approval")
+        return macports_provider.upgrade(sys.modules[__name__], pkg)
+    settings = load_settings()
+    from update_engine import Engine
+    engine = Engine(sys.modules[__name__])
+    if routes.route_for(name, kind, settings) != "homebrew" and name not in routes.read_records(TOOLS_ROOT):
+        state = read_json(STATE_FILE) or compute_snapshot(False, enrich_details=False)
+        pkg = package_from_snapshot(state, name, kind)
+        if not pkg:
+            raise ValueError("Package is not in the installed inventory")
+        item = engine.plan([pkg])[0]
+        if not item["ready"]:
+            return {"ok": False, "name": name, "kind": kind, "code": 78, "stdout": "",
+                    "stderr": item.get("detail", item["reason"]), "reason": item["reason"]}
+        return engine.install_tool(item)
+    if kind == "formula" and settings["binary_only"]:
+        blockers = routes.bottle_blockers(name, engine.catalog(), engine.installed(), settings["excluded_packages"])
+        if blockers:
+            return {"ok": False, "name": name, "kind": kind, "code": 78, "stdout": "", "reason": "source_required",
+                    "stderr": "Source build was deferred: " + ", ".join(x["name"] for x in blockers)}
     b = brew_bin()
 
     if kind == "formula":
@@ -2277,8 +2460,32 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
         raise ValueError("kind must be 'formula' or 'cask'")
 
     append_check_log(f"Starting upgrade: {kind}:{name}")
-    res = run_cmd(cmd, timeout=7200, cancellable=True)
-    ok = res.code == 0
+    append_log(LOG_DIR / "brew-upgrades.log", f"Starting upgrade: {kind}:{name}")
+    activity = UpgradeActivity(name)
+    activity.monitor_build_logs()
+    source_fallback = False
+
+    def observe(line: str, source: str) -> None:
+        nonlocal source_fallback
+        activity.observe(line, source)
+        if settings["binary_only"] and activity.state["stage"] == "building":
+            source_fallback = True
+            with ACTIVE_COMMAND_LOCK:
+                proc = ACTIVE_COMMAND.get("process")
+            terminate_process(proc)
+
+    try:
+        res = run_cmd(cmd, timeout=settings["upgrade_timeout_seconds"] or None, cancellable=True,
+                      on_output=observe, env_override=engine.brew_env)
+    finally:
+        activity.stop_monitor()
+        with CHECK_PROGRESS_LOCK:
+            CHECK_PROGRESS["package_activity"] = None
+    ok = res.code == 0 and not source_fallback
+    if source_fallback:
+        res.code = 78
+        res.stderr += "\nUnexpected source fallback stopped by binary-only policy"
+    append_log(LOG_DIR / "brew-upgrades.log", f"Finished upgrade: {kind}:{name}; exit_code={res.code}")
     canceled = bool(is_cancel_requested() and not ok)
 
     if ok:
@@ -2296,53 +2503,7 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
         "code": res.code,
         "stdout": res.stdout,
         "stderr": res.stderr,
-    }
-
-
-def run_brew_update_stage(
-    *,
-    track_progress: bool,
-    total: int,
-    planned_packages: list[dict[str, Any]],
-    completed_progress: list[dict[str, Any]],
-    failed_progress: list[dict[str, Any]],
-    remaining_progress: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if track_progress:
-        set_check_progress(
-            phase="brew_update",
-            message="Running brew update",
-            done=0,
-            total=total,
-            eta_seconds=None,
-            current_package="brew update",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=is_cancel_requested(),
-            canceled=False,
-        )
-
-    append_check_log("Running brew update before package upgrades...")
-    b = brew_bin()
-    res = run_cmd([b, "update"], timeout=3600, cancellable=True)
-    ok = res.code == 0
-    canceled = bool(is_cancel_requested() and not ok)
-    warning = ""
-
-    if ok:
-        append_check_log("brew update completed before package upgrades")
-    elif canceled:
-        append_check_log("brew update cancelled before package upgrades")
-    else:
-        warning = str(res.stderr or res.stdout or "unknown error")
-        append_check_log(f"Warning: brew update failed before package upgrades: {warning}")
-
-    return {
-        "ok": ok,
-        "canceled": canceled,
-        "warning": warning,
+        "reason": "source_fallback" if source_fallback else "",
     }
 
 
@@ -2419,8 +2580,8 @@ def fallback_snapshot_with_error(previous_snapshot: dict[str, Any] | None, error
 
 def safe_refresh_snapshot(previous_snapshot: dict[str, Any] | None = None) -> tuple[dict[str, Any], str | None]:
     try:
-        refreshed = compute_snapshot(run_brew_update=False)
-        return refreshed, None
+        refreshed = compute_snapshot(run_brew_update=False, enrich_details=False)
+        return refreshed, ("Partial provider inventory" if refreshed.get("partial") else None)
     except Exception as exc:
         detail = str(exc)
         append_check_log(f"Warning: package inventory refresh failed after update: {detail}")
@@ -2429,420 +2590,63 @@ def safe_refresh_snapshot(previous_snapshot: dict[str, Any] | None = None) -> tu
 
 
 def run_update_all(track_progress: bool = False) -> dict[str, Any]:
-    state = read_json(STATE_FILE) or compute_snapshot(run_brew_update=False)
-    outdated = [pkg for pkg in state.get("packages", []) if pkg.get("outdated")]
-    total = len(outdated)
-    planned_packages = [
-        progress_package_item(str(pkg.get("name") or ""), str(pkg.get("kind") or ""))
-        for pkg in outdated
-    ]
-    completed_progress: list[dict[str, Any]] = []
-    failed_progress: list[dict[str, Any]] = []
-    remaining_progress = list(planned_packages)
+    from update_engine import Engine
+    return Engine(sys.modules[__name__]).run(track_progress=track_progress)
 
-    if track_progress:
-        reset_check_progress_for_run()
-        set_check_progress(
-            operation_name="update_all",
-            phase="updating_packages",
-            message="Starting package updates",
-            done=0,
-            total=total,
-            eta_seconds=None,
-            current_package="",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=False,
-            canceled=False,
-        )
-
-    results: list[dict[str, Any]] = []
-    started = read_check_progress().get("started_at") if track_progress else None
-    cancelled = False
-    brew_update_warning: str | None = None
-
-    preflight = run_brew_update_stage(
-        track_progress=track_progress,
-        total=total,
-        planned_packages=planned_packages,
-        completed_progress=completed_progress,
-        failed_progress=failed_progress,
-        remaining_progress=remaining_progress,
-    )
-    if preflight.get("warning"):
-        brew_update_warning = str(preflight.get("warning") or "")
-    if preflight.get("canceled"):
-        cancelled = True
-
-    for idx, pkg in enumerate(outdated, start=1):
-        if cancelled:
-            break
-
-        if is_cancel_requested():
-            cancelled = True
-            break
-
-        name = str(pkg.get("name") or "")
-        kind = str(pkg.get("kind") or "")
-        package_started_at = now_iso()
-
-        if track_progress:
-            eta = estimate_eta_from_completed_packages(completed_progress, total)
-            if eta is None:
-                eta = estimate_eta_seconds(started, idx - 1, total)
-            set_check_progress(
-                phase="updating_packages",
-                message=f"Updating package {idx}/{total}: {name}",
-                done=idx - 1,
-                total=total,
-                eta_seconds=eta,
-                current_package=f"{kind}:{name}",
-                planned_packages=planned_packages,
-                completed_packages=completed_progress,
-                failed_packages=failed_progress,
-                remaining_packages=remaining_progress,
-                cancel_requested=is_cancel_requested(),
-                canceled=False,
-            )
-
-        result = run_upgrade(name, kind)
-        results.append(result)
-        result_item = progress_result_item(result, started_at=package_started_at)
-        completed_progress.append(result_item)
-        if not result.get("ok"):
-            failed_progress.append(result_item)
-
-        remaining_progress = list(planned_packages[idx:])
-
-        if track_progress:
-            done_count = len(results)
-            eta = estimate_eta_from_completed_packages(completed_progress, total)
-            if eta is None:
-                eta = estimate_eta_seconds(started, done_count, total)
-            set_check_progress(
-                done=done_count,
-                total=total,
-                eta_seconds=eta,
-                current_package=f"{kind}:{name}",
-                completed_packages=completed_progress,
-                failed_packages=failed_progress,
-                remaining_packages=remaining_progress,
-                cancel_requested=is_cancel_requested(),
-            )
-
-        if result.get("canceled"):
-            cancelled = True
-            break
-
-    refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
-
-    entries = history_entries_from_results(
-        results,
-        refreshed,
-        snapshot_verified=refresh_error is None,
-        snapshot_error=refresh_error,
-    )
-    append_update_history_entries(entries)
-
-    if track_progress:
-        completion_message = "All package updates completed"
-        final_phase = "completed"
-        if cancelled:
-            completion_message = "Package updates canceled by user"
-            final_phase = "canceled"
-        elif refresh_error:
-            completion_message = "All package updates completed (inventory refresh warning)"
-
-        done_count = len(results)
-        set_check_progress(
-            running=False,
-            phase=final_phase,
-            message=completion_message,
-            done=done_count,
-            total=total,
-            eta_seconds=0,
-            current_package="",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=is_cancel_requested(),
-            canceled=cancelled,
-            error=None,
-            completed_at=now_iso(),
-        )
-
-    return {
-        "ok": (all(item.get("ok") for item in results) if results else True) and not cancelled,
-        "canceled": cancelled,
-        "brew_update_warning": brew_update_warning,
-        "attempted_count": len(results),
-        "remaining_count": len(remaining_progress),
-        "updated_count": sum(1 for item in results if item.get("ok")),
-        "failed_count": sum(1 for item in results if not item.get("ok")),
-        "results": results,
-        "inventory_refresh_error": refresh_error,
-        "snapshot": refreshed,
-    }
 
 def run_update_selected(selected_packages: list[dict[str, str]], track_progress: bool = False) -> dict[str, Any]:
-    state = read_json(STATE_FILE) or compute_snapshot(run_brew_update=False)
+    from update_engine import Engine
+    return Engine(sys.modules[__name__]).run(selected_packages, track_progress=track_progress)
 
-    outdated_lookup: dict[tuple[str, str], dict[str, Any]] = {}
-    for pkg in state.get("packages", []) if isinstance(state, dict) else []:
-        if not isinstance(pkg, dict) or not pkg.get("outdated"):
-            continue
-        name = str(pkg.get("name") or "").strip()
-        kind = str(pkg.get("kind") or "").strip()
-        if not name or kind not in {"formula", "cask"}:
-            continue
-        outdated_lookup[(kind, name)] = pkg
-
-    targets: list[dict[str, str]] = []
-    skipped: list[dict[str, Any]] = []
-
-    for item in selected_packages:
-        name = str(item.get("name") or "").strip()
-        kind = str(item.get("kind") or "").strip()
-        key = (kind, name)
-
-        if key in outdated_lookup:
-            targets.append({"name": name, "kind": kind})
-            continue
-
-        skipped.append(
-            {
-                "ok": True,
-                "name": name,
-                "kind": kind,
-                "code": 0,
-                "stdout": "",
-                "stderr": "",
-                "skipped": True,
-                "reason": "not_outdated",
-            }
-        )
-
-    total = len(targets)
-    planned_packages = [
-        progress_package_item(item["name"], item["kind"])
-        for item in targets
-    ]
-    completed_progress: list[dict[str, Any]] = []
-    failed_progress: list[dict[str, Any]] = []
-    remaining_progress = list(planned_packages)
-
-    if track_progress:
-        reset_check_progress_for_run()
-        set_check_progress(
-            operation_name="update_selected",
-            phase="updating_packages",
-            message="Starting selected package updates" if total > 0 else "No selected packages require update",
-            done=0,
-            total=total,
-            eta_seconds=0 if total == 0 else None,
-            current_package="",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=False,
-            canceled=False,
-        )
-
-    results: list[dict[str, Any]] = []
-    started = read_check_progress().get("started_at") if track_progress else None
-    cancelled = False
-    brew_update_warning: str | None = None
-
-    if total > 0:
-        preflight = run_brew_update_stage(
-            track_progress=track_progress,
-            total=total,
-            planned_packages=planned_packages,
-            completed_progress=completed_progress,
-            failed_progress=failed_progress,
-            remaining_progress=remaining_progress,
-        )
-        if preflight.get("warning"):
-            brew_update_warning = str(preflight.get("warning") or "")
-        if preflight.get("canceled"):
-            cancelled = True
-
-    for idx, pkg in enumerate(targets, start=1):
-        if cancelled:
-            break
-
-        if is_cancel_requested():
-            cancelled = True
-            break
-
-        name = str(pkg.get("name") or "")
-        kind = str(pkg.get("kind") or "")
-        package_started_at = now_iso()
-
-        if track_progress:
-            eta = estimate_eta_from_completed_packages(completed_progress, total)
-            if eta is None:
-                eta = estimate_eta_seconds(started, idx - 1, total)
-            set_check_progress(
-                phase="updating_packages",
-                message=f"Updating package {idx}/{total}: {name}",
-                done=idx - 1,
-                total=total,
-                eta_seconds=eta,
-                current_package=f"{kind}:{name}",
-                planned_packages=planned_packages,
-                completed_packages=completed_progress,
-                failed_packages=failed_progress,
-                remaining_packages=remaining_progress,
-                cancel_requested=is_cancel_requested(),
-                canceled=False,
-            )
-
-        result = run_upgrade(name, kind)
-        results.append(result)
-        result_item = progress_result_item(result, started_at=package_started_at)
-        completed_progress.append(result_item)
-        if not result.get("ok"):
-            failed_progress.append(result_item)
-
-        remaining_progress = list(planned_packages[idx:])
-
-        if track_progress:
-            done_count = len(results)
-            eta = estimate_eta_from_completed_packages(completed_progress, total)
-            if eta is None:
-                eta = estimate_eta_seconds(started, done_count, total)
-            set_check_progress(
-                done=done_count,
-                total=total,
-                eta_seconds=eta,
-                current_package=f"{kind}:{name}",
-                completed_packages=completed_progress,
-                failed_packages=failed_progress,
-                remaining_packages=remaining_progress,
-                cancel_requested=is_cancel_requested(),
-            )
-
-        if result.get("canceled"):
-            cancelled = True
-            break
-
-    refresh_error: str | None = None
-    refreshed = state
-
-    if total > 0:
-        refreshed, refresh_error = safe_refresh_snapshot(previous_snapshot=state)
-
-        entries = history_entries_from_results(
-            results,
-            refreshed,
-            snapshot_verified=refresh_error is None,
-            snapshot_error=refresh_error,
-        )
-        append_update_history_entries(entries)
-
-    combined_results = [*results, *skipped]
-
-    for skipped_item in skipped:
-        skipped_progress = progress_result_item(skipped_item)
-        completed_progress.append(skipped_progress)
-
-    if track_progress:
-        completion_message = "Selected package updates completed"
-        final_phase = "completed"
-        if total == 0:
-            completion_message = "Selected packages are already up to date"
-        elif cancelled:
-            completion_message = "Selected package updates canceled by user"
-            final_phase = "canceled"
-        elif refresh_error:
-            completion_message = "Selected package updates completed (inventory refresh warning)"
-
-        done_count = len(results)
-        set_check_progress(
-            running=False,
-            phase=final_phase,
-            message=completion_message,
-            done=done_count,
-            total=total,
-            eta_seconds=0,
-            current_package="",
-            planned_packages=planned_packages,
-            completed_packages=completed_progress,
-            failed_packages=failed_progress,
-            remaining_packages=remaining_progress,
-            cancel_requested=is_cancel_requested(),
-            canceled=cancelled,
-            error=None,
-            completed_at=now_iso(),
-        )
-
-    return {
-        "ok": (all(item.get("ok") for item in results) if results else True) and not cancelled,
-        "canceled": cancelled,
-        "brew_update_warning": brew_update_warning,
-        "selected_count": len(selected_packages),
-        "attempted_count": len(results),
-        "remaining_count": len(remaining_progress),
-        "skipped_count": len(skipped),
-        "updated_count": sum(1 for item in results if item.get("ok")),
-        "failed_count": sum(1 for item in results if not item.get("ok")),
-        "results": combined_results,
-        "inventory_refresh_error": refresh_error,
-        "snapshot": refreshed,
-    }
 
 def escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def send_notification(snapshot: dict[str, Any]) -> None:
+def send_notification(snapshot: dict[str, Any], notifier_override=None) -> None:
     outdated = [pkg for pkg in snapshot.get("packages", []) if pkg.get("outdated")]
-
     if not outdated:
-        title = "Homebrew"
-        message = "✅ All packages are up to date"
+        title = "Mac Update Manager"
+        message = "All packages are up to date"
     else:
         names = [str(pkg.get("name")) for pkg in outdated]
         preview = ", ".join(names[:5])
         suffix = "" if len(names) <= 5 else f", +{len(names)-5} more"
-        title = "Homebrew Updates Available"
+        title = "Mac Updates Available"
         message = f"{len(names)} package(s): {preview}{suffix}"
 
-    notifier = shutil.which("terminal-notifier")
-    if notifier:
-        cmd = [
-            notifier,
-            "-title",
-            title,
-            "-subtitle",
-            "Homebrew Update Check",
-            "-message",
-            message,
-            "-execute",
-            str(OPEN_APP_SCRIPT),
-        ]
-        res = run_cmd(cmd, timeout=15)
-        if res.code == 0:
-            append_check_log(f"Notification sent (clickable): {message}")
-        else:
-            append_check_log(f"Warning: terminal-notifier failed: {res.stderr or res.stdout}")
-        return
+    if snapshot.get("notification_test"):
+        title = "Mac Update Manager"
+        message = "Notification test: the MacPorts migration was verified"
+    helper = Path.home() / "Applications" / "Homebrew Update Notifications.app" / "Contents" / "MacOS" / "terminal-notifier"
+    route = read_json(DATA_DIR / 'notifier-route.json') or {}
+    selected = route.get('path') if route.get('provider') in {'macports', 'application_helper'} else None
+    notifier = notifier_override or selected or (str(helper) if helper.is_file() else shutil.which("terminal-notifier"))
+    if not notifier:
+        raise RuntimeError("The Homebrew notification helper is not installed")
 
-    script = (
-        f'display notification "{escape_applescript(message)}" '
-        f'with title "{escape_applescript(title)}" '
-        'subtitle "Homebrew Update Check"'
-    )
-    res = run_cmd(["osascript", "-e", script], timeout=10)
-    if res.code == 0:
-        append_check_log(f"Notification sent (fallback): {message}")
-    else:
-        append_check_log(f"Warning: osascript notification failed: {res.stderr or res.stdout}")
+    # Version 3 uses UserNotifications and stores click actions with macOS,
+    # so this command exits without leaving a listener running.
+    version = run_cmd([notifier, "-version"], timeout=10)
+    version_text = f"{version.stdout} {version.stderr}"
+    if not re.search(r"\b[3-9]\.\d+", version_text):
+        raise RuntimeError("Homebrew notifications require terminal-notifier 3 or later")
+
+    command = "/bin/bash " + shlex.quote(str(OPEN_APP_SCRIPT))
+    result = run_cmd([
+        notifier, "-title", title,
+        "-subtitle", "Mac Update Check",
+        "-message", message,
+        "-sound", "default",
+        "-group", "homebrew-update-manager",
+        "-execute", command,
+    ], timeout=60)
+    if result.code != 0:
+        detail = result.stderr or result.stdout or f"exit code {result.code}"
+        append_check_log(f"Notification failed: {detail}")
+        raise RuntimeError(f"macOS notification failed: {detail}")
+    append_check_log(f"Notification accepted by macOS: {message}")
+
 
 
 class BrewUpdatesHandler(BaseHTTPRequestHandler):
@@ -2871,6 +2675,42 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _mac_operation(self):
+        if self.path not in {"/api/migrations/plan", "/api/migrations/approve", "/api/macports/sync"}:
+            return False
+        if self.headers.get('Content-Type', '').split(';')[0] != 'application/json' or self.headers.get('Origin'):
+            self._send_json(403, {'ok': False, 'detail': 'Desktop JSON requests only'})
+            return True
+        body = self._read_json_body()
+        def operation():
+            reset_check_progress_for_run()
+            set_check_progress(operation_name="migration", phase="preflight", running=True,
+                               message="Checking MacPorts ready packages", eta_seconds=None)
+            try:
+                if self.path == "/api/migrations/plan":
+                    return {"ok": True, "plan": mac_manager.migration_plan(sys.modules[__name__], body.get("name"))}
+                if self.path == "/api/migrations/approve":
+                    result = mac_manager.approve(sys.modules[__name__], body.get("id"))
+                    return {"ok": True, "migration": result, "snapshot": compute_snapshot(False, enrich_details=False)}
+                result = macports_provider.privileged(sys.modules[__name__], "sync")
+                if result.code: raise RuntimeError(result.stderr)
+                mac_manager.catalog_refresh.mark_success(sys.modules[__name__])
+                return {"ok": True}
+            finally:
+                with CHECK_PROGRESS_LOCK:
+                    CHECK_PROGRESS["package_activity"] = None
+                canceled = isinstance(sys.exc_info()[1], OperationCancelledError)
+                set_check_progress(running=False, phase='canceled' if canceled else ('error' if sys.exc_info()[0] else 'completed'),
+                                   canceled=canceled, current_package=None,
+                                   completed_at=now_iso(), eta_seconds=None if sys.exc_info()[0] else 0)
+        try:
+            self._send_json(200, run_exclusive("migration", operation))
+        except BusyError as exc:
+            self._send_json(409, {"ok": False, "detail": str(exc)})
+        except Exception as exc:
+            self._send_json(400, {"ok": False, "detail": str(exc)})
+        return True
+
     def do_GET(self):
         if self.path == "/health":
             operation = read_current_operation()
@@ -2881,6 +2721,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     "app": APP_NAME,
                     "operation": operation,
                     "project_root": str(PROJECT_ROOT),
+                    "protocol": 6,
                 },
             )
             return
@@ -2893,7 +2734,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     {
                         "ok": True,
                         "settings": {
-                            "brew_path": str(settings.get("brew_path") or ""),
+                            **settings,
                         },
                         "scheduler": scheduler_status_payload(settings),
                     },
@@ -2923,15 +2764,31 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/state":
             state = read_json(STATE_FILE)
-            if not state:
+            if not state or state.get("app") != APP_NAME or "providers" not in state:
                 try:
-                    state = run_exclusive("initial_snapshot", lambda: compute_snapshot(run_brew_update=False))
+                    state = run_exclusive("initial_snapshot", lambda: compute_snapshot(run_brew_update=False, enrich_details=False))
                 except BusyError as exc:
                     self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
                     return
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": "state_unavailable", "detail": str(exc)})
                     return
+            apply_update_policy(state.get("packages", []))
+            state["counts"] = summarize_counts(state.get("packages", []))
+            state["update_plan"] = read_json(UPDATE_PLAN_FILE)
+            blocked = {(x["kind"], x["name"]): x for x in (state["update_plan"] or {}).get("items", []) if not x["ready"]}
+            for pkg in state.get("packages", []):
+                item = blocked.get((pkg["kind"], pkg["name"]))
+                if pkg.get("inventory_stale"):
+                    pkg["update_block_reason"] = "inventory_unavailable"
+                    continue
+                pkg.pop("update_block_reason", None)
+                if (pkg.get('kind') == 'formula' and load_settings()['binary_only'] and
+                    any(o['name'] == pkg['name'] and o.get('source_blockers') for o in state.get('migrations', []))):
+                    pkg['update_block_reason'] = 'source_required'
+                if item and pkg.get("outdated") and item["version"] == pkg["latest_version"]:
+                    if item["reason"] != "source_required" or load_settings()["binary_only"]:
+                        pkg["update_block_reason"] = item["reason"]
             self._send_json(200, state)
             return
 
@@ -2965,6 +2822,43 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self):
+        if self._mac_operation():
+            return
+        if self.path == "/api/settings/update-policy":
+            try:
+                if read_current_operation().get("running"):
+                    raise BusyError("Wait for the active operation before changing update policy")
+                body = self._read_json_body()
+                settings = load_settings()
+                settings.update(normalize_update_policy({**settings, **body}))
+                save_settings(settings)
+                self._send_json(200, {"ok": True, "settings": settings})
+            except (ValueError, TypeError) as exc:
+                self._send_json(400, {"ok": False, "detail": str(exc)})
+            except BusyError as exc:
+                self._send_json(409, {"ok": False, "detail": str(exc)})
+            return
+        if self.path == "/api/update-plan":
+            try:
+                from update_engine import Engine
+                def prepare():
+                    reset_check_progress_for_run()
+                    set_check_progress(operation_name="update_plan", phase="preflight", eta_seconds=None)
+                    state = compute_snapshot(False, enrich_details=False)
+                    items = Engine(sys.modules[__name__]).plan([p for p in state["packages"] if p.get("outdated") and not p.get("excluded")])
+                    raise_if_cancel_requested()
+                    set_check_progress(running=False, phase="completed", message="Update routes checked", current_package=None, completed_at=now_iso(), eta_seconds=0)
+                    return {"ok": True, "items": items}
+                self._send_json(200, run_exclusive("update_plan", prepare))
+            except BusyError as exc:
+                self._send_json(409, {"ok": False, "detail": str(exc)})
+            except Exception as exc:
+                canceled = isinstance(exc, OperationCancelledError)
+                set_check_progress(running=False, phase='canceled' if canceled else 'error',
+                                   canceled=canceled, error=None if canceled else str(exc),
+                                   current_package=None, eta_seconds=None, completed_at=now_iso())
+                self._send_json(500, {"ok": False, "detail": str(exc)})
+            return
         if self.path == "/api/cancel-operation":
             payload = request_cancel_current_operation()
             if payload.get("ok"):
@@ -3066,6 +2960,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "snapshot": snapshot})
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
+            except OperationCancelledError:
+                self._send_json(200, {"ok": True, "canceled": True})
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": "check_failed", "detail": str(exc)})
             return
@@ -3085,12 +2981,12 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     reset_check_progress_for_run()
                     set_check_progress(
                         operation_name="update_one",
-                        phase="brew_update",
-                        message="Running brew update",
+                        phase="updating_packages",
+                        message=f"Updating {name}",
                         done=0,
                         total=1,
                         eta_seconds=None,
-                        current_package="brew update",
+                        current_package=f"{kind}:{name}",
                         planned_packages=planned,
                         completed_packages=completed,
                         failed_packages=failed,
@@ -3100,74 +2996,38 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         error=None,
                     )
 
-                    preflight = run_brew_update_stage(
-                        track_progress=True,
+                    package_started_at = now_iso()
+                    result = run_upgrade(name, kind)
+                    result_item = progress_result_item(result, started_at=package_started_at)
+                    completed.append(result_item)
+                    if not result.get("ok"):
+                        failed.append(result_item)
+
+                    cancelled = bool(result.get("canceled"))
+
+                    set_check_progress(
+                        done=1,
                         total=1,
-                        planned_packages=planned,
-                        completed_progress=completed,
-                        failed_progress=failed,
-                        remaining_progress=planned,
+                        eta_seconds=0,
+                        current_package=f"{kind}:{name}",
+                        completed_packages=completed,
+                        failed_packages=failed,
+                        remaining_packages=[],
+                        cancel_requested=is_cancel_requested(),
+                        canceled=cancelled,
                     )
 
-                    brew_update_warning = str(preflight.get("warning") or "")
-                    result: dict[str, Any] = {
-                        "ok": False,
-                        "canceled": False,
-                        "name": name,
-                        "kind": kind,
-                        "code": 0,
-                        "stdout": "",
-                        "stderr": "",
-                    }
-                    cancelled = False
-                    done_count = 0
-
-                    if preflight.get("canceled"):
-                        cancelled = True
-                        result.update(
-                            {
-                                "canceled": True,
-                                "code": 130,
-                                "stderr": "Cancelled during brew update preflight",
-                            }
-                        )
-                    else:
-                        set_check_progress(
-                            phase="updating_packages",
-                            message=f"Updating package 1/1: {name}",
-                            done=0,
-                            total=1,
-                            eta_seconds=None,
-                            current_package=f"{kind}:{name}",
-                            planned_packages=planned,
-                            completed_packages=completed,
-                            failed_packages=failed,
-                            remaining_packages=planned,
-                            cancel_requested=is_cancel_requested(),
-                            canceled=False,
-                        )
-
-                        package_started_at = now_iso()
-                        result = run_upgrade(name, kind)
-                        result_item = progress_result_item(result, started_at=package_started_at)
-                        completed.append(result_item)
-                        if not result.get("ok"):
-                            failed.append(result_item)
-
-                        cancelled = bool(result.get("canceled"))
-                        done_count = 1
-
-                        set_check_progress(
-                            done=done_count,
-                            total=1,
-                            eta_seconds=0,
-                            current_package=f"{kind}:{name}",
-                            completed_packages=completed,
-                            failed_packages=failed,
-                            remaining_packages=[],
-                            cancel_requested=is_cancel_requested(),
-                            canceled=cancelled,
-                        )
+                    set_check_progress(
+                        phase="preparing",
+                        message="Refreshing package inventory" if not cancelled else "Refreshing package inventory after cancellation",
+                        current_package="",
+                        planned_packages=planned,
+                        completed_packages=completed,
+                        failed_packages=failed,
+                        remaining_packages=[],
+                        cancel_requested=is_cancel_requested(),
+                        canceled=cancelled,
+                    )
 
                     snapshot, refresh_error = safe_refresh_snapshot(previous_snapshot=previous_snapshot)
 
@@ -3187,7 +3047,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="completed",
                             message=completed_message,
-                            done=done_count,
+                            done=1,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -3205,7 +3065,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="canceled",
                             message=f"Update canceled for {name}",
-                            done=done_count,
+                            done=1,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -3223,7 +3083,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                             running=False,
                             phase="error",
                             message=f"Update failed for {name}",
-                            done=done_count,
+                            done=1,
                             total=1,
                             eta_seconds=0,
                             current_package="",
@@ -3239,7 +3099,6 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
                     return {
                         "result": result,
-                        "brew_update_warning": brew_update_warning or None,
                         "snapshot": snapshot,
                         "inventory_refresh_error": refresh_error,
                     }
@@ -3286,17 +3145,53 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
 def run_server(host: str, port: int) -> None:
     ensure_dirs()
+    journal = read_json(RUN_JOURNAL_FILE)
+    if journal:
+        plan = journal.get("plan", [])
+        results = journal.get("results", [])
+        ready = [progress_package_item(p["name"], p["kind"]) for p in plan if p.get("ready")]
+        completed = [{**progress_result_item(r, started_at=r.get("started_at")), "completed_at": r.get("completed_at")}
+                     for r in results]
+        phase = journal.get("status", "error")
+        interrupted = phase == "running"
+        set_check_progress(running=False, operation_name="update_all", phase="error" if interrupted else phase,
+                           message="Previous run was interrupted; refresh installed versions before retrying" if interrupted else "Previous update results restored",
+                           started_at=journal.get("started_at"), completed_at=journal.get("completed_at"),
+                           done=len(results), total=len(ready), planned_packages=ready, completed_packages=completed,
+                           failed_packages=[r for r in completed if not r["ok"]], remaining_packages=ready[len(results):],
+                           eta_seconds=None if interrupted else 0, error="interrupted_run" if interrupted else None)
+        with CHECK_PROGRESS_LOCK:
+            CHECK_PROGRESS["deferred_packages"] = [p for p in plan if not p.get("ready")]
     append_service_log(f"Starting HTTP server on http://{host}:{port}")
     server = ThreadingHTTPServer((host, port), BrewUpdatesHandler)
+    shutdown_requested = threading.Event()
+
+    def request_shutdown(_signum, _frame) -> None:
+        if shutdown_requested.is_set():
+            return
+        shutdown_requested.set()
+        append_service_log("App closed; finishing active work before backend shutdown")
+
+        def finish_then_stop() -> None:
+            while read_current_operation().get("running") or read_parallel_check_state().get("running"):
+                time.sleep(0.25)
+            # shutdown() must run outside serve_forever()'s thread.
+            server.shutdown()
+
+        threading.Thread(target=finish_then_stop, daemon=True).start()
+
+    previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
     try:
         server.serve_forever()
     finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        server.server_close()
         append_service_log("HTTP server stopped")
 
 
 def run_check_only(notify: bool) -> int:
     ensure_dirs()
-    snapshot = compute_snapshot(run_brew_update=True)
+    snapshot = compute_snapshot(run_brew_update=True, enrich_details=False)
     if notify:
         send_notification(snapshot)
 

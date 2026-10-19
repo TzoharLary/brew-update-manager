@@ -1,0 +1,446 @@
+{
+  "scope": "One directory level in /Applications and ~/Applications; no system apps or nested app bundles.",
+  "apps": [
+    {
+      "name": "Android File Transfer.app",
+      "path": "/Applications/Android File Transfer.app",
+      "bundle_id": "com.google.android.mtpviewer",
+      "version": "1.0.12",
+      "build": "1.0.507.1136"
+    },
+    {
+      "name": "Antigravity IDE.app",
+      "path": "/Applications/Antigravity IDE.app",
+      "bundle_id": "com.google.antigravity-ide",
+      "version": "2.5.5",
+      "build": "2.5.5"
+    },
+    {
+      "name": "Antigravity.app",
+      "path": "/Applications/Antigravity.app",
+      "bundle_id": "com.google.antigravity",
+      "version": "2.19.1",
+      "build": "2.19.1"
+    },
+    {
+      "name": "Authenticator.app",
+      "path": "/Applications/Authenticator.app",
+      "bundle_id": "com.2stable.2fa",
+      "version": "4.0.9",
+      "build": "4962"
+    },
+    {
+      "name": "Blender.app",
+      "path": "/Applications/Blender.app",
+      "bundle_id": "org.blenderfoundation.blender",
+      "version": "4.4.3",
+      "build": "4.4.3 2025-04-29"
+    },
+    {
+      "name": "Bose Updater.app",
+      "path": "/Applications/Bose Updater.app",
+      "bundle_id": "com.bose.BoseUpdater",
+      "version": null,
+      "build": null
+    },
+    {
+      "name": "CCleaner.app",
+      "path": "/Applications/CCleaner.app",
+      "bundle_id": "com.piriform.ccleaner",
+      "version": "2.11",
+      "build": "194"
+    },
+    {
+      "name": "ChatGPT.app",
+      "path": "/Applications/ChatGPT.app",
+      "bundle_id": "com.openai.codex",
+      "version": "26.1013.40934",
+      "build": "20770"
+    },
+    {
+      "name": "Copilot.app",
+      "path": "/Applications/Copilot.app",
+      "bundle_id": "com.microsoft.m365copilot",
+      "version": "152.0.4191.72",
+      "build": "152.0.4191.72"
+    },
+    {
+      "name": "Cursor.app",
+      "path": "/Applications/Cursor.app",
+      "bundle_id": "com.todesktop.230313mzl4w4u92",
+      "version": "1.2.2",
+      "build": "1.2.2"
+    },
+    {
+      "name": "Discord.app",
+      "path": "/Applications/Discord.app",
+      "bundle_id": "com.hnc.Discord",
+      "version": "0.0.402",
+      "build": "0.0.402"
+    },
+    {
+      "name": "Docker.app",
+      "path": "/Applications/Docker.app",
+      "bundle_id": "com.docker.docker",
+      "version": "4.93.0",
+      "build": "240920"
+    },
+    {
+      "name": "Figma.app",
+      "path": "/Applications/Figma.app",
+      "bundle_id": "com.figma.Desktop",
+      "version": "125.9.10",
+      "build": "125.9.10"
+    },
+    {
+      "name": "Firefox.app",
+      "path": "/Applications/Firefox.app",
+      "bundle_id": "org.mozilla.firefox",
+      "version": "115.0.2",
+      "build": "11523.7.10"
+    },
+    {
+      "name": "Garmin Express.app",
+      "path": "/Applications/Garmin Express.app",
+      "bundle_id": "com.garmin.renu.client",
+      "version": "7.22.1.0",
+      "build": "7220100"
+    },
+    {
+      "name": "GitHub Desktop.app",
+      "path": "/Applications/GitHub Desktop.app",
+      "bundle_id": "com.github.GitHubClient",
+      "version": "3.4.20",
+      "build": "3.4.20"
+    },
+    {
+      "name": "Google Chrome.app",
+      "path": "/Applications/Google Chrome.app",
+      "bundle_id": "com.google.Chrome",
+      "version": "155.0.8059.80",
+      "build": "8059.80"
+    },
+    {
+      "name": "Google Docs.app",
+      "path": "/Applications/Google Docs.app",
+      "bundle_id": "com.google.drivefs.shortcuts.docs",
+      "version": "132.0",
+      "build": "132.0.0"
+    },
+    {
+      "name": "Google Drive.app",
+      "path": "/Applications/Google Drive.app",
+      "bundle_id": "com.google.drivefs",
+      "version": "132.0",
+      "build": "132.0.0"
+    },
+    {
+      "name": "Google Sheets.app",
+      "path": "/Applications/Google Sheets.app",
+      "bundle_id": "com.google.drivefs.shortcuts.sheets",
+      "version": "132.0",
+      "build": "132.0.0"
+    },
+    {
+      "name": "Google Slides.app",
+      "path": "/Applications/Google Slides.app",
+      "bundle_id": "com.google.drivefs.shortcuts.slides",
+      "version": "132.0",
+      "build": "132.0.0"
+    },
+    {
+      "name": "Homebrew Update Manager.app",
+      "path": "/Applications/Homebrew Update Manager.app",
+      "bundle_id": "com.tzoharlary.brewupdatemanager",
+      "version": "1.1.18",
+      "build": "1.1.18"
+    },
+    {
+      "name": "JetBrains Toolbox.app",
+      "path": "/Applications/JetBrains Toolbox.app",
+      "bundle_id": "com.jetbrains.toolbox",
+      "version": "2.6.2.41321",
+      "build": "2.6.2.41321"
+    },
+    {
+      "name": "MKPlayer.app",
+      "path": "/Applications/MKPlayer.app",
+      "bundle_id": "com.rockysandstudio.MKPlayer",
+      "version": "1.6.2",
+      "build": "52"
+    },
+    {
+      "name": "Microsoft Defender Shim.app",
+      "path": "/Applications/Microsoft Defender Shim.app",
+      "bundle_id": "com.microsoft.wdav.shim",
+      "version": "101.26060.0000",
+      "build": "101.26060.0000"
+    },
+    {
+      "name": "Microsoft Edge.app",
+      "path": "/Applications/Microsoft Edge.app",
+      "bundle_id": "com.microsoft.edgemac",
+      "version": "155.0.4283.60",
+      "build": "155.0.4283.60"
+    },
+    {
+      "name": "Microsoft Excel.app",
+      "path": "/Applications/Microsoft Excel.app",
+      "bundle_id": "com.microsoft.Excel",
+      "version": "16.114",
+      "build": "16.114.26101123"
+    },
+    {
+      "name": "Microsoft OneNote.app",
+      "path": "/Applications/Microsoft OneNote.app",
+      "bundle_id": "com.microsoft.onenote.mac",
+      "version": "16.114",
+      "build": "16.114.26101123"
+    },
+    {
+      "name": "Microsoft Outlook.app",
+      "path": "/Applications/Microsoft Outlook.app",
+      "bundle_id": "com.microsoft.Outlook",
+      "version": "16.114",
+      "build": "16.114.26101123"
+    },
+    {
+      "name": "Microsoft PowerPoint.app",
+      "path": "/Applications/Microsoft PowerPoint.app",
+      "bundle_id": "com.microsoft.Powerpoint",
+      "version": "16.114",
+      "build": "16.114.26101123"
+    },
+    {
+      "name": "Microsoft Teams.app",
+      "path": "/Applications/Microsoft Teams.app",
+      "bundle_id": "com.microsoft.teams2",
+      "version": "26213.1006.5011.1671",
+      "build": "26213.1006.5011.1671"
+    },
+    {
+      "name": "Microsoft Word.app",
+      "path": "/Applications/Microsoft Word.app",
+      "bundle_id": "com.microsoft.Word",
+      "version": "16.114",
+      "build": "16.114.26101123"
+    },
+    {
+      "name": "MongoDB Compass.app",
+      "path": "/Applications/MongoDB Compass.app",
+      "bundle_id": "com.mongodb.compass",
+      "version": "1.46.2",
+      "build": "1.46.2"
+    },
+    {
+      "name": "MySQLWorkbench.app",
+      "path": "/Applications/MySQLWorkbench.app",
+      "bundle_id": "com.oracle.workbench.MySQLWorkbench",
+      "version": "8.0.38.CE",
+      "build": "1"
+    },
+    {
+      "name": "Notability.app",
+      "path": "/Applications/Notability.app",
+      "bundle_id": "com.gingerlabs.Notability",
+      "version": "16.12.5",
+      "build": "7172"
+    },
+    {
+      "name": "OneDrive.app",
+      "path": "/Applications/OneDrive.app",
+      "bundle_id": "com.microsoft.OneDrive",
+      "version": "26.119.0622",
+      "build": "26119.0622.0003"
+    },
+    {
+      "name": "Pages.app",
+      "path": "/Applications/Pages.app",
+      "bundle_id": "com.apple.iWork.Pages",
+      "version": "14.5",
+      "build": "7045.0.17"
+    },
+    {
+      "name": "PyCharm.app",
+      "path": "/Applications/PyCharm.app",
+      "bundle_id": "com.jetbrains.pycharm",
+      "version": "2025.1",
+      "build": "PY-251.23774.444"
+    },
+    {
+      "name": "Safari.app",
+      "path": "/Applications/Safari.app",
+      "bundle_id": "com.apple.Safari",
+      "version": "26.6.2",
+      "build": "21624.5.1.11.3"
+    },
+    {
+      "name": "Splashtop XDisplay.app",
+      "path": "/Applications/Splashtop XDisplay.app",
+      "bundle_id": "com.splashtop.Splashtop-XDisplay",
+      "version": "1.3.1.5",
+      "build": "1.3.1.5"
+    },
+    {
+      "name": "Spotify.app",
+      "path": "/Applications/Spotify.app",
+      "bundle_id": "com.spotify.client",
+      "version": "1.2.88.483",
+      "build": "1.2.88.483"
+    },
+    {
+      "name": "TeamViewer.app",
+      "path": "/Applications/TeamViewer.app",
+      "bundle_id": "com.teamviewer.TeamViewer",
+      "version": "15.54.6",
+      "build": "1"
+    },
+    {
+      "name": "Telegram.app",
+      "path": "/Applications/Telegram.app",
+      "bundle_id": "com.tdesktop.Telegram",
+      "version": "7.2.5",
+      "build": "7.2.5"
+    },
+    {
+      "name": "UniFlash.app",
+      "path": "/Applications/UniFlash.app",
+      "bundle_id": "com.apple.ScriptEditor.id.SysConfig",
+      "version": "1.0",
+      "build": null
+    },
+    {
+      "name": "Unzip - RAR ZIP 7Z Unarchiver.app",
+      "path": "/Applications/Unzip - RAR ZIP 7Z Unarchiver.app",
+      "bundle_id": "com.Ababe.UnzipAnyFile",
+      "version": "3.4",
+      "build": "56"
+    },
+    {
+      "name": "VLC.app",
+      "path": "/Applications/VLC.app",
+      "bundle_id": "org.videolan.vlc",
+      "version": "3.0.23",
+      "build": "3.0.23"
+    },
+    {
+      "name": "VPN Proxy Master.app",
+      "path": "/Applications/VPN Proxy Master.app",
+      "bundle_id": "co.jialeisun.vpnmaster",
+      "version": "3.1.0",
+      "build": "106"
+    },
+    {
+      "name": "VirtualBox.app",
+      "path": "/Applications/VirtualBox.app",
+      "bundle_id": "org.virtualbox.app.VirtualBox",
+      "version": "7.2.4",
+      "build": "7.2.4"
+    },
+    {
+      "name": "Visual Studio Code - Insiders.app",
+      "path": "/Applications/Visual Studio Code - Insiders.app",
+      "bundle_id": "com.microsoft.VSCodeInsiders",
+      "version": "1.143.0-insider",
+      "build": "1.143.0-insider"
+    },
+    {
+      "name": "Visual Studio Code 2.app",
+      "path": "/Applications/Visual Studio Code 2.app",
+      "bundle_id": "com.microsoft.VSCode",
+      "version": "1.125.1",
+      "build": "1.125.1"
+    },
+    {
+      "name": "Windows App.app",
+      "path": "/Applications/Windows App.app",
+      "bundle_id": "com.microsoft.rdc.macos",
+      "version": "11.4.1",
+      "build": "3092"
+    },
+    {
+      "name": "Xcode.app",
+      "path": "/Applications/Xcode.app",
+      "bundle_id": "com.apple.dt.Xcode",
+      "version": "26.5",
+      "build": "24943"
+    },
+    {
+      "name": "okawifi.app",
+      "path": "/Applications/okawifi.app",
+      "bundle_id": "com.internet.wifispeed.speedtest",
+      "version": "1.6.7",
+      "build": "2026062301"
+    },
+    {
+      "name": "uniflash_sl.9.3.0.5401.app",
+      "path": "/Applications/uniflash_sl.9.3.0.5401.app",
+      "bundle_id": "com.installbuilder.appinstaller",
+      "version": "9.3.0",
+      "build": "9.3.0"
+    },
+    {
+      "name": "vibe.app",
+      "path": "/Applications/vibe.app",
+      "bundle_id": "github.com.thewh1teagle.vibe",
+      "version": "3.0.19",
+      "build": "3.0.19"
+    },
+    {
+      "name": "zoom.us.app",
+      "path": "/Applications/zoom.us.app",
+      "bundle_id": "us.zoom.xos",
+      "version": "6.6.10 (69071)",
+      "build": "6.6.10.69071"
+    },
+    {
+      "name": "AwakeBar.app",
+      "path": "/Users/tzoharlary/Applications/AwakeBar.app",
+      "bundle_id": "org.tidhar.awakebar",
+      "version": "1.0",
+      "build": "1.0"
+    },
+    {
+      "name": "CCleaner Manual.app",
+      "path": "/Users/tzoharlary/Applications/CCleaner Manual.app",
+      "bundle_id": "local.manual.ccleaner",
+      "version": "1.0",
+      "build": "1.0"
+    },
+    {
+      "name": "Codex RTL Launcher.app",
+      "path": "/Users/tzoharlary/Applications/Codex RTL Launcher.app",
+      "bundle_id": null,
+      "version": null,
+      "build": null
+    },
+    {
+      "name": "Homebrew Update Notifications.app",
+      "path": "/Users/tzoharlary/Applications/Homebrew Update Notifications.app",
+      "bundle_id": "local.homebrew-update-manager.notifications",
+      "version": "3.1.0",
+      "build": "17"
+    },
+    {
+      "name": "Macs Fan Control.app",
+      "path": "/Users/tzoharlary/Applications/Macs Fan Control.app",
+      "bundle_id": "com.crystalidea.macsfancontrol",
+      "version": "1.5.22",
+      "build": "89"
+    },
+    {
+      "name": "Start LinkedIn Bot.app",
+      "path": "/Users/tzoharlary/Applications/Start LinkedIn Bot.app",
+      "bundle_id": "com.local.startlinkedinbot",
+      "version": "1.0",
+      "build": "1"
+    },
+    {
+      "name": "uniflash_sl.9.3.0.5401.app",
+      "path": "/Users/tzoharlary/Applications/uniflash_sl.9.3.0.5401.app",
+      "bundle_id": "com.installbuilder.appinstaller",
+      "version": "9.3.0",
+      "build": "9.3.0"
+    }
+  ]
+}

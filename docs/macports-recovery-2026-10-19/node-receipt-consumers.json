@@ -1,0 +1,14 @@
+[
+  {
+    "consumer": "mongodb-community",
+    "version": "8.2.9",
+    "node_dependency": {
+      "full_name": "node",
+      "version": "26.0.0",
+      "revision": 0,
+      "bottle_rebuild": 0,
+      "pkg_version": "26.0.0",
+      "declared_directly": false
+    }
+  }
+]

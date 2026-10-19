@@ -1,0 +1,483 @@
+{
+  "checked_at": "2026-10-19T10:35:56.489609+00:00",
+  "host": {
+    "macos": "26.7.1",
+    "architecture": "x86_64"
+  },
+  "scope": "Physical outdated Homebrew formulae, including retained kegs hidden by active CLI overlays. Not all software on the Mac.",
+  "catalog": {
+    "path": "/Users/tzoharlary/Library/Caches/Homebrew/api/internal/packages.tahoe.jws.json.payload",
+    "mtime": 1792389606.3865533,
+    "error": null
+  },
+  "metadata_refreshed": false,
+  "installation_performed": false,
+  "limitations": [
+    "Uses current local Brew metadata and the existing conservative bottle closure policy.",
+    "binary_candidate is not an installed/runtime-verified result; exclusions and missing metadata remain distinct.",
+    "Casks are reported separately; their application/runtime migration is not checked here."
+  ],
+  "counts": {
+    "source_required": 28,
+    "binary_candidate": 0,
+    "not_verified": 0,
+    "excluded": 0
+  },
+  "items": [
+    {
+      "name": "cryptography",
+      "installed_versions": [
+        "48.0.0"
+      ],
+      "target_version": "50.0.2_2",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "cryptography",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "gnupg",
+      "installed_versions": [
+        "2.5.20"
+      ],
+      "target_version": "2.5.24_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "gpgme",
+      "installed_versions": [
+        "2.1.0"
+      ],
+      "target_version": "2.2.0",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "gpgme",
+          "reason": "source_required"
+        },
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "gpgmepp",
+      "installed_versions": [
+        "2.1.0"
+      ],
+      "target_version": "2.2.0",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "gpgmepp",
+          "reason": "source_required"
+        },
+        {
+          "name": "gpgme",
+          "reason": "source_required"
+        },
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "include-what-you-use",
+      "installed_versions": [
+        "0.26"
+      ],
+      "target_version": "0.27",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "include-what-you-use",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "libtensorflow",
+      "installed_versions": [
+        "2.21.0"
+      ],
+      "target_version": "2.21.0_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "libtensorflow",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "llvm",
+      "installed_versions": [
+        "22.1.5",
+        "23.1.3_2"
+      ],
+      "target_version": "23.1.3_2",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "llvm",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "merve",
+      "installed_versions": [
+        "1.2.2_1"
+      ],
+      "target_version": "1.2.2_4",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "merve",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "net-snmp",
+      "installed_versions": [
+        "5.9.5.2"
+      ],
+      "target_version": "5.9.5.2_2",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "net-snmp",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "nmap",
+      "installed_versions": [
+        "7.99"
+      ],
+      "target_version": "7.992",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "nmap",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "node",
+      "installed_versions": [
+        "26.0.0"
+      ],
+      "target_version": "26.12.0",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "node",
+          "reason": "source_required"
+        },
+        {
+          "name": "merve",
+          "reason": "source_required"
+        },
+        {
+          "name": "simdjson",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "nss",
+      "installed_versions": [
+        "3.124"
+      ],
+      "target_version": "3.131",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "nss",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "open-mpi",
+      "installed_versions": [
+        "5.0.9"
+      ],
+      "target_version": "5.0.11",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "open-mpi",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "openjpeg",
+      "installed_versions": [
+        "2.5.4"
+      ],
+      "target_version": "2.5.4_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "openjpeg",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "openldap",
+      "installed_versions": [
+        "2.6.13"
+      ],
+      "target_version": "2.7.1_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "openldap",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "p11-kit",
+      "installed_versions": [
+        "0.26.2"
+      ],
+      "target_version": "0.26.5",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "p11-kit",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "pango",
+      "installed_versions": [
+        "1.57.1"
+      ],
+      "target_version": "1.58.2",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "pango",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "php",
+      "installed_versions": [
+        "8.5.6"
+      ],
+      "target_version": "8.5.11_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "php",
+          "reason": "source_required"
+        },
+        {
+          "name": "net-snmp",
+          "reason": "source_required"
+        },
+        {
+          "name": "openldap",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "poppler",
+      "installed_versions": [
+        "26.04.0"
+      ],
+      "target_version": "26.10.0",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "poppler",
+          "reason": "source_required"
+        },
+        {
+          "name": "gpgmepp",
+          "reason": "source_required"
+        },
+        {
+          "name": "gpgme",
+          "reason": "source_required"
+        },
+        {
+          "name": "gnupg",
+          "reason": "source_required"
+        },
+        {
+          "name": "nss",
+          "reason": "source_required"
+        },
+        {
+          "name": "openjpeg",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "postgresql@17",
+      "installed_versions": [
+        "17.10"
+      ],
+      "target_version": "17.11_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "postgresql@17",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "py3cairo",
+      "installed_versions": [
+        "1.29.0"
+      ],
+      "target_version": "1.29.2_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "py3cairo",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "simdjson",
+      "installed_versions": [
+        "4.6.4"
+      ],
+      "target_version": "5.0.5",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "simdjson",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "socat",
+      "installed_versions": [
+        "1.8.1.1"
+      ],
+      "target_version": "1.8.1.3",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "socat",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "terminal-notifier",
+      "installed_versions": [
+        "2.0.0"
+      ],
+      "target_version": "3.1.0",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "terminal-notifier",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "tesseract",
+      "installed_versions": [
+        "5.5.2"
+      ],
+      "target_version": "5.5.3",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "tesseract",
+          "reason": "source_required"
+        },
+        {
+          "name": "pango",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "unbound",
+      "installed_versions": [
+        "1.25.0"
+      ],
+      "target_version": "1.26.1_1",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "unbound",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "wget",
+      "installed_versions": [
+        "1.25.0"
+      ],
+      "target_version": "1.25.0_2",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "wget",
+          "reason": "source_required"
+        }
+      ]
+    },
+    {
+      "name": "whisper.cpp",
+      "installed_versions": [
+        "1.9.1"
+      ],
+      "target_version": "1.9.5",
+      "status": "source_required",
+      "blockers": [
+        {
+          "name": "whisper.cpp",
+          "reason": "source_required"
+        },
+        {
+          "name": "llama.cpp",
+          "reason": "source_required"
+        }
+      ]
+    }
+  ],
+  "outdated_casks": [
+    {
+      "name": "ngrok",
+      "excluded": true
+    }
+  ]
+}

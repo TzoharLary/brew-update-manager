@@ -1,0 +1,34 @@
+HOST darwin 25 x86_64
+ROOT zlib
+RESOLUTION_STATUS zlib 0
+PORT zlib 1.3.2 0 {} x86_64 zlib-1.3.2_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/zlib
+ROOT py312-setuptools
+RESOLUTION_STATUS py312-setuptools 0
+PORT py312-setuptools 84.0.0 0 {} noarch py312-setuptools-84.0.0_0.darwin_any.noarch.tbz2 python312 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/python/py-setuptools
+PORT openssl 3 33 {} x86_64 openssl-3_33.darwin_25.x86_64.tbz2 openssl3 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/openssl
+PORT sqlite3 3.54.1 0 {} x86_64 sqlite3-3.54.1_0.darwin_25.x86_64.tbz2 libedit,ncurses,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/databases/sqlite3
+PORT xz 5.8.4 0 {} x86_64 xz-5.8.4_0.darwin_25.x86_64.tbz2 libiconv,gettext-runtime file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/xz
+PORT python_select-312 0.3 1 {} noarch python_select-312-0.3_1.any_any.noarch.tbz2 python_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python_select
+PORT python3_select-312 0.1 1 {} noarch python3_select-312-0.1_1.any_any.noarch.tbz2 python3_select file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python3_select
+PORT libiconv 1.19 0 {} x86_64 libiconv-1.19_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libiconv
+PORT openssl3 3.6.5 0 {} x86_64 openssl3-3.6.5_0.darwin_25.x86_64.tbz2 zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/openssl3
+PORT python_select 0.3 10 {} noarch python_select-0.3_10.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python_select
+PORT python3_select 0.1 0 {} noarch python3_select-0.1_0.darwin_25.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/sysutils/python3_select
+PORT python312 3.12.15 0 +lto+optimizations x86_64 python312-3.12.15_0+lto+optimizations.darwin_25.x86_64.tbz2 bzip2,expat,gettext-runtime,libedit,libffi,ncurses,openssl,sqlite3,xz,zlib,python_select-312,python3_select-312 file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/lang/python312
+PORT bzip2 1.0.8 1 {} x86_64 bzip2-1.0.8_1.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/bzip2
+PORT expat 2.9.0 0 {} x86_64 expat-2.9.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/expat
+PORT gettext-runtime 1.0 0 {} x86_64 gettext-runtime-1.0_0.darwin_25.x86_64.tbz2 libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/gettext
+PORT libedit 20260512-3.1 0 {} x86_64 libedit-20260512-3.1_0.darwin_25.x86_64.tbz2 ncurses file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libedit
+PORT libffi 3.4.8 0 {} x86_64 libffi-3.4.8_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/libffi
+PORT ncurses 6.6 0 {} x86_64 ncurses-6.6_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/devel/ncurses
+ROOT curl
+RESOLUTION_STATUS curl 0
+PORT curl 8.23.0 0 +brotli+http2+idn+psl+ssl+zstd x86_64 curl-8.23.0_0+brotli+http2+idn+psl+ssl+zstd.darwin_25.x86_64.tbz2 zlib,brotli,nghttp2,libidn2,libpsl,openssl,curl-ca-bundle,zstd file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/curl
+PORT brotli 1.2.0 0 {} x86_64 brotli-1.2.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/brotli
+PORT nghttp2 1.70.0 0 {} x86_64 nghttp2-1.70.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/www/nghttp2
+PORT libidn2 2.3.8 0 {} x86_64 libidn2-2.3.8_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libunistring file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/mail/libidn2
+PORT libpsl 0.23.3 0 {} x86_64 libpsl-0.23.3_0.darwin_25.x86_64.tbz2 gettext-runtime,libiconv,libidn2,libunistring file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/libpsl
+PORT curl-ca-bundle 8.23.0 0 {} noarch curl-ca-bundle-8.23.0_0.any_any.noarch.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/net/curl
+PORT zstd 1.5.7 0 {} x86_64 zstd-1.5.7_0.darwin_25.x86_64.tbz2 lz4,xz,zlib file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/zstd
+PORT libunistring 1.5 0 {} x86_64 libunistring-1.5_0.darwin_25.x86_64.tbz2 libiconv file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/textproc/libunistring
+PORT lz4 1.10.0 0 {} x86_64 lz4-1.10.0_0.darwin_25.x86_64.tbz2 {} file:///opt/local/var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/archivers/lz4

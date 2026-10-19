@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "app": "Homebrew Update Manager",
+  "operation": {
+    "running": false,
+    "name": null,
+    "started_at": null
+  },
+  "project_root": "/Applications/Homebrew Update Manager.app/Contents/Resources/app.asar.unpacked"
+}

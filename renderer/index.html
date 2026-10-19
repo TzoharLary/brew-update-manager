@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Homebrew Update Manager</title>
+  <title>Mac Update Manager</title>
   <style>
     :root {
       color-scheme: light;
@@ -1062,6 +1062,29 @@
       color: var(--muted);
     }
 
+    .package-activity {
+      margin: 14px 0;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(127, 127, 127, 0.06);
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+    }
+    .package-activity[hidden] { display: none; }
+    .package-activity p { margin: 4px 0; }
+    .package-activity-meta { font-size: 12px; opacity: 0.75; }
+    .package-activity summary { cursor: pointer; font-size: 12px; margin-top: 10px; }
+    .package-activity pre {
+      direction: ltr;
+      text-align: left;
+      white-space: pre-wrap;
+      max-height: 160px;
+      overflow: auto;
+      font-size: 11px;
+      user-select: text;
+    }
+
     .update-live-panel {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -1229,7 +1252,7 @@
   <div class="wrap">
     <div class="top">
       <div class="title">
-        <h1 data-i18n="app.title">Homebrew Update Manager</h1>
+        <h1 data-i18n="app.title">Mac Update Manager</h1>
         <div class="sub" data-i18n="app.subtitle">Modern desktop manager for Homebrew packages</div>
       </div>
       <div class="actions">
@@ -1252,6 +1275,7 @@
     <div class="small muted scope-note" data-i18n="actions.packageScope">These controls update Homebrew packages (formulae/casks), not the app version.</div>
 
     <div class="cards" id="cards"></div>
+    <p id="updatePolicySummary" class="small muted" role="status"></p>
 
     <div class="panel settings-panel">
       <details class="settings-accordion" open>
@@ -1262,11 +1286,24 @@
 
         <div class="settings-body">
           <details class="settings-group" open>
+            <summary data-i18n="policy.title">Update policy</summary>
+            <div class="settings-group-content">
+              <label><input id="binaryOnlyInput" type="checkbox" checked /> <span data-i18n="policy.binaryOnly">Use ready-to-use packages; defer source builds</span></label>
+              <p class="settings-note" data-i18n="policy.help">Checks include required packages. Tools with a configured binary route are installed separately and verified before activation.</p>
+              <div class="field-row">
+                <label for="excludedPackagesInput" data-i18n="policy.excluded">Excluded packages (comma separated)</label>
+                <input id="excludedPackagesInput" type="text" dir="ltr" placeholder="cask:ngrok" />
+              </div>
+              <button id="saveUpdatePolicyBtn" class="btn-primary" data-i18n="policy.save">Save update policy</button>
+              <p id="updatePolicyStatus" class="settings-note" aria-live="polite"></p>
+            </div>
+          </details>
+          <details class="settings-group" open>
             <summary>
               <span data-i18n="updates.title">App version updates</span>
             </summary>
             <div class="settings-group-content">
-              <div class="settings-note" data-i18n="updates.scopeHelp">This section updates the Homebrew Update Manager app itself (from GitHub Releases).</div>
+              <div class="settings-note" data-i18n="updates.scopeHelp">This section updates the Mac Update Manager app itself (from GitHub Releases).</div>
 
               <div class="settings-actions">
                 <button id="checkAppUpdateBtn" data-i18n="updates.check">Check for app update</button>
@@ -1380,6 +1417,8 @@
           <label class="filter-box" for="packageTypeFilter">
             <span data-i18n="table.filterTypeLabel">Type</span>
             <select id="packageTypeFilter">
+              <option value="port">MacPorts</option>
+              <option value="tool" data-i18n="table.filterTypeTool">Managed tools</option>
               <option value="all" data-i18n="table.filterTypeAll">All types</option>
               <option value="formula" data-i18n="table.filterTypeFormula">Formulae</option>
               <option value="cask" data-i18n="table.filterTypeCask">Casks</option>
@@ -1502,6 +1541,18 @@
       </div>
 
       <div class="update-live-panel" id="updateLivePanel">
+        <div id="deferredUpdateSummary" class="settings-note" role="status" hidden></div>
+        <div class="package-activity" id="packageActivity" hidden>
+          <strong id="packageActivityTitle" aria-live="polite"></strong>
+          <p id="packageActivityExplanation"></p>
+          <p class="package-activity-meta" id="packageActivityTiming"></p>
+          <p class="package-activity-meta" id="packageActivityQuiet"></p>
+          <p class="package-activity-meta" id="packageActivityBuildProgress"></p>
+          <details>
+            <summary data-i18n="progress.activityTechnical">Technical details</summary>
+            <pre id="packageActivityTechnical"></pre>
+          </details>
+        </div>
         <div class="update-live-title" data-i18n="progress.liveUpdateTitle">Live package update details</div>
 
         <div class="update-live-grid">
@@ -1558,6 +1609,7 @@
   </div>
 
   <script src="./i18n.js"></script>
+  <script src="./mac-manager.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

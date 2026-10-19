@@ -1,0 +1,4 @@
+key "porturl" not known in dictionary
+    while executing
+"dict get $info porturl"
+SCRATCH /private/tmp/macports-metadata-11839

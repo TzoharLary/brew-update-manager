@@ -1,0 +1,114 @@
+{
+  "checked_at": "2026-10-19T10:36:10.624516+00:00",
+  "environment_status": "platform_mismatch",
+  "environment_detail": "OS platform mismatch\n    while executing\n\"mportinit ui_options global_options global_variations\"\n\nError: Current platform \"darwin 25\" does not match expected platform \"darwin 23\"\nError: Please run 'sudo port migrate' or follow the migration instructions: https://trac.macports.org/wiki/Migration\nError: /opt/local/bin/port: Failed to initialize MacPorts, OS platform mismatch",
+  "installation_performed": false,
+  "limitation": "This is environment/dependency planning only. -y does not prove archives exist. Full verification requires exact versions/variants/platform and all runtime archives plus integrity verification.",
+  "items": [
+    {
+      "port": "gpgme",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "gpgmepp",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "include-what-you-use",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "libtensorflow",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "llvm-23",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "nmap",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "nss",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "openldap",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "php85",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "poppler",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "postgresql17",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "postgresql17-server",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "py313-cairo",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "py314-cairo",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "socat",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "tensorflow",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "terminal-notifier",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "tesseract",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "unbound",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "wget",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    },
+    {
+      "port": "whisper.cpp",
+      "status": "platform_mismatch",
+      "binary_dependency_closure_verified": false
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+/Users/tzoharlary/.local/share/brew-update-manager/bin/node
+v26.12.0
+/Users/tzoharlary/.local/share/brew-update-manager/bin/npm
+11.20.0
+/Users/tzoharlary/.local/share/brew-update-manager/bin/deno
+deno 2.9.7 (stable, release, x86_64-apple-darwin)
+/Users/tzoharlary/.local/share/brew-update-manager/bin/ansible
+ansible [core 2.21.5]
+/Users/tzoharlary/.local/bin/uv
+uv 0.13.1 (62faed335 2026-10-13 x86_64-apple-darwin)
+/Users/tzoharlary/.local/bin/uvx
+uvx 0.13.1 (62faed335 2026-10-13 x86_64-apple-darwin)
+/Users/tzoharlary/.local/share/brew-update-manager/bin/pandoc
+pandoc 3.12.1

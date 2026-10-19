@@ -1,0 +1,187 @@
+{
+  "captured_at": "2026-10-19T05:48:42.817330+00:00",
+  "formula_count": 233,
+  "cask_count": 7,
+  "homebrew_physical_package_count": 240,
+  "excluded_installed_count": 1,
+  "formula_roles": {
+    "not_requested_dependency_flag_unknown": 81,
+    "requested_root": 51,
+    "dependency": 101
+  },
+  "installed_formula_receipt_count": 283,
+  "runtime_dependency_edge_count": 1186,
+  "direct_runtime_dependency_edge_count": 480,
+  "unknown_directness_runtime_edge_count": 0,
+  "missing_installed_targets": [
+    "mongosh"
+  ],
+  "managed_registry_count": 5,
+  "managed_homebrew_overlap": [
+    "ansible",
+    "deno",
+    "node",
+    "pandoc",
+    "uv"
+  ],
+  "current_app_counts": {
+    "excluded_total": 1,
+    "managed_total": 5,
+    "total": 238,
+    "formulae": 231,
+    "casks": 7,
+    "outdated_total": 27,
+    "outdated_formulae": 27,
+    "outdated_casks": 0
+  },
+  "last_run_deferred_count": 27,
+  "last_run_deferred_names": [
+    "cryptography",
+    "gnupg",
+    "gpgme",
+    "gpgmepp",
+    "include-what-you-use",
+    "libtensorflow",
+    "llvm",
+    "merve",
+    "net-snmp",
+    "nmap",
+    "nss",
+    "open-mpi",
+    "openjpeg",
+    "openldap",
+    "p11-kit",
+    "pango",
+    "php",
+    "poppler",
+    "postgresql@17",
+    "py3cairo",
+    "simdjson",
+    "socat",
+    "terminal-notifier",
+    "tesseract",
+    "unbound",
+    "wget",
+    "whisper.cpp"
+  ],
+  "top_reverse_dependents": [
+    {
+      "name": "ca-certificates",
+      "count": 48
+    },
+    {
+      "name": "xz",
+      "count": 45
+    },
+    {
+      "name": "lz4",
+      "count": 42
+    },
+    {
+      "name": "zstd",
+      "count": 41
+    },
+    {
+      "name": "gettext",
+      "count": 40
+    },
+    {
+      "name": "libunistring",
+      "count": 36
+    },
+    {
+      "name": "openssl@3",
+      "count": 28
+    },
+    {
+      "name": "libpng",
+      "count": 27
+    },
+    {
+      "name": "readline",
+      "count": 26
+    },
+    {
+      "name": "xorgproto",
+      "count": 26
+    },
+    {
+      "name": "libxau",
+      "count": 22
+    },
+    {
+      "name": "libxdmcp",
+      "count": 22
+    },
+    {
+      "name": "libx11",
+      "count": 21
+    },
+    {
+      "name": "libxcb",
+      "count": 21
+    },
+    {
+      "name": "jpeg-turbo",
+      "count": 19
+    },
+    {
+      "name": "openssl@4",
+      "count": 19
+    },
+    {
+      "name": "gmp",
+      "count": 18
+    },
+    {
+      "name": "sqlite",
+      "count": 18
+    },
+    {
+      "name": "freetype",
+      "count": 17
+    },
+    {
+      "name": "icu4c@78",
+      "count": 17
+    },
+    {
+      "name": "pcre2",
+      "count": 17
+    },
+    {
+      "name": "fontconfig",
+      "count": 15
+    },
+    {
+      "name": "json-c",
+      "count": 15
+    },
+    {
+      "name": "libtiff",
+      "count": 15
+    },
+    {
+      "name": "libxext",
+      "count": 15
+    }
+  ],
+  "native_app_count": 63,
+  "legacy_npm_global_count": 10,
+  "brew_info_formula_count": 231,
+  "formula_version_records": 284,
+  "transitive_runtime_requirement_edge_count": 706,
+  "active_keg_direct_runtime_edge_count": 438,
+  "missing_receipts": [
+    {
+      "name": "llvm",
+      "version": "23.1.3_2",
+      "active_keg": false
+    }
+  ],
+  "omitted_from_brew_info": [
+    "mongodb-community",
+    "mongodb-database-tools"
+  ],
+  "required_version_directory_missing_edge_count": 296
+}

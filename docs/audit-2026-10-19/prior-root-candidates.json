@@ -1,0 +1,784 @@
+{
+  "generated_at": "2026-10-18T18:31:10.577166+00:00",
+  "inventory_captured_at": "2026-10-18T18:17:07.699504+00:00",
+  "items": [
+    {
+      "name": "ansible",
+      "installed_version_at_inventory": "13.6.0_1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "14.5.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "automake",
+      "installed_version_at_inventory": "1.19",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.19"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "azure-cli",
+      "installed_version_at_inventory": "2.86.0",
+      "category": "uv_binary_dependency_solution",
+      "recommended_route": "uv / PyPI",
+      "resolved_versions": [],
+      "conda_catalog_match": true,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [],
+      "mise_registry_match": true,
+      "note": "פתרון Azure CLI 2.86.0 עם תלויות מוכנות הצליח ב־Python 3.13 וגם 3.14; SDK beta מפורש מחייב מדיניות prerelease. לא הותקן או הורץ."
+    },
+    {
+      "name": "cabextract",
+      "installed_version_at_inventory": "1.11",
+      "category": "macports_archive_candidate",
+      "recommended_route": "MacPorts — מועמד בלבד",
+      "resolved_versions": [],
+      "conda_catalog_match": true,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "cabextract-1.11_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: ארכיון MacPorts ל־Darwin 25 Intel, גרסה 1.11."
+    },
+    {
+      "name": "cairo",
+      "installed_version_at_inventory": "1.18.6",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.18.6"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "cairo-1.18.4_2+quartz+universal+x11.darwin_25.arm64-x86_64.tbz2",
+        "cairo-1.18.4_2+quartz+x11.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "catch2",
+      "installed_version_at_inventory": "3.16.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "3.16.1"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "catch2-3.15.3_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "cloudflared",
+      "installed_version_at_inventory": "2026.10.1",
+      "category": "native_intel_asset",
+      "recommended_route": "מקור רשמי / mise",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "cloudflared-2026.10.0_0.darwin_25.x86_64.tbz2",
+        "cloudflared-2026.9.1_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "מועמד: קובץ Intel רשמי ב־Cloudflare Releases; ניתן לנהל דרך mise."
+    },
+    {
+      "name": "ddd",
+      "installed_version_at_inventory": "3.4.1",
+      "category": "macports_archive_candidate",
+      "recommended_route": "MacPorts — מועמד בלבד",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "ddd-3.4.1_1.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: ארכיון MacPorts ל־Darwin 25 Intel; נדרשות בדיקות GUI/X11 ותלויות."
+    },
+    {
+      "name": "deno",
+      "installed_version_at_inventory": "2.7.14",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "2.9.5"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "deno-2.9.7_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "doxygen",
+      "installed_version_at_inventory": "1.17.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.18.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "doxygen-1.18.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "dtc",
+      "installed_version_at_inventory": "1.7.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.7.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "dtc-1.7.2_0.darwin_25.x86_64.tbz2",
+        "dtc-1.8.1_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "exercism",
+      "installed_version_at_inventory": "3.5.8",
+      "category": "native_intel_asset",
+      "recommended_route": "מקור רשמי / mise",
+      "resolved_versions": [],
+      "conda_catalog_match": true,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "exercism-3.5.8_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: קובץ darwin-x86_64 רשמי, גרסה 3.5.8."
+    },
+    {
+      "name": "ffmpeg",
+      "installed_version_at_inventory": "8.1.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "9.0.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "ffmpeg-9.0.2_1+gpl2+vmaf.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "gcc",
+      "installed_version_at_inventory": "15.2.0_1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "16.2.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "gcc15-15.3.0_0+stdlib_flag.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "gdb",
+      "installed_version_at_inventory": "17.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "18.1"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "gdb-16.3_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח; יכולות debugger, חתימה והרשאות macOS לא נבדקו."
+    },
+    {
+      "name": "gh",
+      "installed_version_at_inventory": "2.94.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "2.102.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "gh-2.102.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "git",
+      "installed_version_at_inventory": "2.54.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "2.56.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "glpk",
+      "installed_version_at_inventory": "5.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "5.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "glpk-5.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "gmp",
+      "installed_version_at_inventory": "6.3.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "6.3.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "gmp-6.3.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "hidapi",
+      "installed_version_at_inventory": "0.15.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "0.15.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "hidapi-0.15.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "igraph",
+      "installed_version_at_inventory": "1.0.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.0.1"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "igraph-1.0.1_1+openblas+tls.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "include-what-you-use",
+      "installed_version_at_inventory": "0.26",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "0.27"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "include-what-you-use-0.27_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "isl",
+      "installed_version_at_inventory": "0.27",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "0.27"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "isl-0.24_1.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "jq",
+      "installed_version_at_inventory": "1.8.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.8.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "jq-1.8.2_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "libftdi",
+      "installed_version_at_inventory": "1.5_2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.5"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "libmpc",
+      "installed_version_at_inventory": "1.4.1",
+      "category": "macports_archive_candidate",
+      "recommended_route": "MacPorts — מועמד בלבד",
+      "resolved_versions": [],
+      "conda_catalog_match": true,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "libmpc-1.4.1_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: ארכיון MacPorts ל־Darwin 25 Intel, גרסה 1.4.1. אין להחליף ספרייה מקושרת ישירות."
+    },
+    {
+      "name": "libtensorflow",
+      "installed_version_at_inventory": "2.21.0",
+      "category": "special_review",
+      "recommended_route": "בדיקה פרטנית",
+      "resolved_versions": [],
+      "conda_catalog_match": true,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "אין התאמה לגרסה המותקנת 2.21.0; בקטלוג שנבדק נמצאה 2.18.0 בלבד. אין לשנמך אוטומטית."
+    },
+    {
+      "name": "libxml2",
+      "installed_version_at_inventory": "2.15.3",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "2.15.4"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "libxml2-2.15.2_1+universal.darwin_25.arm64-x86_64.tbz2",
+        "libxml2-2.15.3_0+universal.darwin_25.arm64-x86_64.tbz2",
+        "libxml2-2.15.4_0+universal.darwin_25.arm64-x86_64.tbz2",
+        "libxml2-2.15.4_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "mongodb-community",
+      "installed_version_at_inventory": "8.2.9",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "8.3.7"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות הצליח; זה אינו אישור להעברת מסד נתונים או שירות."
+    },
+    {
+      "name": "mpfr",
+      "installed_version_at_inventory": "4.2.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "4.2.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "mpfr-4.2.2_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "msitools",
+      "installed_version_at_inventory": "0.106_1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "0.106"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "nethogs",
+      "installed_version_at_inventory": "0.8.8",
+      "category": "special_review",
+      "recommended_route": "בדיקה פרטנית",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "אין התאמה במקורות שנבדקו. נדרשת בדיקת שימוש והאם כלי macOS אחר מספק את הצורך."
+    },
+    {
+      "name": "ninja",
+      "installed_version_at_inventory": "1.13.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.13.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "ninja-1.13.2_1+universal.darwin_25.arm64-x86_64.tbz2",
+        "ninja-1.13.2_1.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "nmap",
+      "installed_version_at_inventory": "7.99",
+      "category": "macports_archive_candidate",
+      "recommended_route": "MacPorts — מועמד בלבד",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "nmap-7.991_0+pcre+ssl.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: ארכיון MacPorts ל־Darwin 25 Intel; פתרון התלויות וההרשאות לא נבדק."
+    },
+    {
+      "name": "node",
+      "installed_version_at_inventory": "26.0.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "26.10.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "nodejs26-26.10.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "p7zip",
+      "installed_version_at_inventory": "17.06",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "26.04"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "p7zip-16.02_5.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון ל־7zip החדש, כחלופה ל־p7zip; נדרשות בדיקות שמות פקודות ותאימות."
+    },
+    {
+      "name": "pandoc",
+      "installed_version_at_inventory": "3.9.0.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "3.12.1"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "pandoc-3.10.1_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "php",
+      "installed_version_at_inventory": "8.5.6",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "8.5.9"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "php84-8.4.25_0+libedit.darwin_25.x86_64.tbz2",
+        "php84-8.4.26_0+libedit.darwin_25.x86_64.tbz2",
+        "php85-8.5.10_0+libedit.darwin_25.x86_64.tbz2",
+        "php85-8.5.11_0+libedit.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "pkgconf",
+      "installed_version_at_inventory": "3.0.9",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "3.0.9"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "pkgconfig-0.29.2_0+universal.darwin_25.arm64-x86_64.tbz2",
+        "pkgconfig-0.29.2_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "poppler",
+      "installed_version_at_inventory": "26.04.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "26.09.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "poppler-26.02.0_0+boost.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "postgresql@17",
+      "installed_version_at_inventory": "17.10",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "17.11"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "postgresql17-17.11_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות הצליח; זה אינו אישור להעברת מסד נתונים או שירות."
+    },
+    {
+      "name": "py3cairo",
+      "installed_version_at_inventory": "1.29.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.29.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "py313-cairo-1.29.1_0+quartz+x11.darwin_25.x86_64.tbz2",
+        "py313-cairo-1.29.2_0+quartz+x11.darwin_25.x86_64.tbz2",
+        "py314-cairo-1.29.1_0+quartz+x11.darwin_25.x86_64.tbz2",
+        "py314-cairo-1.29.2_0+quartz+x11.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "sfml",
+      "installed_version_at_inventory": "3.0.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "3.0.2"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות הצליח בסביבה מבודדת; אינו תחליף אוטומטי לקישור /usr/local או לסביבת פרויקט קיימת."
+    },
+    {
+      "name": "socat",
+      "installed_version_at_inventory": "1.8.1.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.8.1.3"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "terminal-notifier",
+      "installed_version_at_inventory": "2.0.0",
+      "category": "macports_archive_candidate",
+      "recommended_route": "MacPorts — מועמד בלבד",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [
+        "terminal-notifier-2.0.0_0.darwin_25.x86_64.tbz2",
+        "terminal-notifier-3.1.0_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "מועמד: ארכיון MacPorts ל־Darwin 25 Intel; נדרשת התאמת נתיב ובדיקת התראות באפליקציה."
+    },
+    {
+      "name": "tesseract",
+      "installed_version_at_inventory": "5.5.2",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "5.5.3"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "tesseract-5.5.3_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "tesseract-lang",
+      "installed_version_at_inventory": "4.1.0",
+      "category": "special_review",
+      "recommended_route": "בדיקה פרטנית",
+      "resolved_versions": [],
+      "conda_catalog_match": false,
+      "conda_solver_passed": false,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "זו חבילת נתוני שפות, לא מהדר. צריך לתעד ולשמר את השפות הנדרשות ולבדוק הפצה ישירה של הנתונים."
+    },
+    {
+      "name": "uv",
+      "installed_version_at_inventory": "0.11.18",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "0.13.1"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "uv-0.12.11_0.darwin_25.x86_64.tbz2",
+        "uv-0.12.20_0.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": true,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "wget",
+      "installed_version_at_inventory": "1.25.0",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.25.0"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [
+        "wget-1.25.0_1+gnutls.darwin_25.x86_64.tbz2"
+      ],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    },
+    {
+      "name": "whisper.cpp",
+      "installed_version_at_inventory": "1.9.1",
+      "category": "conda_dependency_solution",
+      "recommended_route": "Pixi / conda-forge",
+      "resolved_versions": [
+        "1.9.3"
+      ],
+      "conda_catalog_match": true,
+      "conda_solver_passed": true,
+      "macports_archive_candidates": [],
+      "mise_registry_match": false,
+      "note": "פתרון תלויות לחבילות מוכנות הצליח; לא בוצעה בדיקת הרצה."
+    }
+  ],
+  "limitations": [
+    "All results are point-in-time and provide no guarantee of future vendor support.",
+    "No prospective package was installed, launched, or benchmarked.",
+    "39 conda solutions include one intentional successor migration (p7zip to 7zip).",
+    "The other seven alternatives are artifact candidates, not dependency-tested or runtime-tested installations.",
+    "No automatic removal or migration of existing libraries, databases, fonts, or applications is authorized by this report."
+  ],
+  "source_path": "/Users/tzoharlary/.codex/visualizations/2026/10/18/01a14f20-7de2-7f93-a403-c15d751ba011/alternative-audit/assessment.json",
+  "source_sha256": "2563550bfed0c592e51cb3f27bab663b1e590743244c769e6907613b67fc4ed4",
+  "notice": "Historical evidence reused for planning, not a fresh availability or runtime check. Current inventory supersedes prior counts."
+}
