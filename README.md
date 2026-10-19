@@ -191,7 +191,7 @@ The app includes an **App updates** section under **Automation & Environment**:
 Notes:
 
 - This updates the **desktop app itself** (from GitHub Releases).
-- The existing **Check Homebrew packages now** / **Update all outdated Homebrew packages** buttons update Homebrew packages only (formulae/casks), not the app binary.
+- **Start Check** and **Update all** operate on Homebrew packages, installed MacPorts ports and managed tools, subject to update policy and exclusions. They do not update the app itself or migrate packages between providers.
 - Differential updates are architecture-aware (`x64` vs `arm64`) and include rollback marker handling if restart validation fails.
 
 ## Release workflow expectations (for updater)
@@ -230,6 +230,6 @@ UI fixture checks in Hebrew and English (mock IPC, no backend):
 `node_modules/.bin/electron tests/progress-ui.cjs`
 
 
-## Mac Update Manager 1.2
+## Mac Update Manager 1.3.1
 
 See [combined provider behavior and local rollout](docs/MAC_MANAGER.md).

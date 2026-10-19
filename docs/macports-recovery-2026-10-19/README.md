@@ -37,4 +37,6 @@
 
 קובצי גיבוי נשמרים תחת `~/.local/share/brew-update-manager/recovery/` בנתיב המדויק שבקבלה. הם לא נמחקו. הסקריפט `tools/install-macports-tahoe.command` נשמר כאפשרות הרצה ידנית של אותו מתקין; אין צורך להריץ אותו שוב לאחר הצלחת הטיפול.
 
+המתקין `MacPorts-2.12.7-26-Tahoe.pkg` והתיקייה `installer-expanded/` נשמרו מקומית והוחרגו מ־Git. הסקריפט הידני דורש את המתקין בנתיב המקומי המצוין בו; הוא אינו מוריד אותו ואינו זמין להרצה משכפול המאגר בלבד. קובצי הראיות, מטא־דאטה של המהדורה וה־checksum נשמרים במאגר.
+
 מקורות: [מתקין MacPorts הרשמי](https://www.macports.org/install.php), [משמעות port migrate](https://man.macports.org/port-migrate.1.html), [מדיניות התקנות בינאריות](https://guide.macports.org/#internals.configuration-files.macports-conf).
