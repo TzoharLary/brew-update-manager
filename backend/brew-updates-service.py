@@ -1104,12 +1104,13 @@ def terminate_process(proc: subprocess.Popen[str] | None, *, force_kill_after_se
 
 def run_cmd(args: list[str], timeout: int | None = 1800, *, cancellable: bool = False,
             on_output: Callable[[str, str], None] | None = None,
-            env_override: dict[str, str] | None = None) -> CommandResult:
+            env_override: dict[str, str] | None = None,
+            input_data: str | None = None) -> CommandResult:
     tracked_scan = getattr(mac_manager.SCAN_CONTEXT, 'active', False)
     if tracked_scan:
         raise_if_cancel_requested()
     result = _run_cmd_impl(args, timeout, cancellable=cancellable or tracked_scan,
-                           on_output=on_output, env_override=env_override)
+                           on_output=on_output, env_override=env_override, input_data=input_data)
     if tracked_scan:
         raise_if_cancel_requested()
     return result
@@ -1117,9 +1118,13 @@ def run_cmd(args: list[str], timeout: int | None = 1800, *, cancellable: bool = 
 
 def _run_cmd_impl(args: list[str], timeout: int | None = 1800, *, cancellable: bool = False,
             on_output: Callable[[str, str], None] | None = None,
-            env_override: dict[str, str] | None = None) -> CommandResult:
+            env_override: dict[str, str] | None = None,
+            input_data: str | None = None) -> CommandResult:
+    if input_data is not None and on_output is not None:
+        raise ValueError("Streaming progress and explicit stdin cannot be combined")
     proc = subprocess.Popen(
         args,
+        stdin=subprocess.PIPE if input_data is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1165,7 +1170,7 @@ def _run_cmd_impl(args: list[str], timeout: int | None = 1800, *, cancellable: b
             if timed_out:
                 stderr = f"{stderr}\nCommand timed out after {int(timeout)}s".strip()
             return CommandResult(124 if timed_out else proc.returncode, stdout, stderr)
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = proc.communicate(input=input_data, timeout=timeout)
         return CommandResult(proc.returncode, (stdout or "").strip(), (stderr or "").strip())
     except subprocess.TimeoutExpired:
         terminate_process(proc)
