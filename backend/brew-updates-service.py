@@ -2755,9 +2755,14 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 if self.path == "/api/migrations/recovery-plan":
                     return {"ok": True, "plan": mac_manager.migration_recovery_plan(sys.modules[__name__], body.get("transaction_id"), body.get("action"))}
                 if self.path == "/api/migrations/approve":
-                    raise unified_updates.PlanError("review_required", "Legacy migration approval is disabled until transactional recovery is complete")
-                    result = mac_manager.approve(sys.modules[__name__], body.get("id"))
-                    return {"ok": True, "migration": result, "snapshot": compute_snapshot(False, enrich_details=False)}
+                    identifier = body.get("id")
+                    approved = mac_manager._migration_engine._load_plan(sys.modules[__name__], identifier)
+                    if approved.get("action") not in ("rollback", "resume"):
+                        raise unified_updates.PlanError("review_required", "Use the unified update list to approve new migrations")
+                    result = mac_manager._migration_engine.approve(sys.modules[__name__], identifier,
+                                                                    request_id=body.get("request_id"))
+                    return {"ok": True, "migration": result,
+                            "snapshot": compute_snapshot(False, enrich_details=False)}
                 result = macports_provider.privileged(sys.modules[__name__], "sync")
                 if result.code: raise RuntimeError(result.stderr)
                 mac_manager.catalog_refresh.mark_success(sys.modules[__name__])
@@ -2773,6 +2778,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             self._send_json(200, run_with_progress("migration", operation))
         except BusyError as exc:
             self._send_json(409, {"ok": False, "detail": str(exc)})
+        except unified_updates.PlanError as exc:
+            self._send_json(409, {"ok": False, "error": exc.code, "detail": str(exc)})
         except Exception as exc:
             self._send_json(400, {"ok": False, "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
         return True
@@ -2884,6 +2891,15 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     if item["reason"] != "source_required" or load_settings()["binary_only"]:
                         pkg["update_block_reason"] = item["reason"]
             unified_updates.attach_cached(sys.modules[__name__], state)
+            transactions = DATA_DIR / "migrations" / "transactions"
+            state["pending_recovery"] = [
+                {"transaction_id": row.get("transaction_id"),
+                 "status": row.get("status"), "stage": row.get("stage"),
+                 "logical_id": (row.get("plan") or {}).get("profile")}
+                for path in sorted(transactions.glob("*/journal.json"))
+                if (row := read_json(path)) is not None
+                and row.get("status") not in ("completed", "rolled_back", "canceled")
+            ] if transactions.is_dir() else []
             self._send_json(200, state)
             return
 
