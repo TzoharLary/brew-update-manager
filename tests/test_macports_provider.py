@@ -19,8 +19,8 @@ class MacPortsVersionFixtures(unittest.TestCase):
     def test_active_port_metadata_supports_numeric_selection(self):
         class Service:
             def run_cmd(self, argv, **kwargs):
-                text = (" jq @1.8.1_0 (active)\\n" if "installed" in argv
-                        else "jq @1.8.1_0 < 1.8.2_1\\n")
+                text = (" jq @1.8.1_0 (active)\n" if "installed" in argv
+                        else "jq @1.8.1_0 < 1.8.2_1\n")
                 return SimpleNamespace(code=0, stdout=text, stderr="")
         with tempfile.TemporaryDirectory() as temp:
             port = Path(temp) / "port"

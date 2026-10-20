@@ -30,7 +30,7 @@ def checked(s, args, **kwargs):
 
 def version_parts(value):
     """Separate MacPorts package revision from upstream for provider comparison."""
-    match = re.fullmatch(r"(.+?)_(\\d+)", str(value))
+    match = re.fullmatch(r"(.+?)_(\d+)", str(value))
     if not match:
         return str(value), 0
     return match.group(1), int(match.group(2))
