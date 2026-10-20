@@ -35,7 +35,9 @@ jobs:
           node --check electron/preload.js
 
       - name: Python syntax check
-        run: python3 -m py_compile backend/brew-updates-service.py
+        run: |
+          python3 -m compileall -q backend tools tests
+          python3 -m py_compile tools/implement-mac-manager.py tools/verify-migration.py
 
       - name: Packaging smoke check
         run: npm run pack
