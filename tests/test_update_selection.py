@@ -26,6 +26,8 @@ class ProviderSelection(unittest.TestCase):
                 "profile_id": "jq", "profile_version": 1,
                 "system": {"os": "macos", "arch": "x86_64", "release": "15"},
                 "closure": [], "closure_verified": True, "blockers": []}
+        if action == "migrate":
+            base.update(migration_plan_id="a"*32, migration_fingerprint="b"*64)
         return dict(base, **changes)
 
     def test_numeric_normalization_and_unknown_suffix(self):
@@ -40,6 +42,21 @@ class ProviderSelection(unittest.TestCase):
         decision, = selection.select([self.source()], routes)
         self.assertEqual((decision["target_provider"], decision["status"]),
                          ("pixi", "ready"))
+
+    def test_migration_is_not_ready_without_verified_transaction_identifiers(self):
+        for missing in ("migration_plan_id", "migration_fingerprint"):
+            route = self.candidate("pixi", "1.8", "migrate")
+            route.pop(missing)
+            decision, = selection.select([self.source()], [route])
+            self.assertNotEqual(decision["status"], "ready")
+            self.assertIn("migration_transaction_plan_missing",
+                          decision["alternatives"][0]["reason_codes"])
+
+    def test_migration_rejects_invalid_plan_identifiers(self):
+        route = self.candidate("pixi", "1.8", "migrate",
+                               migration_plan_id="../../../etc/passwd")
+        decision, = selection.select([self.source()], [route])
+        self.assertEqual(decision["status"], "blocked")
 
     def test_tie_keeps_current_provider(self):
         routes = [self.candidate("macports", "1.3", "migrate"), self.candidate()]

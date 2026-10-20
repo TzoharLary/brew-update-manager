@@ -177,6 +177,30 @@ class MigrationContracts(unittest.TestCase):
                 with self.assertRaisesRegex(engine.MigrationConflict, "profile_missing"):
                     engine._material_pixi(Service(), "ffmpeg", candidate={})
 
+    def test_pixi_approval_rechecks_pinned_generation_and_refuses_changed_lock(self):
+        import json
+        import time
+        from unittest.mock import patch
+        from provider_ownership import atomic_write_json
+        with tempfile.TemporaryDirectory() as temp:
+            class S:
+                DATA_DIR = Path(temp)
+                def read_json(self, path):
+                    return json.loads(Path(path).read_text())
+            service = S()
+            old_plan = {"schema_version": engine.SCHEMA, "id": "a"*32,
+                        "action": "migrate", "expires_at": time.time()+600,
+                        "profile": "jq", "fingerprint": "f"*64,
+                        "target": {"provider": "pixi", "generation_id": "b"*32}}
+            atomic_write_json(Path(temp)/"migrations"/"plans"/("a"*32+".json"), old_plan)
+            with patch.object(engine, "_material", return_value=({}, "0"*64)) as material:
+                with self.assertRaisesRegex(engine.MigrationConflict, "plan_changed"):
+                    engine.approve(service, "a"*32)
+            self.assertEqual(material.call_args.kwargs["provider"], "pixi")
+            self.assertEqual(material.call_args.kwargs["planned_generation"], "b"*32)
+            self.assertIsNone(material.call_args.kwargs.get("pixi_candidate"))
+            self.assertFalse((Path(temp)/"migrations"/"transactions").exists())
+
     def test_recovery_refuses_invalid_ids(self):
         for value in ("../../../etc/passwd", "bad", "", None):
             with self.assertRaises(engine.MigrationConflict):

@@ -6257,6 +6257,8 @@ class ProviderSelection(unittest.TestCase):
                 "profile_id": "jq", "profile_version": 1,
                 "system": {"os": "macos", "arch": "x86_64", "release": "15"},
                 "closure": [], "closure_verified": True, "blockers": []}
+        if action == "migrate":
+            base.update(migration_plan_id="a"*32, migration_fingerprint="b"*64)
         return dict(base, **changes)
 
     def test_numeric_normalization_and_unknown_suffix(self):
@@ -6271,6 +6273,21 @@ class ProviderSelection(unittest.TestCase):
         decision, = selection.select([self.source()], routes)
         self.assertEqual((decision["target_provider"], decision["status"]),
                          ("pixi", "ready"))
+
+    def test_migration_is_not_ready_without_verified_transaction_identifiers(self):
+        for missing in ("migration_plan_id", "migration_fingerprint"):
+            route = self.candidate("pixi", "1.8", "migrate")
+            route.pop(missing)
+            decision, = selection.select([self.source()], [route])
+            self.assertNotEqual(decision["status"], "ready")
+            self.assertIn("migration_transaction_plan_missing",
+                          decision["alternatives"][0]["reason_codes"])
+
+    def test_migration_rejects_invalid_plan_identifiers(self):
+        route = self.candidate("pixi", "1.8", "migrate",
+                               migration_plan_id="../../../etc/passwd")
+        decision, = selection.select([self.source()], [route])
+        self.assertEqual(decision["status"], "blocked")
 
     def test_tie_keeps_current_provider(self):
         routes = [self.candidate("macports", "1.3", "migrate"), self.candidate()]
@@ -7745,6 +7762,110 @@ class Plans(unittest.TestCase):
                  patch.object(u, "_ports", side_effect=AssertionError("empty mapping")):
                 result = u.collect_candidates(s, {"packages": [row]})
             self.assertEqual(result, [])
+
+    def test_pixi_bridge_only_allows_exact_profile_with_plan(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7",
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": [], "consumers": [], "shared_roles": []}}
+            verified = {"provider": "pixi", "availability": "verified",
+                        "execution_supported": True, "closure_verified": True,
+                        "upstream_version": "1.8", "package_version": "1.8",
+                        "provider_names": ["jq"],
+                        "system": {"os": "macos", "arch": "x86_64"},
+                        "closure": [{"arch": "osx-64", "archive_id": "jq-fixture",
+                                     "checksum": "f"*64}],
+                        "manifest": "locked", "lock": "pinned", "lock_sha256": "f"*64}
+            plan = {"id": "a"*32, "fingerprint": "b"*64,
+                    "target": {"provider": "pixi", "candidate": dict(verified),
+                               "version": "1.8"}, "profile": "jq", "profile_version": 1}
+            with patch("pixi_provider.discover", return_value=verified) as discover, \
+                 patch("migration_engine.plan", return_value=plan) as make_plan:
+                candidate = u._pixi_bridge(s, row)
+            discover.assert_called_once()
+            self.assertEqual(make_plan.call_args.kwargs["provider"], "pixi")
+            self.assertIs(make_plan.call_args.kwargs["pixi_candidate"], verified)
+            self.assertEqual(candidate["migration_plan_id"], "a"*32)
+            self.assertEqual(candidate["migration_fingerprint"], "b"*64)
+            self.assertTrue(candidate["execution_supported"])
+            selected, = sel.select([dict(row, discovery_complete=True)], [candidate])
+            self.assertEqual((selected["target_provider"], selected["status"]), ("pixi", "ready"))
+
+    def test_pixi_bridge_failed_transaction_is_blocked(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7",
+                   "classification": {"category": "standalone_candidate"}}
+            with patch("pixi_provider.discover", return_value={
+                    "provider": "pixi", "availability": "verified",
+                    "upstream_version": "1.9"}) as discover, \
+                 patch("migration_engine.plan", side_effect=ValueError("unverified")):
+                candidate = u._pixi_bridge(s, row)
+            discover.assert_called_once()
+            self.assertFalse(candidate["execution_supported"])
+            self.assertNotIn("migration_plan_id", candidate)
+            self.assertIn("pixi_migration_preflight_failed:ValueError",
+                          candidate["blockers"])
+
+    def test_pixi_bridge_unlisted_profile_skips_discovery(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "ffmpeg", "kind": "formula", "provider": "homebrew",
+                   "classification": {"category": "standalone_candidate"}}
+            with patch("pixi_provider.discover", side_effect=AssertionError("network forbidden")):
+                candidate = u._pixi_bridge(s, row)
+            self.assertFalse(candidate["execution_supported"])
+            self.assertEqual(candidate["blockers"], ["pixi_migration_profile_missing"])
+
+    def test_revalidate_migration_binds_provider_generation_and_lock(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            route = {"provider": "pixi", "availability": "verified",
+                     "execution_supported": True, "closure_verified": True,
+                     "upstream_version": "1.8", "package_version": "1.8",
+                     "revision": None, "provider_names": ["jq"],
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure": [{"arch": "osx-64", "archive_id": "jq-fixture"}],
+                     "manifest": "text", "lock": "bytes", "lock_sha256": "b"*64,
+                     "migration_plan_id": "a"*32, "migration_fingerprint": "c"*64,
+                     "profile_id": "jq", "profile_version": 1}
+            decision = {"logical_id": "jq",
+                        "source_installation_id": "homebrew:formula:jq",
+                        "current_provider": "homebrew", "target_provider": "pixi",
+                        "installed_version": "1.7", "selected_candidate": route}
+            keys = ("provider", "availability", "execution_supported",
+                    "closure_verified", "upstream_version", "package_version",
+                    "revision", "provider_names", "system", "closure",
+                    "manifest", "lock", "lock_sha256")
+            stored = {"action": "migrate", "fingerprint": "c"*64,
+                      "profile": "jq", "profile_version": 1,
+                      "source": {"provider": "homebrew",
+                                 "installation_id": "homebrew:formula:jq",
+                                 "version": "1.7"},
+                      "target": {"provider": "pixi", "version": "1.8",
+                                 "mapped_name": "jq", "generation_id": "d"*32,
+                                 "candidate": {k: route[k] for k in keys}}}
+            with patch("migration_engine._load_plan", return_value=stored), \
+                 patch("migration_engine._material", return_value=({}, "c"*64)) as material:
+                u._revalidate_migration(s, decision)
+            self.assertEqual(material.call_args.kwargs["provider"], "pixi")
+            self.assertEqual(material.call_args.kwargs["planned_generation"], "d"*32)
+            self.assertEqual(material.call_args.kwargs["pixi_candidate"]["lock"], "bytes")
+            with patch("migration_engine._load_plan", return_value=stored), \
+                 patch("migration_engine._material") as material:
+                with self.assertRaisesRegex(u.PlanError, "plan_changed"):
+                    u._revalidate_migration(s, dict(decision,
+                                                   selected_candidate=dict(route, lock="tampered")))
+                material.assert_not_called()
+            with self.assertRaisesRegex(u.PlanError, "migration_route_unverified"):
+                u._revalidate_migration(s, dict(decision, target_provider="macports"))
 
     def test_mapped_pixi_candidate_is_discovered_but_not_executable(self):
         from unittest.mock import patch
@@ -9390,6 +9511,30 @@ class MigrationContracts(unittest.TestCase):
             with patch.object(engine.profiles, "intel_only"):
                 with self.assertRaisesRegex(engine.MigrationConflict, "profile_missing"):
                     engine._material_pixi(Service(), "ffmpeg", candidate={})
+
+    def test_pixi_approval_rechecks_pinned_generation_and_refuses_changed_lock(self):
+        import json
+        import time
+        from unittest.mock import patch
+        from provider_ownership import atomic_write_json
+        with tempfile.TemporaryDirectory() as temp:
+            class S:
+                DATA_DIR = Path(temp)
+                def read_json(self, path):
+                    return json.loads(Path(path).read_text())
+            service = S()
+            old_plan = {"schema_version": engine.SCHEMA, "id": "a"*32,
+                        "action": "migrate", "expires_at": time.time()+600,
+                        "profile": "jq", "fingerprint": "f"*64,
+                        "target": {"provider": "pixi", "generation_id": "b"*32}}
+            atomic_write_json(Path(temp)/"migrations"/"plans"/("a"*32+".json"), old_plan)
+            with patch.object(engine, "_material", return_value=({}, "0"*64)) as material:
+                with self.assertRaisesRegex(engine.MigrationConflict, "plan_changed"):
+                    engine.approve(service, "a"*32)
+            self.assertEqual(material.call_args.kwargs["provider"], "pixi")
+            self.assertEqual(material.call_args.kwargs["planned_generation"], "b"*32)
+            self.assertIsNone(material.call_args.kwargs.get("pixi_candidate"))
+            self.assertFalse((Path(temp)/"migrations"/"transactions").exists())
 
     def test_recovery_refuses_invalid_ids(self):
         for value in ("../../../etc/passwd", "bad", "", None):
