@@ -605,8 +605,8 @@ def execute(s, body, *, all_ready=False):
         item = rows.get(decision["source_installation_id"])
         if (not item
                 or item.get("installed_version") != decision.get("installed_package_version")
-                or (item.get("installed_upstream_version") or item.get("installed_version"))
-                   != decision["installed_version"]):
+                or (item.get("installed_upstream_version") or item.get("upstream_version")
+                    or item.get("installed_version")) != decision["installed_version"]):
             raise PlanError("plan_changed")
         if (item.get("provider") or "homebrew") != decision["current_provider"]:
             raise PlanError("plan_changed")

@@ -7454,8 +7454,8 @@ def execute(s, body, *, all_ready=False):
         item = rows.get(decision["source_installation_id"])
         if (not item
                 or item.get("installed_version") != decision.get("installed_package_version")
-                or (item.get("installed_upstream_version") or item.get("installed_version"))
-                   != decision["installed_version"]):
+                or (item.get("installed_upstream_version") or item.get("upstream_version")
+                    or item.get("installed_version")) != decision["installed_version"]):
             raise PlanError("plan_changed")
         if (item.get("provider") or "homebrew") != decision["current_provider"]:
             raise PlanError("plan_changed")
@@ -7880,6 +7880,15 @@ class Plans(unittest.TestCase):
                 material.assert_not_called()
             with self.assertRaisesRegex(u.PlanError, "migration_route_unverified"):
                 u._revalidate_migration(s, dict(decision, target_provider="macports"))
+
+    def test_selected_decision_tracks_source_upstream_field_fallback(self):
+        source = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                  "installed_version": "1.2_3", "upstream_version": "1.2",
+                  "classification": {"category": "standalone_candidate"},
+                  "discovery_complete": True}
+        decision, = sel.select([source], [])
+        self.assertEqual(decision["installed_version"], "1.2")
+        self.assertEqual(decision["installed_package_version"], "1.2_3")
 
     def test_migration_compares_exact_package_revision_not_just_upstream(self):
         from unittest.mock import patch
