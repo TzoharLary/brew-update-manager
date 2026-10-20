@@ -61,6 +61,48 @@ class Plans(unittest.TestCase):
                          "homebrew:formula:jq")
 
 
+    def test_cached_supplemental_classification_is_preserved_for_exact_source(self):
+        from datetime import datetime, timezone, timedelta
+        from provider_ownership import atomic_write_json
+        import installation_evidence as evidence
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.STATE_FILE = Path(temp) / "state.json"
+            s.raise_if_cancel_requested = lambda: None
+            s.is_excluded = lambda name, kind: False
+            audit = {"status": "verified", "active_keg": "/fixture/jq"}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installation_id": "homebrew:formula:jq", "installed_version": "1.7",
+                   "inventory_verification": audit}
+            classification = {"category": "standalone_candidate",
+                              "inventory_fingerprint": evidence.fingerprint(audit),
+                              "checked_at": datetime.now(timezone.utc).isoformat(),
+                              "gaps": [], "consumers": [], "shared_roles": []}
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=classification)], "migrations": []})
+            offers = [{"name": "jq", "status": "classification_only"}]
+            annotated = evidence.annotate(s, offers, [dict(row)], False)
+            self.assertEqual(annotated[0]["classification"], classification)
+            self.assertIsNot(annotated[0]["classification"], classification)
+
+            changed = dict(row, inventory_verification={"status": "verified", "active_keg": "/other"})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [changed], False)[0]
+                             ["classification"]["category"], "unclassified")
+            source_changed = dict(row, installed_version="1.8")
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [source_changed], False)[0]
+                             ["classification"]["category"], "unclassified")
+            stale = dict(classification, checked_at=(datetime.now(timezone.utc) -
+                        timedelta(seconds=950)).isoformat())
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=stale)], "migrations": []})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [dict(row)], False)[0]
+                             ["classification"]["category"], "unclassified")
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=classification)], "migrations": []})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}],
+                             [dict(row, inventory_stale=True)], False)[0]
+                             ["classification"]["category"], "unclassified")
+
     def test_homebrew_revision_update_discovered_when_outdated_flag_is_false(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:

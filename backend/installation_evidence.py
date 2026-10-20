@@ -278,9 +278,44 @@ def classify(evidence):
     return dict(category=category,roles=roles,reasons=reasons,consumers=evidence.get('consumers',[]),
                 gaps=sorted(set(gaps)),automation_candidate=category=='standalone_candidate',policy=POLICY)
 
+def reusable_cached_classification(previous, current):
+    """Reuse T02 evidence only for the unchanged physical, verified source."""
+    from datetime import datetime, timezone
+    audit = current.get('inventory_verification') or {}
+    identity = current.get('installation_id')
+    if (not identity or audit.get('status') != 'verified'
+            or current.get('inventory_stale')):
+        return None
+    physical = [row for row in previous.get('packages', [])
+                if isinstance(row, dict) and row.get('installation_id') == identity
+                and row.get('provider') == 'homebrew'
+                and row.get('kind') == 'formula'
+                and row.get('name') == current.get('name')
+                and row.get('installed_version') == current.get('installed_version')]
+    if len(physical) != 1:
+        return None
+    cached = physical[0].get('classification')
+    if not isinstance(cached, dict):
+        offers = [offer for offer in previous.get('migrations', [])
+                  if isinstance(offer, dict) and offer.get('name') == current.get('name')]
+        cached = offers[0].get('classification') if len(offers) == 1 else None
+    if not isinstance(cached, dict) or cached.get('inventory_fingerprint') != fingerprint(audit):
+        return None
+    try:
+        checked = datetime.fromisoformat(cached['checked_at'].replace('Z', '+00:00'))
+        if checked.tzinfo is None:
+            return None
+        age = (datetime.now(timezone.utc) - checked).total_seconds()
+        if not -60 <= age < 900:
+            return None
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
+    return dict(cached)
+
+
 def annotate(s, offers, packages, refresh, report=False):
     context=getattr(CONTEXT,'inventory',None)
-    previous={o['name']:o for o in (s.read_json(s.STATE_FILE) or {}).get('migrations',[])}
+    previous=s.read_json(s.STATE_FILE) or {}
     by_name={p['name']:p for p in packages if p.get('provider')=='homebrew' and p.get('kind')=='formula'}
     services=None
     if refresh and context and offers:
@@ -299,11 +334,10 @@ def annotate(s, offers, packages, refresh, report=False):
         pkg=by_name.get(name,{})
         audit=pkg.get('inventory_verification',{})
         if not refresh:
-            prior=previous.get(name,{})
-            if prior.get('classification',{}).get('inventory_fingerprint')==fingerprint(audit):
-                offer['classification']=prior['classification']
-            else:
-                offer['classification']=dict(category='unclassified',roles=[],gaps=['fresh_classification_required'],reasons=[],consumers=[])
+            cached = reusable_cached_classification(previous, pkg)
+            offer['classification'] = (cached if cached is not None else
+                dict(category='unclassified', roles=[],
+                     gaps=['fresh_classification_required'], reasons=[], consumers=[]))
             continue
         evidence=dict(name=name,installation_id=pkg.get('installation_id'),checked_at=s.now_iso(),
                       inventory=audit,consumers=(context or {}).get('reverse',{}).get(name,[]),
