@@ -8722,6 +8722,20 @@ def _verify_backup(journal):
 
 
 def _target_ready(s, plan):
+    target = plan["target"]
+    if target["provider"] == "pixi":
+        import pixi_provider
+        profile = profiles.pixi_get(plan["profile"])
+        if not profile:
+            raise MigrationConflict("pixi_migration_profile_missing")
+        prefix = Path(target["prefix"])
+        if (not prefix.is_dir() or prefix.is_symlink()
+                or not prefix.resolve().is_relative_to(
+                    (Path(s.TOOLS_ROOT) / "environments" / plan["profile"]).resolve())):
+            raise MigrationConflict("pixi_target_prefix_unverified")
+        pixi_provider.installed_record(prefix, target["mapped_name"], target["version"])
+        pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+        return profiles.smoke_pixi(s, profile, prefix, target["version"])
     profile = profiles.get(plan["profile"])
     current = {p["name"]: p for p in mp.inventory(s)}
     root = current.get(profile.ports[0])
@@ -8760,7 +8774,9 @@ def _target_postcheck(s, journal):
     smoke = _target_ready(s, journal["plan"])
     primary = name
     managed = Path(s.TOOLS_ROOT) / "bin" / primary
-    result = s.run_cmd([str(managed), *profiles.get(name).version_args],
+    profile = (profiles.pixi_get(name) if target["provider"] == "pixi"
+               else profiles.get(name))
+    result = s.run_cmd([str(managed), *profile.version_args],
                        timeout=30, cancellable=True)
     if result.code or not profiles.version_matches(result.stdout + result.stderr,
                                                     target["version"]):
@@ -8790,22 +8806,105 @@ def _compensate(s, journal, directory):
                                          "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
         if linked.code:
             raise MigrationConflict("source_relink_failed", linked.stderr)
+    if journal["plan"]["target"]["provider"] == "pixi":
+        _remove_pixi_target_record(s, journal)
     return True
+
+
+def _register_pixi_target(s, journal, directory):
+    """Publish physical Pixi evidence only after verified route postcheck."""
+    import pixi_provider
+    import update_routes
+    from provider_ownership import atomic_write_json
+    plan = journal["plan"]
+    target = plan["target"]
+    prefix = Path(target["prefix"])
+    evidence = pixi_provider.installed_record(
+        prefix, target["mapped_name"], target["version"])
+    pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+    if not evidence.get("name"):
+        raise MigrationConflict("pixi_installed_record_invalid")
+    name = plan["profile"]
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    existing = records.get(name)
+    if existing and (existing.get("transaction_id") != journal["transaction_id"]
+                     or existing.get("prefix") != str(prefix)):
+        raise MigrationConflict("pixi_managed_record_conflict")
+    record = {"provider": "pixi", "version": target["version"],
+              "prefix": str(prefix), "workspace": target["directory"],
+              "executables": list(target["commands"]),
+              "owned_shims": routing.owned_shim_hashes(
+                  s.TOOLS_ROOT, journal["activation"]),
+              "transaction_id": journal["transaction_id"],
+              "verified_at": time.time(), "probe_output": "transactional migration"}
+    journal["pixi_managed_record"] = record
+    _write(directory / "journal.json", journal)
+    if existing != record:
+        records[name] = record
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
+    journal["pixi_managed_record_written"] = True
+    _write(directory / "journal.json", journal)
+    return [{"name": name, "kind": "tool", "provider": "pixi",
+             "installation_id": target["installation_id"],
+             "installed_version": target["version"]}]
+
+
+def _remove_pixi_target_record(s, journal):
+    """Rollback only metadata written by this exact transaction."""
+    import update_routes
+    from provider_ownership import atomic_write_json
+    name = journal["plan"]["profile"]
+    target = journal["plan"]["target"]
+    if target["provider"] != "pixi":
+        return
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("pixi_ownership_registry_unreadable")
+    for route in registry.get("routes", []):
+        if route.get("logical_id") == name:
+            if route.get("transaction_id") != journal["transaction_id"]:
+                raise MigrationConflict("pixi_ownership_changed_independently")
+    kept = [r for r in registry["routes"]
+            if r.get("transaction_id") != journal["transaction_id"]]
+    if len(kept) != len(registry["routes"]):
+        atomic_write_json(Path(s.TOOLS_ROOT) / "migrations" / "routes.json",
+                          dict(registry, routes=kept))
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    managed = records.get(name)
+    if managed:
+        if (managed.get("transaction_id") != journal["transaction_id"]
+                or managed.get("prefix") != target["prefix"]):
+            raise MigrationConflict("pixi_managed_record_changed_independently")
+        records.pop(name)
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
 
 
 def _run(s, journal, directory, *, resume=False):
     plan_data = journal["plan"]
-    profile = profiles.get(plan_data["profile"])
+    provider = plan_data["target"]["provider"]
+    profile = (profiles.pixi_get(plan_data["profile"]) if provider == "pixi"
+               else profiles.get(plan_data["profile"]))
+    if not profile:
+        raise MigrationConflict("unsupported_migration_profile")
     try:
         if not resume:
             _phase(journal, directory, "backup", "started")
             _backup(s, journal, directory)
             _phase(journal, directory, "backup", "finished")
             _phase(journal, directory, "install", "started")
-            result = mp.privileged(s, "install", plan_data["target"]["ports"])
-            if result.code:
-                raise MigrationConflict("target_install_failed", result.stderr or result.stdout)
-            _phase(journal, directory, "install", "finished", code=result.code)
+            if provider == "pixi":
+                import pixi_provider
+                target = plan_data["target"]
+                prefix = pixi_provider.install_locked(
+                    s, target["candidate"], Path(target["directory"]))
+                if str(prefix) != target["prefix"]:
+                    raise MigrationConflict("pixi_target_prefix_changed")
+                _phase(journal, directory, "install", "finished", code=0)
+            else:
+                result = mp.privileged(s, "install", plan_data["target"]["ports"])
+                if result.code:
+                    raise MigrationConflict("target_install_failed", result.stderr or result.stdout)
+                _phase(journal, directory, "install", "finished", code=result.code)
         else:
             _verify_backup(journal)
         _phase(journal, directory, "verify", "started")
@@ -8847,7 +8946,7 @@ def _run(s, journal, directory, *, resume=False):
             "logical_id": profile.name, "status": "committed",
             "source_installation_id": plan_data["source"]["installation_id"],
             "source_name": profile.name,
-            "target_provider": "macports",
+            "target_provider": provider,
             "target_installation_id": plan_data["target"]["installation_id"],
             "profile_id": profile.name, "profile_version": profile.version,
             "transaction_id": journal["transaction_id"],
@@ -8855,8 +8954,10 @@ def _run(s, journal, directory, *, resume=False):
             "active": journal["activation"]["active"],
             "evidence_path": str(directory / "journal.json"),
         }
+        installed_targets = (_register_pixi_target(s, journal, directory)
+                             if provider == "pixi" else mp.inventory(s))
         ownership.commit_route(s.TOOLS_ROOT, route, directory / "journal.json",
-                               mp.inventory(s))
+                               installed_targets)
         _phase(journal, directory, "ownership", "finished")
         journal.update(status="completed", completed_at=time.time())
         _phase(journal, directory, "completed", "finished")
