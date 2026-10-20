@@ -83,8 +83,9 @@ script; inspect its saved report and avoid rerunning unchanged suites needlessly
 Full unrun checks must be reported as pending. Isolated checks must not mutate
 real packages; real acceptance shows the actions and asks for one overall approval.
 
-`tools/verify-migration.py` currently has `--checks` and an IWYU-only acceptance
-mode. It is not yet the complete script for the required product flow. Its
+`tools/verify-migration.py --checks` now calls `verify-current-code.py` directly,
+independent of old bundle manifests, and saves per-step logs and a summary.
+The full suite awaits the user run. The helper also has an IWYU-only acceptance mode. It is not yet the complete script for the required product flow. Its
 limitations and the distinction between historical runs and future validation
 are recorded in T03_VALIDATION.md. Do not recommend a real migration until its
 preflight, activation, rollback and acceptance gaps are resolved.

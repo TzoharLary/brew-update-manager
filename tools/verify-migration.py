@@ -11,7 +11,7 @@ def api(path,body=None):
 def main():
  p=argparse.ArgumentParser();p.add_argument('--checks',action='store_true');p.add_argument('--acceptance',action='store_true');p.add_argument('--pilot');a=p.parse_args()
  if a.checks:
-  import subprocess;raise SystemExit(subprocess.call(['/usr/local/bin/python3.14',str(ROOT/'tools/implement-mac-manager.py'),'t03-verify']))
+  import subprocess;raise SystemExit(subprocess.call([sys.executable,str(ROOT/'tools/verify-current-code.py')]))
  if not(a.acceptance and a.pilot=='include-what-you-use'):raise SystemExit('Use --checks or --acceptance --pilot include-what-you-use')
  out=RECOVERY/('acceptance-'+str(time.time_ns()));out.mkdir(parents=True); report={'started_at':time.time(),'pilot':a.pilot}
  try:

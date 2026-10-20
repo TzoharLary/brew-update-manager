@@ -40,9 +40,10 @@
 
 ## הסקריפט שנמסר ומגבלותיו
 
-`tools/verify-migration.py --checks` מפנה ל־`t03-verify` בגנרטור:
-בדיקות Python, תחביר, HTTP, שני תרחישי Electron ו־git diff --check.
-זהו המסלול המבודד הקיים; בעדכון התיעוד הזה הוא לא הורץ.
+`tools/verify-migration.py --checks` מפעיל כעת את `verify-current-code.py` ישירות,
+בלי בדיקת מניפסט bundle ישן. הוא מריץ את בדיקות הקוד הקיימות: תחביר,
+Python, HTTP ושני תרחישי Electron מבודדים, ושומר דוח ולוג נפרד לכל שלב.
+לאחר העדכון הזה הבדיקות המלאות ממתינות להרצת המשתמש. זו אינה קבלה למעבר אמיתי.
 
 `--acceptance --pilot include-what-you-use` הוא מסלול קבלה ייעודי לפיילוט:
 בדיקת health בסיסית, תוכנית דרך API, YES, ביצוע, לכידת state וניסיון
