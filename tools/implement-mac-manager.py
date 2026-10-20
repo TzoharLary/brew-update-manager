@@ -5785,9 +5785,4170 @@ T03/T04/T07 נשארות פתוחות. הפקודה --full במסמך היא י�
             os.replace(temporary, path)
     print(f'Plan documentation {manifest["status"]}: {len(changes)} files changed.')
 
+
+# Bundle 004 foundation: keep generated sources together with the generator.
+UNIFIED_FOUNDATION_BACKEND_UPDATE_SELECTION_PY = r'''"""Conservative, side-effect-free Intel provider decision contracts.
+
+A candidate is never executable merely because its version looks newer. The
+adapter must attest to a verified binary closure and an executable profile.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+import uuid
+
+SCHEMA_VERSION = 1
+TTL_SECONDS = 15 * 60
+_PROVIDER_ORDER = {"homebrew": 0, "macports": 1, "pixi": 2}
+_STABLE = re.compile(r"v?([0-9]+(?:\.[0-9]+)*)\Z")
+
+
+def normalize_upstream(value):
+    """Return a numeric tuple; ambiguous suffixes/prereleases are UNKNOWN."""
+    if not isinstance(value, str):
+        return None
+    match = _STABLE.fullmatch(value.strip())
+    return tuple(int(part) for part in match.group(1).split(".")) if match else None
+
+
+def compare_upstream(left, right):
+    """Compare upstream versions, or return None rather than guessing."""
+    a, b = normalize_upstream(left), normalize_upstream(right)
+    if a is None or b is None:
+        return None
+    width = max(len(a), len(b))
+    a, b = a + (0,) * (width - len(a)), b + (0,) * (width - len(b))
+    return (a > b) - (a < b)
+
+
+def compare_same_provider_package(current_version, current_revision,
+                                  target_version, target_revision,
+                                  provider_reports_outdated=False):
+    """Upstream order first; packaging revisions only within one provider."""
+    result = compare_upstream(target_version, current_version)
+    if result is None or result != 0:
+        return result
+    if current_revision is not None and target_revision is not None:
+        try:
+            a, b = int(target_revision), int(current_revision)
+        except (TypeError, ValueError):
+            return None
+        return (a > b) - (a < b)
+    return 1 if provider_reports_outdated is True else 0
+
+
+def _installation_id(row):
+    known = row.get("installation_id")
+    if known:
+        return known
+    provider = row.get("provider", "homebrew")
+    name = row.get("provider_name") or row.get("name")
+    kind = row.get("kind", "formula")
+    if not name or provider not in _PROVIDER_ORDER:
+        return None
+    if provider == "homebrew" and kind in ("formula", "cask"):
+        return f"homebrew:{kind}:{name}"
+    if provider == "macports" and kind == "port":
+        return f"macports:{name}"
+    if provider == "pixi" and kind == "tool":
+        return f"pixi:{name}"
+    return None
+
+
+def _material(value):
+    """Remove volatile observations from the fingerprint, recursively."""
+    volatile = {"checked_at", "created_at", "expires_at", "plan_id",
+                "decision_id", "evidence_path", "evidence_refs", "observed_at"}
+    if isinstance(value, dict):
+        return {k: _material(v) for k, v in sorted(value.items())
+                if k not in volatile}
+    if isinstance(value, list):
+        return [_material(item) for item in value]
+    return value
+
+
+def material_fingerprint(source, candidate, ownership=None):
+    data = {"source": _material(source), "candidate": _material(candidate),
+            "ownership": _material(ownership or {})}
+    raw = json.dumps(data, sort_keys=True, ensure_ascii=False,
+                     separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _migration_allowed(row):
+    cls = row.get("classification") or {}
+    if cls.get("category") != "standalone_candidate":
+        return False
+    if cls.get("gaps") or cls.get("consumers") or cls.get("shared_roles"):
+        return False
+    if cls.get("role") in ("service", "shared", "library"):
+        return False
+    return (row.get("provider") or "homebrew") == "homebrew" and row.get("kind") == "formula"
+
+
+def _candidate_issues(row, candidate):
+    issues = []
+    source_id = _installation_id(row)
+    provider = candidate.get("provider")
+    action = candidate.get("action")
+    if not source_id or candidate.get("source_installation_id") != source_id:
+        issues.append("identity_mismatch")
+    if candidate.get("logical_id") != (row.get("logical_id") or row.get("name")):
+        issues.append("logical_identity_mismatch")
+    if provider not in _PROVIDER_ORDER:
+        issues.append("unknown_provider")
+    if candidate.get("schema_version") != SCHEMA_VERSION:
+        issues.append("unsupported_candidate_schema")
+    if candidate.get("availability") != "verified":
+        issues.append("provider_unverified")
+    if candidate.get("execution_supported") is not True:
+        issues.append("execution_unsupported")
+    sysinfo = candidate.get("system") or {}
+    if sysinfo.get("os") != "macos" or sysinfo.get("arch") != "x86_64":
+        issues.append("unsupported_platform")
+    if candidate.get("closure_verified") is not True:
+        issues.append("binary_closure_unverified")
+    closure = candidate.get("closure")
+    if not isinstance(closure, list):
+        issues.append("binary_closure_unverified")
+    else:
+        for node in closure:
+            if not isinstance(node, dict) or node.get("arch") not in ("x86_64", "osx-64", "noarch"):
+                issues.append("invalid_binary_closure")
+                break
+            if not (node.get("archive_id") or node.get("url")):
+                issues.append("invalid_binary_closure")
+                break
+    if not isinstance(candidate.get("provider_names"), list) or not candidate["provider_names"]:
+        issues.append("target_identity_missing")
+    if action not in ("update", "migrate"):
+        issues.append("unsupported_action")
+    current_provider = row.get("provider") or "homebrew"
+    if provider != current_provider and action != "migrate":
+        issues.append("provider_switch_requires_migration")
+    if provider == current_provider and action != "update":
+        issues.append("same_provider_not_migration")
+    if action == "migrate":
+        if not _migration_allowed(row):
+            issues.append("migration_classification_blocked")
+        if not candidate.get("profile_id") or not isinstance(candidate.get("profile_version"), int):
+            issues.append("migration_profile_missing")
+        if (not isinstance(candidate.get("migration_plan_id"), str)
+                or re.fullmatch(r"[a-f0-9]{32}", candidate["migration_plan_id"]) is None
+                or not isinstance(candidate.get("migration_fingerprint"), str)
+                or re.fullmatch(r"[a-f0-9]{64}", candidate["migration_fingerprint"]) is None):
+            issues.append("migration_transaction_plan_missing")
+    if candidate.get("blockers"):
+        issues.extend(str(x) for x in candidate["blockers"])
+    current_version = (row.get("installed_upstream_version") or row.get("upstream_version")
+                       or row.get("installed_version"))
+    cmp = (compare_same_provider_package(
+        current_version, row.get("installed_revision", row.get("revision")),
+        candidate.get("upstream_version"), candidate.get("revision"),
+        candidate.get("provider_outdated", False))
+        if provider == current_provider
+        else compare_upstream(candidate.get("upstream_version"), current_version))
+    if cmp is None:
+        issues.append("comparison_unknown")
+    elif cmp < 0:
+        issues.append("downgrade_forbidden")
+    elif cmp == 0:
+        issues.append("not_newer")
+    return list(dict.fromkeys(issues))
+
+
+def select(installed, candidates, ownership=None, *, plan_id=None, created_at=None):
+    """Return one JSON-compatible decision per physical installation."""
+    ownership = ownership or {}
+    plan_id = plan_id or uuid.uuid4().hex
+    created = time.time() if created_at is None else created_at
+    results = []
+    for row in installed:
+        installation_id = _installation_id(row)
+        logical_id = row.get("logical_id") or row.get("name")
+        provider = row.get("provider") or "homebrew"
+        current = (row.get("installed_upstream_version") or row.get("upstream_version")
+                   or row.get("installed_version"))
+        relevant = [c for c in candidates
+                    if c.get("source_installation_id") == installation_id]
+        excluded = row.get("excluded") or logical_id == "ngrok" or row.get("name") == "ngrok"
+        alternatives = []
+        eligible = []
+        incomplete = not row.get("discovery_complete", False)
+        for candidate in relevant:
+            issues = ["excluded_package"] if excluded else _candidate_issues(row, candidate)
+            alternative = dict(candidate)
+            alternative["reason_codes"] = issues
+            alternatives.append(alternative)
+            if "provider_unverified" in issues or "comparison_unknown" in issues:
+                incomplete = True
+            if not issues:
+                eligible.append(candidate)
+        def preference(c):
+            version = normalize_upstream(c["upstream_version"])
+            # Version tuple comparison must pad zeros for 1.2 vs 1.2.0.
+            padded = version + (0,) * (20 - len(version)) if len(version) < 20 else version
+            return (padded, int(c["provider"] == provider),
+                    int(c.get("revision") or 0) if c["provider"] == provider else 0,
+                    -_PROVIDER_ORDER[c["provider"]])
+        selected = max(eligible, key=preference) if eligible else None
+        if selected:
+            status = "ready"
+            action = selected["action"]
+            reasons = ["partial_provider_comparison"] if incomplete else ["newest_verified_compatible"]
+        elif excluded:
+            status, action, reasons = "blocked", "none", ["excluded_package"]
+        elif incomplete:
+            status, action, reasons = "unverified", "none", ["discovery_incomplete"]
+        elif any(a["reason_codes"] for a in alternatives):
+            blocking = [a for a in alternatives if "not_newer" not in a["reason_codes"]]
+            status, action, reasons = ("blocked", "none", ["no_executable_binary_route"]) if blocking else ("current", "none", ["already_current"])
+        else:
+            status, action, reasons = "current", "none", ["already_current"]
+        source_ownership = (ownership.get(installation_id) or {}
+                            if isinstance(ownership, dict) else {})
+        result = {
+            "decision_id": uuid.uuid4().hex, "plan_id": plan_id,
+            "logical_id": logical_id, "source_installation_id": installation_id,
+            "current_provider": provider,
+            "target_provider": selected["provider"] if selected else provider,
+            "installed_version": current,
+            "installed_package_version": row.get("installed_version"),
+            "target_version": selected.get("upstream_version") if selected else None,
+            "action": action, "status": status, "selected_candidate": selected,
+            "alternatives": alternatives, "reason_codes": reasons, "blockers": [],
+            "created_at": created, "expires_at": created + TTL_SECONDS,
+            "material_fingerprint": material_fingerprint(row, selected, source_ownership),
+        }
+        if row.get("needs_recovery"):
+            result.update(status="needs_recovery", action="none",
+                          selected_candidate=None, reason_codes=["recovery_required"])
+        results.append(result)
+    return results
+'''
+
+UNIFIED_FOUNDATION_BACKEND_PROVIDER_OWNERSHIP_PY = r'''"""Durable provider ownership: overlay verified physical inventory only.
+
+Legacy routes are preserved as unverifiable until their exact target is checked.
+No port installation is ever represented as a synthetic tool.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
+import time
+
+SCHEMA_VERSION = 1
+
+
+def atomic_write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(value, sort_keys=True, ensure_ascii=False,
+                       indent=2) + "\n").encode("utf-8")
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + "-")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temp):
+            os.unlink(temp)
+
+
+def load_routes(root):
+    path = Path(root) / "migrations" / "routes.json"
+    if not path.exists():
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": None}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": f"ownership_unreadable: {exc}"}
+    if not isinstance(raw, dict):
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": "ownership_invalid"}
+    if "schema_version" not in raw:
+        return {"schema_version": SCHEMA_VERSION, "routes": [],
+                "legacy": [{"logical_id": k, "record": v, "verified": False}
+                           for k, v in raw.items()],
+                "error": None}
+    if raw.get("schema_version") != SCHEMA_VERSION or not isinstance(raw.get("routes"), list):
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": "ownership_schema_unsupported"}
+    return {"schema_version": SCHEMA_VERSION, "routes": raw["routes"],
+            "legacy": raw.get("legacy", []), "error": None}
+
+
+def _installation_id(row):
+    if row.get("installation_id"):
+        return row["installation_id"]
+    if row.get("provider") == "macports" and row.get("kind") == "port":
+        return "macports:" + row["name"]
+    if row.get("provider") == "pixi" and row.get("kind") == "tool":
+        return "pixi:" + row["name"]
+    if row.get("provider") in (None, "homebrew") and row.get("kind") in ("formula", "cask"):
+        return "homebrew:" + row["kind"] + ":" + row["name"]
+    return None
+
+
+def merge_inventory(installed, registry):
+    """Never fabricate an installation; attach routes only to observed targets."""
+    physical = {key: row for row in installed if (key := _installation_id(row))}
+    results = [dict(row) for row in installed]
+    by_id = {key: i for i, row in enumerate(results)
+             if (key := _installation_id(row))}
+    issues = []
+    if registry.get("error"):
+        issues.append(registry["error"])
+    for route in registry.get("routes", []):
+        if not isinstance(route, dict):
+            issues.append("ownership_record_invalid")
+            continue
+        target_id = route.get("target_installation_id")
+        if target_id not in physical:
+            issues.append("ownership_target_missing:" + str(target_id))
+            continue
+        if route.get("status") != "committed":
+            issues.append("ownership_not_committed:" + str(target_id))
+            continue
+        at = by_id[target_id]
+        results[at]["ownership_route"] = route
+        results[at]["logical_id"] = route.get("logical_id") or results[at].get("logical_id")
+        # Keep physical provider and kind; never relabel a MacPorts port as tool.
+    for legacy in registry.get("legacy", []):
+        issues.append("legacy_ownership_unverified:" + str(legacy.get("logical_id")))
+    return results, issues
+
+
+def commit_route(root, route, journal_path, installed):
+    """Journal changes to route registry; refuses unobserved or ambiguous targets."""
+    root = Path(root)
+    target = route.get("target_installation_id")
+    observed = [row for row in installed if _installation_id(row) == target]
+    if len(observed) != 1 or not route.get("transaction_id"):
+        raise ValueError("Route ownership requires one verified physical target")
+    if route.get("status") != "committed" or not route.get("logical_id"):
+        raise ValueError("Uncommitted route cannot become durable ownership")
+    journal_path = Path(journal_path)
+    if not journal_path.is_file():
+        raise ValueError("Recovery journal must exist before ownership is written")
+    registry = load_routes(root)
+    if registry["error"]:
+        raise ValueError(registry["error"])
+    entries = [x for x in registry["routes"]
+               if x.get("source_installation_id") != route.get("source_installation_id")]
+    previous = next((x for x in registry["routes"]
+                     if x.get("source_installation_id") == route.get("source_installation_id")), None)
+    route = dict(route, generation=int((previous or {}).get("generation") or 0) + 1,
+                 verified_at=route.get("verified_at") or time.time())
+    entries.append(route)
+    target_state = dict(registry, routes=entries)
+    digest = hashlib.sha256(json.dumps(target_state, sort_keys=True,
+                                     default=str).encode()).hexdigest()
+    journal = json.loads(journal_path.read_text())
+    journal["ownership_pending_sha256"] = digest
+    atomic_write_json(journal_path, journal)
+    atomic_write_json(root / "migrations" / "routes.json", target_state)
+    journal["ownership_committed_sha256"] = digest
+    atomic_write_json(journal_path, journal)
+    return route
+'''
+
+UNIFIED_FOUNDATION_BACKEND_OPERATION_LOCK_PY = r'''"""Cross-process lock for mutations sharing a TOOLS_ROOT, not a DATA_DIR."""
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import threading
+import time
+
+_HELD = set()
+_GUARD = threading.RLock()
+
+
+class OperationBusy(RuntimeError):
+    pass
+
+
+class OperationLock:
+    def __init__(self, tools_root, operation_id):
+        self.path = (Path(tools_root) / "migrations" / "operation.lock").resolve()
+        self.operation_id = str(operation_id)
+        self.fd = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with _GUARD:
+            if self.path in _HELD:
+                raise OperationBusy("Nested or concurrent mutation lock")
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError) as exc:
+                os.close(fd)
+                raise OperationBusy("Another operation holds the package mutation lock") from exc
+            _HELD.add(self.path)
+            self.fd = fd
+            payload = json.dumps({"pid": os.getpid(), "operation_id": self.operation_id,
+                                  "acquired_at": time.time()}).encode()
+            try:
+                os.ftruncate(fd, 0)
+                os.write(fd, payload)
+                os.fsync(fd)
+            except BaseException:
+                self.__exit__(None, None, None)
+                raise
+            return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.fd is None:
+            return False
+        with _GUARD:
+            fd, self.fd = self.fd, None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+                _HELD.discard(self.path)
+        return False
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_UPDATE_SELECTION_PY = r'''import copy
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import update_selection as selection
+
+
+class ProviderSelection(unittest.TestCase):
+    def source(self, **changes):
+        base = {"name": "jq", "logical_id": "jq", "provider": "homebrew",
+                "kind": "formula", "installed_version": "1.2",
+                "discovery_complete": True,
+                "classification": {"category": "standalone_candidate",
+                                   "gaps": [], "consumers": []}}
+        return dict(base, **changes)
+
+    def candidate(self, provider="homebrew", upstream="1.3", action="update", **changes):
+        base = {"schema_version": 1, "logical_id": "jq",
+                "source_installation_id": "homebrew:formula:jq",
+                "provider": provider, "provider_names": ["jq"],
+                "upstream_version": upstream, "package_version": upstream,
+                "revision": 0, "action": action,
+                "availability": "verified", "execution_supported": True,
+                "profile_id": "jq", "profile_version": 1,
+                "system": {"os": "macos", "arch": "x86_64", "release": "15"},
+                "closure": [], "closure_verified": True, "blockers": []}
+        if action == "migrate":
+            base.update(migration_plan_id="a"*32, migration_fingerprint="b"*64)
+        return dict(base, **changes)
+
+    def test_numeric_normalization_and_unknown_suffix(self):
+        self.assertEqual(selection.compare_upstream("v1.2", "1.2.0"), 0)
+        self.assertIsNone(selection.compare_upstream("1.2rc1", "1.2"))
+        self.assertIsNone(selection.compare_upstream("1.2_3", "1.2"))
+
+    def test_selects_newest_verified_route_from_three_providers(self):
+        routes = [self.candidate(),
+                  self.candidate("macports", "1.4", "migrate"),
+                  self.candidate("pixi", "1.5", "migrate")]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual((decision["target_provider"], decision["status"]),
+                         ("pixi", "ready"))
+
+    def test_migration_is_not_ready_without_verified_transaction_identifiers(self):
+        for missing in ("migration_plan_id", "migration_fingerprint"):
+            route = self.candidate("pixi", "1.8", "migrate")
+            route.pop(missing)
+            decision, = selection.select([self.source()], [route])
+            self.assertNotEqual(decision["status"], "ready")
+            self.assertIn("migration_transaction_plan_missing",
+                          decision["alternatives"][0]["reason_codes"])
+
+    def test_migration_rejects_invalid_plan_identifiers(self):
+        route = self.candidate("pixi", "1.8", "migrate",
+                               migration_plan_id="../../../etc/passwd")
+        decision, = selection.select([self.source()], [route])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_tie_keeps_current_provider(self):
+        routes = [self.candidate("macports", "1.3", "migrate"), self.candidate()]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual(decision["target_provider"], "homebrew")
+
+    def test_newer_blocked_route_does_not_hide_current_update(self):
+        routes = [self.candidate(), self.candidate("macports", "9", "migrate",
+                                                   closure_verified=False)]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual(decision["target_provider"], "homebrew")
+        self.assertEqual(len(decision["alternatives"]), 2)
+
+    def test_revision_update_on_same_provider(self):
+        source = self.source(installed_version="1.2", revision=0)
+        decision, = selection.select([source], [self.candidate(upstream="1.2", revision=1)])
+        self.assertEqual(decision["status"], "ready")
+
+    def test_unknown_version_does_not_guess(self):
+        decision, = selection.select([self.source()], [self.candidate(upstream="2.0-beta")])
+        self.assertEqual(decision["status"], "unverified")
+
+    def test_downgrade_is_not_selected(self):
+        decision, = selection.select([self.source()], [self.candidate(upstream="1.1")])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_migration_requires_current_standalone_classification(self):
+        decision, = selection.select([self.source(classification={"category": "shared"})],
+                                     [self.candidate("macports", "2", "migrate")])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_excluded_package_cannot_execute(self):
+        source = self.source(name="ngrok", logical_id="ngrok")
+        decision, = selection.select([source], [])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_provider_failure_remains_partial(self):
+        failed = self.candidate("pixi", "unknown", "migrate", availability="unverified")
+        decision, = selection.select([self.source()], [failed, self.candidate()])
+        self.assertEqual(decision["status"], "ready")
+        self.assertIn("partial_provider_comparison", decision["reason_codes"])
+
+    def test_fingerprint_ignores_observation_times_not_material_changes(self):
+        a = self.candidate(checked_at="first", evidence_refs=["a"])
+        b = self.candidate(checked_at="second", evidence_refs=["b"])
+        first = selection.material_fingerprint(self.source(), a)
+        self.assertEqual(first, selection.material_fingerprint(self.source(), b))
+        b["package_version"] = "1.3_2"
+        self.assertNotEqual(first, selection.material_fingerprint(self.source(), b))
+
+    def test_cross_provider_revision_does_not_override_current_owner_on_upstream_tie(self):
+        source = self.source(installed_upstream_version="1.2", installed_revision=7)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        home = self.candidate("homebrew", "1.3", "update", revision=0)
+        chosen, = selection.select([source], [port, home])
+        self.assertEqual(chosen["target_provider"], "homebrew")
+
+    def test_decision_carries_exact_installed_package_version(self):
+        source = self.source(installed_version="1.2_5",
+                             installed_upstream_version="1.2", installed_revision=5)
+        result, = selection.select([source], [
+            self.candidate(upstream="1.2", revision=6)])
+        self.assertEqual(result["installed_version"], "1.2")
+        self.assertEqual(result["installed_package_version"], "1.2_5")
+
+    def test_installed_upstream_from_receipt_preserves_revision_update(self):
+        source = self.source(installed_version="1.2_5", installed_upstream_version="1.2",
+                             installed_revision=5)
+        chosen, = selection.select([source], [self.candidate(upstream="1.2", revision=6)])
+        self.assertEqual(chosen["status"], "ready")
+
+    def test_cross_provider_lower_upstream_cannot_win_due_to_revision(self):
+        source = self.source()
+        home = self.candidate(upstream="1.4", revision=0)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        chosen, = selection.select([source], [home, port])
+        self.assertEqual(chosen["target_provider"], "homebrew")
+
+    def test_two_physical_installations_never_merge_by_logical_id(self):
+        a = self.source()
+        b = self.source(provider="macports", kind="port", installation_id="macports:jq")
+        decisions = selection.select([a, b], [self.candidate()])
+        self.assertEqual(len(decisions), 2)
+        self.assertNotEqual(decisions[0]["source_installation_id"],
+                            decisions[1]["source_installation_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_PROVIDER_OWNERSHIP_PY = r'''import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import provider_ownership as owner
+
+
+class Ownership(unittest.TestCase):
+    def test_no_synthetic_port_or_duplicate_tool(self):
+        rows = [{"name": "jq", "provider": "macports", "kind": "port",
+                 "installation_id": "macports:jq"}]
+        registry = {"routes": [{"logical_id": "jq", "source_installation_id": "homebrew:formula:jq",
+                                "target_installation_id": "macports:jq", "status": "committed"}],
+                    "legacy": [], "error": None}
+        merged, issues = owner.merge_inventory(rows, registry)
+        self.assertFalse(issues)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["kind"], "port")
+
+    def test_old_route_is_preserved_unverified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "migrations" / "routes.json"
+            owner.atomic_write_json(path, {"jq": {"provider": "macports"}})
+            state = owner.load_routes(temp)
+            self.assertEqual(len(state["legacy"]), 1)
+            self.assertEqual(state["routes"], [])
+
+    def test_broken_file_does_not_wipe_inventory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "migrations" / "routes.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{ invalid")
+            state = owner.load_routes(temp)
+            merged, issues = owner.merge_inventory([{"name": "jq", "kind": "formula"}], state)
+            self.assertEqual(len(merged), 1)
+            self.assertTrue(issues)
+
+    def test_route_commit_requires_journal_and_physical_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            route = {"logical_id": "jq", "source_installation_id": "homebrew:formula:jq",
+                     "target_installation_id": "macports:jq", "status": "committed",
+                     "transaction_id": "transaction1"}
+            journal = Path(temp) / "journal.json"
+            journal.write_text("{}")
+            with self.assertRaises(ValueError):
+                owner.commit_route(temp, route, journal, [])
+            row = {"name": "jq", "provider": "macports", "kind": "port"}
+            saved = owner.commit_route(temp, route, journal, [row])
+            self.assertEqual(saved["generation"], 1)
+            self.assertEqual(len(owner.load_routes(temp)["routes"]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_OPERATION_LOCK_PY = r'''import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from operation_lock import OperationBusy, OperationLock
+
+
+class LockTests(unittest.TestCase):
+    def test_lock_is_shared_across_data_directories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with OperationLock(temp, "request-1"):
+                with self.assertRaises(OperationBusy):
+                    with OperationLock(temp, "request-2"):
+                        pass
+            with OperationLock(temp, "request-3"):
+                self.assertTrue((Path(temp) / "migrations" / "operation.lock").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+
+UNIFIED_PIXI_PROVIDER = r'''"""Conservative Pixi osx-64 adapter; immutable lock verification before install.
+
+This adapter never installs Pixi, never alters an existing user workspace, and
+never uses a locally configured channel or PyPI/build dependencies.
+"""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+import time
+from urllib.parse import urlsplit
+
+from update_routes import PIXI_TOOLS
+from update_selection import normalize_upstream, compare_upstream
+
+TRUSTED_HOST = "conda.anaconda.org"
+CHANNEL = "conda-forge"
+PLATFORM = "osx-64"
+MAX_SOLVE_SECONDS = 180
+NAME = re.compile(r"[A-Za-z0-9_.-]+\Z")
+
+
+class PixiUnavailable(RuntimeError):
+    pass
+
+
+def _check_name(name):
+    if not isinstance(name, str) or not NAME.fullmatch(name) or name == "ngrok":
+        raise ValueError("Unmapped, excluded, or invalid Pixi tool")
+    if name not in PIXI_TOOLS:
+        raise ValueError("Pixi tool is not mapped")
+    return name
+
+
+def runtime(service):
+    """Use only an already-installed, supported runtime."""
+    path = Path(service.DATA_DIR) / "runtime" / "bin" / "pixi"
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise PixiUnavailable("pixi_runtime_missing")
+    result = service.run_cmd([str(path), "--version"], timeout=30, cancellable=True)
+    if result.code or not re.search(r"\bpixi\s+\d+\.\d+", result.stdout + result.stderr):
+        raise PixiUnavailable("pixi_runtime_unverified")
+    return str(path)
+
+
+def _env(root, *, allow_install=False):
+    """A discovery probe must never install; an explicitly locked install must.
+
+    The service overlays environment variables rather than replacing them, so
+    explicitly pass false during install to override inherited user settings.
+    """
+    root = Path(root)
+    return {
+        "HOME": str(root), "PIXI_HOME": str(root / "pixi-home"),
+        "PIXI_CACHE_DIR": str(root / "cache"),
+        "XDG_CONFIG_HOME": str(root / "xdg"), "XDG_CACHE_HOME": str(root / "cache"),
+        "PIXI_NO_INSTALL": "false" if allow_install else "true",
+        "PIXI_PLATFORM": PLATFORM,
+    }
+
+
+def parse_search(payload, mapped_name):
+    """Fail closed on unknown Pixi CLI output instead of guessing package versions."""
+    if isinstance(payload, dict) and isinstance(payload.get("packages"), list):
+        records = payload["packages"]
+    elif isinstance(payload, list):
+        records = payload
+    else:
+        raise PixiUnavailable("pixi_search_schema_unsupported")
+    versions = set()
+    for record in records:
+        if not isinstance(record, dict) or record.get("name") != mapped_name:
+            continue
+        if record.get("subdir", PLATFORM) not in (PLATFORM, "noarch"):
+            continue
+        version = record.get("version")
+        if normalize_upstream(version) is not None:
+            versions.add(version)
+    return sorted(versions, key=lambda x: tuple(list(normalize_upstream(x)) + [0] * 20), reverse=True)
+
+
+def manifest_text(name, version):
+    _check_name(name)
+    if normalize_upstream(version) is None:
+        raise ValueError("Pixi version must be a stable numeric version")
+    mapped = PIXI_TOOLS[name][0]
+    return ('[workspace]\nname = "mac-manager-' + name.replace(".", "-") +
+            '"\nchannels = ["conda-forge"]\nplatforms = ["osx-64"]\n\n' +
+            '[dependencies]\n' + json.dumps(mapped) + " = " + json.dumps("==" + version) + "\n")
+
+
+def _artifact(url):
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != TRUSTED_HOST or parsed.username or parsed.password:
+        raise PixiUnavailable("untrusted_binary_channel")
+    if not parsed.path.startswith("/conda-forge/"):
+        raise PixiUnavailable("untrusted_binary_channel")
+    pieces = parsed.path.split("/")
+    if len(pieces) < 4 or pieces[2] not in (PLATFORM, "noarch") or not pieces[-1].endswith((".conda", ".tar.bz2")):
+        raise PixiUnavailable("wrong_platform_or_format")
+    if not parsed.fragment or not re.fullmatch(r"(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{64})", parsed.fragment):
+        raise PixiUnavailable("binary_checksum_missing")
+    return {"url": url.split("#")[0], "arch": pieces[2], "archive_id": pieces[-1],
+            "checksum": parsed.fragment.lower(),
+            "checksum_algorithm": "sha256" if len(parsed.fragment) == 64 else "md5"}
+
+
+def parse_explicit(directory):
+    paths = list(Path(directory).glob("*"))
+    if not paths:
+        raise PixiUnavailable("explicit_export_missing")
+    nodes = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        for line in path.read_text().splitlines():
+            text = line.strip()
+            if text.startswith(("https://", "http://")):
+                nodes.append(_artifact(text))
+            elif text and not text.startswith(("#", "@EXPLICIT")):
+                raise PixiUnavailable("unknown_explicit_spec_line")
+    if not nodes or not any(node["arch"] == PLATFORM for node in nodes):
+        raise PixiUnavailable("native_binary_closure_missing")
+    return nodes
+
+
+def _run(service, command, root, timeout):
+    result = service.run_cmd(command, timeout=timeout, cancellable=True, env_override=_env(root))
+    if result.code:
+        raise PixiUnavailable("pixi_command_failed: " + (result.stderr or result.stdout)[-300:])
+    return result
+
+
+def discover(service, name, *, max_seconds=MAX_SOLVE_SECONDS):
+    """Search all versions and find the newest solvable, verified Intel closure.
+
+    A higher unsolved candidate is never silently replaced with a lower version
+    when the time budget expires. No real Pixi environments are modified.
+    """
+    _check_name(name)
+    if name in ("node", "deno", "uv"):
+        raise PixiUnavailable("existing_independent_provider_preserved")
+    pixi = runtime(service)
+    with tempfile.TemporaryDirectory(prefix="mac-manager-pixi-") as temp:
+        root = Path(temp)
+        mapped = PIXI_TOOLS[name][0]
+        found = _run(service, [pixi, "search", mapped, "--channel", CHANNEL,
+                               "--platform", PLATFORM, "--json", "--limit", "10000",
+                               "--no-config"], root, min(max_seconds, 60))
+        try:
+            versions = parse_search(json.loads(found.stdout), mapped)
+        except (ValueError, TypeError) as error:
+            raise PixiUnavailable("pixi_search_json_invalid") from error
+        if not versions:
+            raise PixiUnavailable("no_stable_osx_64_versions")
+        deadline = time.monotonic() + max_seconds
+        failures = []
+        for version in versions:
+            service.raise_if_cancel_requested()
+            remaining = deadline - time.monotonic()
+            if remaining < 10:
+                raise PixiUnavailable("pixi_comparison_incomplete")
+            manifest = root / "pixi.toml"
+            manifest.write_text(manifest_text(name, version))
+            lock = root / "pixi.lock"
+            lock.unlink(missing_ok=True)
+            try:
+                _run(service, [pixi, "lock", "--no-install", "--no-config",
+                               "--manifest-path", str(manifest)], root, min(remaining, 90))
+                if not lock.is_file():
+                    raise PixiUnavailable("pixi_lock_missing")
+                export = root / "explicit"
+                export.mkdir(exist_ok=True)
+                _run(service, [pixi, "workspace", "export", "conda-explicit-spec",
+                               str(export), "--manifest-path", str(manifest),
+                               "--no-config"], root, min(deadline - time.monotonic(), 60))
+                nodes = parse_explicit(export)
+                return {"provider": "pixi", "upstream_version": version,
+                        "package_version": version, "revision": None,
+                        "provider_names": [mapped], "system": {
+                            "os": "macos", "arch": "x86_64"},
+                        "closure": nodes, "closure_verified": True,
+                        "manifest": manifest.read_text(), "lock": lock.read_text(),
+                        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                        "availability": "verified", "execution_supported": True,
+                        "unsolved_versions": failures}
+            except PixiUnavailable as error:
+                failures.append({"version": version, "reason": str(error)})
+        raise PixiUnavailable("no_verified_binary_lock")
+
+
+def install_locked(service, candidate, generation):
+    """Install into a new empty managed generation only; never modify user data."""
+    if candidate.get("provider") != "pixi" or not candidate.get("closure_verified"):
+        raise ValueError("Cannot install unverified Pixi candidate")
+    if candidate.get("system", {}).get("arch") != "x86_64":
+        raise ValueError("Pixi candidate is not Intel")
+    manifest = candidate.get("manifest")
+    lock = candidate.get("lock")
+    if not isinstance(manifest, str) or not isinstance(lock, str):
+        raise ValueError("Exact Pixi manifest and lock are required")
+    generation = Path(generation)
+    if generation.exists():
+        raise FileExistsError("Pixi generation must be new")
+    if not candidate.get("lock_sha256") == hashlib.sha256(lock.encode()).hexdigest():
+        raise ValueError("Pixi lock fingerprint changed")
+    pixi = runtime(service)
+    generation.mkdir(parents=True)
+    (generation / "pixi.toml").write_text(manifest)
+    (generation / "pixi.lock").write_text(lock)
+    result = service.run_cmd([pixi, "install", "--locked", "--no-config",
+                              "--manifest-path", str(generation / "pixi.toml")],
+                             timeout=1800, cancellable=True, env_override=_env(generation, allow_install=True))
+    if result.code:
+        raise PixiUnavailable("pixi_locked_install_failed: " + result.stderr[-200:])
+    prefix = generation / ".pixi" / "envs" / "default"
+    if not (prefix / "conda-meta").is_dir():
+        raise PixiUnavailable("pixi_installed_inventory_missing")
+    return prefix
+
+
+def installed_record(prefix, mapped_name, required_version):
+    """Read live conda-meta; a declared manifest alone is not installation evidence."""
+    records = []
+    for path in (Path(prefix) / "conda-meta").glob("*.json"):
+        try:
+            item = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if item.get("name") == mapped_name:
+            records.append(item)
+    if len(records) != 1 or compare_upstream(records[0].get("version"), required_version) != 0:
+        raise PixiUnavailable("pixi_installed_version_mismatch")
+    return records[0]
+
+
+def verify_generation(prefix, closure):
+    """Match every approved archive and published checksum to live conda-meta.
+
+    An existing user-managed environment is never treated as evidence for a
+    generated application-owned environment.
+    """
+    folder = Path(prefix) / "conda-meta"
+    if not folder.is_dir() or not isinstance(closure, list) or not closure:
+        raise PixiUnavailable("pixi_closure_inventory_missing")
+    installed = {}
+    for path in folder.glob("*.json"):
+        try:
+            metadata = json.loads(path.read_text())
+        except (OSError, ValueError) as error:
+            raise PixiUnavailable("pixi_invalid_conda_metadata") from error
+        name = metadata.get("fn")
+        if not isinstance(name, str) or name in installed:
+            raise PixiUnavailable("pixi_ambiguous_archive_inventory")
+        installed[name] = metadata
+    for node in closure:
+        archive = node.get("archive_id")
+        record = installed.get(archive)
+        if record is None or node.get("arch") not in (PLATFORM, "noarch"):
+            raise PixiUnavailable("pixi_expected_archive_missing")
+        checksum = record.get(node.get("checksum_algorithm"))
+        if not isinstance(checksum, str) or checksum.lower() != node.get("checksum"):
+            raise PixiUnavailable("pixi_archive_checksum_mismatch")
+        if record.get("subdir") != node["arch"]:
+            raise PixiUnavailable("pixi_installed_architecture_mismatch")
+    if len(installed) != len(closure):
+        raise PixiUnavailable("pixi_unapproved_extra_archives")
+    return {"verified_archives": len(closure)}
+'''
+
+UNIFIED_PIXI_TESTS = r'''import sys
+import tempfile
+import unittest
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import pixi_provider as p
+
+
+class PixiContract(unittest.TestCase):
+    def test_exact_manifest_and_no_inherited_channels(self):
+        text = p.manifest_text("jq", "1.7")
+        self.assertIn('channels = ["conda-forge"]', text)
+        self.assertIn('platforms = ["osx-64"]', text)
+        self.assertIn('"jq" = "==1.7"', text)
+        self.assertNotIn(">=", text)
+
+    def test_search_rejects_unknown_and_prerelease(self):
+        with self.assertRaises(p.PixiUnavailable):
+            p.parse_search({"unexpected": []}, "jq")
+        found = p.parse_search([{"name":"jq","version":"1.2"},{"name":"jq","version":"2.0rc1"},
+                                {"name":"git","version":"100"}], "jq")
+        self.assertEqual(found, ["1.2"])
+
+    def test_explicit_rejects_foreign_channel_and_missing_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "osx-64.txt"
+            path.write_text("@EXPLICIT\nhttps://other.example/a.conda#abcdef\n")
+            with self.assertRaises(p.PixiUnavailable):
+                p.parse_explicit(temp)
+            path.write_text("@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/osx-64/a.conda\n")
+            with self.assertRaises(p.PixiUnavailable):
+                p.parse_explicit(temp)
+
+    def test_explicit_accepts_verified_intel_and_noarch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "osx-64.txt"
+            path.write_text("@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/osx-64/jq-1.2.conda#" + "a"*64 + "\n"
+                            "https://conda.anaconda.org/conda-forge/noarch/foo-1.0.conda#" + "b"*32 + "\n")
+            nodes = p.parse_explicit(temp)
+            self.assertEqual({x["arch"] for x in nodes}, {"osx-64", "noarch"})
+
+    def test_no_existing_workspace_overwrite(self):
+        class S:
+            pass
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                p.install_locked(S(), {"provider":"pixi", "closure_verified":False}, temp)
+
+    def test_locked_install_enables_install_even_when_user_env_disables_it(self):
+        import hashlib
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generation = root / "generation"
+            manifest = p.manifest_text("jq", "1.2")
+            lock = "verified fixture lock"
+            candidate = {"provider": "pixi", "closure_verified": True,
+                         "system": {"arch": "x86_64"},
+                         "manifest": manifest, "lock": lock,
+                         "lock_sha256": hashlib.sha256(lock.encode()).hexdigest()}
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    self.args = argv
+                    self.env = kwargs["env_override"]
+                    (generation / ".pixi" / "envs" / "default" / "conda-meta").mkdir(
+                        parents=True)
+                    return SimpleNamespace(code=0, stdout="", stderr="")
+            service = Fake()
+            with patch.object(p, "runtime", return_value="/verified/pixi"):
+                installed = p.install_locked(service, candidate, generation)
+            self.assertIn("--locked", service.args)
+            self.assertEqual(service.env["PIXI_NO_INSTALL"], "false")
+            self.assertEqual(installed, generation / ".pixi" / "envs" / "default")
+            self.assertEqual(p._env(root)["PIXI_NO_INSTALL"], "true")
+
+    def test_ngrok_and_unmapped_blocked(self):
+        for name in ("ngrok", "not-mapped", "../evil"):
+            with self.assertRaises(ValueError):
+                p.manifest_text(name, "1.2")
+
+    def test_conda_meta_must_match_one_exact_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            meta = Path(temp) / "conda-meta"
+            meta.mkdir()
+            (meta / "jq-1.json").write_text('{"name":"jq","version":"1.2"}')
+            self.assertEqual(p.installed_record(temp, "jq", "1.2.0")["version"], "1.2")
+            with self.assertRaises(p.PixiUnavailable):
+                p.installed_record(temp, "jq", "1.3")
+
+
+    def test_pixi_full_closure_must_match_conda_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            meta = Path(root)/"conda-meta"
+            meta.mkdir()
+            (meta/"jq.json").write_text('{"fn":"jq-1.2.conda", "name":"jq",'
+                                         '"version":"1.2", "subdir":"osx-64",'
+                                         '"sha256":"' + "a"*64 + '"}')
+            closure = [{"archive_id":"jq-1.2.conda","arch":"osx-64",
+                        "checksum_algorithm":"sha256","checksum":"a"*64}]
+            self.assertEqual(p.verify_generation(root,closure)["verified_archives"],1)
+            closure[0]["checksum"] = "b"*64
+            with self.assertRaises(p.PixiUnavailable):
+                p.verify_generation(root,closure)
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_UPDATES = r'''"""Persisted, conservative unified Intel update decisions and batch execution.
+
+The advertised plan is authoritative. Unsafe/missing migration routes are
+visible as blocked alternatives; they can never be executed by this layer.
+"""
+from __future__ import annotations
+import hashlib
+import json
+import platform
+from pathlib import Path
+import time
+import uuid
+
+import macports_provider
+import provider_ownership
+import update_routes
+import update_selection
+import migration_profiles
+
+
+class PlanError(ValueError):
+    def __init__(self, code, detail=None):
+        super().__init__(detail or code)
+        self.code = code
+
+
+def _plan_dir(s):
+    return Path(s.DATA_DIR) / "update-plans"
+
+
+def _ids(row):
+    name = row.get("provider_name") or row.get("name")
+    provider = row.get("provider") or "homebrew"
+    if provider == "macports" and row.get("kind") == "port":
+        return "macports:" + name
+    if provider == "pixi" and row.get("kind") == "tool":
+        return "pixi:" + name
+    if provider == "homebrew" and row.get("kind") in ("formula", "cask"):
+        return "homebrew:" + row["kind"] + ":" + name
+    return row.get("installation_id")
+
+
+def _base_candidate(row, provider, action, *, version=None):
+    version = version or row.get("latest_version")
+    return dict(schema_version=1, logical_id=row.get("logical_id") or row["name"],
+                source_installation_id=_ids(row), provider=provider,
+                provider_names=[row.get("provider_name") or row["name"]],
+                upstream_version=version, package_version=version,
+                revision=None, action=action, availability="unverified",
+                execution_supported=False, profile_id=None, profile_version=None,
+                system={"os": "macos", "arch": "x86_64",
+                        "release": platform.mac_ver()[0]},
+                closure=[], closure_verified=False, evidence_refs=[],
+                checked_at=time.time(), blockers=["binary_preflight_missing"])
+
+
+def _formula_closure(name, catalog, installed, excluded):
+    """Use the same dependency closure that guards the existing binary policy."""
+    problems = update_routes.bottle_blockers(name, catalog, installed, excluded)
+    if problems:
+        return None, problems
+    found, visited = [], set()
+    def visit(current):
+        if current in visited:
+            return
+        visited.add(current)
+        entry = catalog.get(current)
+        if not entry or not entry.get("bottle_checksum") or not entry.get("bottle_tag"):
+            raise PlanError("binary_closure_unverified")
+        found.append({"name": current, "arch": "x86_64", "version": entry.get("stable_version"),
+                      "revision": entry.get("revision") or 0,
+                      "archive_id": entry["bottle_tag"], "checksum": entry["bottle_checksum"],
+                      "tag": entry["bottle_tag"]})
+        for dep in entry.get("stable_dependencies", []):
+            if isinstance(dep, str):
+                visit(dep)
+            elif isinstance(dep, dict):
+                for dep_name, category in dep.items():
+                    if category not in (":build", ":test", ":optional"):
+                        visit(dep_name)
+    visit(name)
+    return found, []
+
+
+def _homebrew(s, row, catalog, installed, settings):
+    candidate = _base_candidate(row, "homebrew", "update")
+    if row.get("kind") != "formula" or row.get("inventory_stale"):
+        candidate["blockers"] = ["homebrew_candidate_unverified"]
+        return candidate
+    if not catalog or installed is None:
+        candidate["blockers"] = ["homebrew_catalog_unavailable"]
+        return candidate
+    try:
+        closure, issues = _formula_closure(row["name"], catalog, installed,
+                                          settings["excluded_packages"])
+        if issues:
+            candidate["blockers"] = [x.get("reason", "binary_unavailable") for x in issues]
+            return candidate
+        entry = catalog[row["name"]]
+        candidate.update(upstream_version=entry["stable_version"],
+                         package_version=str(entry["stable_version"]) +
+                         ("_" + str(entry.get("revision")) if entry.get("revision") else ""),
+                         revision=int(entry.get("revision") or 0),
+                         closure=closure, closure_verified=True, availability="verified",
+                         execution_supported=True, provider_outdated=bool(row.get("outdated")),
+                         blockers=[])
+    except (KeyError, ValueError, PlanError) as error:
+        candidate["blockers"] = [str(error)]
+    return candidate
+
+
+def _ports(s, row, roots, action):
+    candidate = _base_candidate(row, "macports", action)
+    candidate["provider_names"] = list(roots)
+    if not roots:
+        candidate["blockers"] = ["port_mapping_missing"]
+        return candidate
+    try:
+        result = macports_provider.preflight(s, list(roots))
+        nodes = result.get("nodes", [])
+        node = next((n for n in nodes if n["name"] == roots[0]), None)
+        if node is None:
+            raise PlanError("port_root_unverified")
+        closure = [dict(x, arch="x86_64", archive_id=x.get("archive"))
+                   for x in nodes]
+        candidate.update(upstream_version=node["version"], package_version=node["version"],
+                         revision=node.get("revision"), closure=closure,
+                         closure_verified=True, availability="verified",
+                         execution_supported=(action == "update"),
+                         blockers=[] if action == "update" else ["migration_execution_not_yet_integrated"],
+                         graph=result)
+    except Exception as exc:
+        if isinstance(exc, getattr(s, "OperationCancelledError", ())):
+            raise
+        candidate["blockers"] = ["macports_preflight_failed: " + str(exc)[-200:]]
+    return candidate
+
+
+
+def _pixi(s, row):
+    """Only app-owned Pixi tools can receive an in-place provider update."""
+    candidate = _base_candidate(row, "pixi", "update", version=None)
+    name = row.get("name")
+    if name not in update_routes.PIXI_TOOLS:
+        candidate["blockers"] = ["unmapped_pixi_tool"]
+        return candidate
+    managed = update_routes.read_records(s.TOOLS_ROOT).get(name, {})
+    if managed.get("provider") != "pixi":
+        candidate["blockers"] = ["pixi_ownership_unverified"]
+        return candidate
+    import pixi_provider
+    prefix = Path(managed.get("prefix") or "/nonexistent")
+    allowed = Path(s.TOOLS_ROOT) / "environments" / name
+    if not prefix.resolve().is_relative_to(allowed.resolve()):
+        candidate["blockers"] = ["user_environment_not_managed"]
+        return candidate
+    try:
+        evidence = pixi_provider.installed_record(
+            prefix, update_routes.PIXI_TOOLS[name][0], row["installed_version"])
+        if evidence.get("version") != managed.get("version"):
+            raise pixi_provider.PixiUnavailable("managed_pixi_version_mismatch")
+        route = pixi_provider.discover(s, name)
+        candidate.update(route, schema_version=1, logical_id=name,
+                         source_installation_id=_ids(row), action="update",
+                         profile_id=name, profile_version=1, blockers=[],
+                         checked_at=time.time())
+    except Exception as error:
+        if isinstance(error, getattr(s, "OperationCancelledError", ())):
+            raise
+        candidate["blockers"] = ["pixi_discovery_unverified:" + str(error)[-200:]]
+    return candidate
+
+
+def _pixi_update(s, source, candidate):
+    """Install an immutable managed Pixi generation and check its live metadata."""
+    import pixi_provider
+    name = source["name"]
+    fresh = _pixi(s, source)
+    for key in ("upstream_version", "lock_sha256", "closure", "manifest", "lock"):
+        if not fresh.get("execution_supported") or fresh.get(key) != candidate.get(key):
+            raise PlanError("plan_changed")
+    directory = (Path(s.TOOLS_ROOT) / "environments" / name /
+                 ("generation-" + uuid.uuid4().hex))
+    prefix = pixi_provider.install_locked(s, candidate, directory)
+    mapped, commands, probe = update_routes.PIXI_TOOLS[name]
+    pixi_provider.installed_record(prefix, mapped, candidate["upstream_version"])
+    pixi_provider.verify_generation(prefix, candidate["closure"])
+    binaries = {command: prefix / "bin" / command for command in commands}
+    if not all(p.is_file() for p in binaries.values()):
+        raise PlanError("pixi_missing_mandatory_commands")
+    environment = {"CONDA_PREFIX": str(prefix), "PATH": str(prefix / "bin") + ":/usr/bin:/bin"}
+    check = s.run_cmd([str(prefix / "bin" / probe[0]), *probe[1:]],
+                      timeout=90, cancellable=True, env_override=environment)
+    if check.code:
+        raise PlanError("pixi_smoke_failed", check.stderr or check.stdout)
+    record = update_routes.activate(
+        s.TOOLS_ROOT, name, "pixi", directory, prefix,
+        candidate["upstream_version"], commands, check.stdout + check.stderr)
+    return {"ok": True, "name": name, "kind": "tool",
+            "code": 0, "provider": "pixi", "action": "update",
+            "installed_version": record["version"],
+            "stdout": "Exact locked Pixi generation installed and verified",
+            "stderr": ""}
+
+def _standalone_classified(row):
+    cls = row.get("classification") or {}
+    return (cls.get("category") == "standalone_candidate"
+            and not cls.get("gaps") and not cls.get("consumers")
+            and not cls.get("shared_roles") and cls.get("role") not in (
+                "service", "shared", "library"))
+
+
+def _load_homebrew_catalog(s):
+    from update_engine import Engine
+    engine = Engine(s)
+    return engine.catalog(), engine.installed()
+
+
+def _unavailable_bridge(row, provider, target_names, reason):
+    """A mapped package is not necessarily a verified executable route."""
+    action = "update" if provider == (row.get("provider") or "homebrew") else "migrate"
+    candidate = _base_candidate(row, provider, action)
+    candidate["provider_names"] = list(target_names)
+    candidate["blockers"] = [reason]
+    return candidate
+
+
+def _pixi_bridge(s, row, *, timeout=60):
+    """Bind a verified Intel route to a fixed-profile migration transaction."""
+    name = row["name"]
+    mapped = update_routes.PIXI_TOOLS[name][0]
+    candidate = _unavailable_bridge(row, "pixi", [mapped],
+                                    "pixi_migration_transaction_unavailable")
+    profile = migration_profiles.pixi_get(name)
+    if not profile or profile.provider != "pixi":
+        candidate["blockers"] = ["pixi_migration_profile_missing"]
+        return candidate
+    if (row.get("kind") != "formula" or
+            (row.get("provider") or "homebrew") != "homebrew" or
+            not _standalone_classified(row)):
+        candidate["blockers"] = ["fresh_classification_required"]
+        return candidate
+    import pixi_provider
+    try:
+        verified = pixi_provider.discover(s, name, max_seconds=timeout)
+        candidate.update(verified, schema_version=1, logical_id=name,
+                         source_installation_id=_ids(row), action="migrate",
+                         execution_supported=False, profile_id=profile.name,
+                         profile_version=profile.version,
+                         blockers=["pixi_migration_transaction_unavailable"],
+                         checked_at=time.time())
+        import migration_engine
+        plan = migration_engine.plan(
+            s, name, provider="pixi", classification=row["classification"],
+            pixi_candidate=verified)
+        if (plan["target"]["provider"] != "pixi"
+                or plan["target"]["candidate"]["lock_sha256"] != verified.get("lock_sha256")
+                or plan["target"]["candidate"]["closure"] != verified.get("closure")
+                or plan["target"]["version"] != verified.get("upstream_version")
+                or plan["profile"] != profile.name
+                or plan["profile_version"] != profile.version):
+            raise PlanError("pixi_migration_plan_mismatch")
+        candidate.update(migration_plan_id=plan["id"],
+                         migration_fingerprint=plan["fingerprint"],
+                         execution_supported=True, blockers=[])
+    except Exception as error:
+        if isinstance(error, getattr(s, "OperationCancelledError", ())):
+            raise
+        candidate["execution_supported"] = False
+        code = getattr(error, "code", None) or type(error).__name__
+        candidate["blockers"] = ["pixi_migration_preflight_failed:" + str(code)[-160:]]
+    return candidate
+
+def collect_candidates(s, snapshot, *, pixi_scan_budget_seconds=180):
+    """Collect all *mapped* provider alternatives, regardless of brew.outdated.
+
+    Classifications originate in the common T02 inventory scan. A missing
+    migration profile remains a visible blocker, not a runnable alternative.
+    """
+    rows = snapshot.get("packages", [])
+    mapping = json.loads((Path(__file__).with_name("macports-map.json")).read_text())
+    candidates = []
+    # Bounding aggregate solver work prevents many mapped applications from
+    # turning a normal check into an unbounded series of Pixi searches.
+    pixi_deadline = time.monotonic() + max(0, pixi_scan_budget_seconds)
+    settings = s.load_settings()
+    try:
+        catalog, installed = _load_homebrew_catalog(s)
+    except Exception:
+        catalog, installed = None, None
+    for row in rows:
+        provider = row.get("provider") or "homebrew"
+        name = row.get("name")
+        if (not name or row.get("excluded") or name == "ngrok"
+                or row.get("inventory_stale")):
+            row["discovery_complete"] = False
+            continue
+        row["discovery_complete"] = True
+        if provider == "homebrew" and row.get("kind") == "formula":
+            if catalog is None or installed is None:
+                candidates.append(_unavailable_bridge(
+                    row, "homebrew", [name], "homebrew_catalog_unavailable"))
+                row["discovery_complete"] = False
+            else:
+                entry = catalog.get(name)
+                current = row.get("installed_upstream_version") or row.get("installed_version")
+                version = entry.get("stable_version") if isinstance(entry, dict) else None
+                comparison = (update_selection.compare_same_provider_package(
+                    str(current), row.get("installed_revision"),
+                    str(version), entry.get("revision", 0), row.get("outdated", False))
+                    if version is not None else None)
+                # No closure inspection is needed if a known stable upstream
+                # cannot be an update; other mapped providers are still probed.
+                if row.get("outdated") or comparison is None or comparison > 0:
+                    candidate = _homebrew(s, row, catalog, installed, settings)
+                    candidates.append(candidate)
+                    if candidate.get("availability") != "verified":
+                        row["discovery_complete"] = False
+            roots = mapping.get(name)
+            if roots:
+                profile = migration_profiles.get(name)
+                classification = row.get("classification") or {}
+                if not profile or profile.provider != "macports":
+                    candidates.append(_unavailable_bridge(
+                        row, "macports", roots, "migration_profile_missing"))
+                elif not _standalone_classified(row):
+                    candidates.append(_unavailable_bridge(
+                        row, "macports", roots, "fresh_classification_required"))
+                else:
+                    offer = _ports(s, row, roots, "migrate")
+                    offer["profile_id"] = profile.name
+                    offer["profile_version"] = profile.version
+                    if offer["availability"] == "verified":
+                        try:
+                            import migration_engine
+                            plan = migration_engine.plan(s, name, classification=classification)
+                            offer.update(migration_plan_id=plan["id"],
+                                         migration_fingerprint=plan["fingerprint"],
+                                         execution_supported=True, blockers=[])
+                        except Exception as error:
+                            if isinstance(error, getattr(s, "OperationCancelledError", ())):
+                                raise
+                            offer["blockers"] = ["migration_preflight_failed:" + str(error)[-180:]]
+                    else:
+                        row["discovery_complete"] = False
+                    candidates.append(offer)
+            if name in update_routes.PIXI_TOOLS:
+                classification = row.get("classification") or {}
+                if not _standalone_classified(row):
+                    candidates.append(_unavailable_bridge(
+                        row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                        "fresh_classification_required"))
+                elif (remaining := pixi_deadline - time.monotonic()) < 10:
+                    candidates.append(_unavailable_bridge(
+                        row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                        "pixi_scan_budget_exhausted"))
+                    row["discovery_complete"] = False
+                else:
+                    candidate = _pixi_bridge(s, row, timeout=min(60, remaining))
+                    candidates.append(candidate)
+                    if candidate.get("availability") != "verified":
+                        row["discovery_complete"] = False
+        elif provider == "homebrew" and row.get("kind") == "cask":
+            candidates.append(_unavailable_bridge(
+                row, "homebrew", [name], "cask_binary_adapter_not_verified"))
+        elif provider == "macports" and row.get("kind") == "port":
+            if name in update_routes.PIXI_TOOLS:
+                candidates.append(_unavailable_bridge(
+                    row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                    "migration_source_provider_unsupported"))
+            if row.get("outdated"):
+                candidate = _ports(s, row, [name], "update")
+                candidates.append(candidate)
+                if candidate.get("availability") != "verified":
+                    row["discovery_complete"] = False
+        elif provider == "pixi" and row.get("kind") == "tool":
+            if catalog is not None and name in catalog:
+                candidates.append(_unavailable_bridge(
+                    row, "homebrew", [name],
+                    "migration_source_provider_unsupported"))
+            candidate = _pixi(s, row)
+            candidates.append(candidate)
+            if candidate.get("availability") != "verified":
+                row["discovery_complete"] = False
+    return candidates
+
+def _safe_snapshot(s, snapshot):
+    rows = snapshot.get("packages", [])
+    normalized = []
+    for item in rows:
+        row = dict(item)
+        row["installation_id"] = _ids(row)
+        normalized.append(row)
+    registry = provider_ownership.load_routes(s.TOOLS_ROOT)
+    merged, issues = provider_ownership.merge_inventory(normalized, registry)
+    return merged, registry, issues
+
+
+def generate_plan(s, snapshot):
+    rows, registry, issues = _safe_snapshot(s, snapshot)
+    candidates = collect_candidates(s, dict(snapshot, packages=rows))
+    pid = uuid.uuid4().hex
+    decisions = update_selection.select(rows, candidates, plan_id=pid)
+    if registry.get("error"):
+        for decision in decisions:
+            decision.update(status="unverified", action="none", selected_candidate=None,
+                            reason_codes=["ownership_unreadable"], blockers=[registry["error"]])
+    by_id = {d["source_installation_id"]: d for d in decisions}
+    for row in rows:
+        decision = by_id.get(row["installation_id"])
+        row["update_decision"] = decision
+        if decision and decision["status"] == "ready":
+            row["outdated"] = True
+    created = time.time()
+    plan = {"schema_version": 1, "id": pid, "created_at": created,
+            "expires_at": created + update_selection.TTL_SECONDS,
+            "decisions": decisions, "ownership_issues": issues}
+    provider_ownership.atomic_write_json(_plan_dir(s) / (pid + ".json"), plan)
+    provider_ownership.atomic_write_json(_plan_dir(s) / "latest.json", {"plan_id": pid})
+    snapshot["packages"] = rows
+    snapshot["update_decisions"] = decisions
+    snapshot["unified_plan_id"] = pid
+    snapshot["unified_plan_expires_at"] = plan["expires_at"]
+    snapshot["unified_plan_stale"] = False
+    return plan
+
+
+def read_plan(s, plan_id=None):
+    if plan_id is None:
+        pointer = s.read_json(_plan_dir(s) / "latest.json") or {}
+        plan_id = pointer.get("plan_id")
+    if not isinstance(plan_id, str) or not re_full_id(plan_id):
+        return None
+    plan = s.read_json(_plan_dir(s) / (plan_id + ".json"))
+    return plan if isinstance(plan, dict) and plan.get("id") == plan_id else None
+
+
+def re_full_id(value):
+    return len(value) == 32 and all(c in "0123456789abcdef" for c in value)
+
+
+def attach_cached(s, snapshot):
+    """After expiry, present the plan as stale without offering executable routes."""
+    plan = read_plan(s)
+    if not plan:
+        if snapshot.get("unified_plan_id"):
+            snapshot["unified_plan_stale"] = True
+            snapshot["unified_plan_expires_at"] = 0
+            snapshot["update_decisions"] = []
+            for row in snapshot.get("packages", []):
+                row.pop("update_decision", None)
+        return snapshot
+    expiry = plan.get("expires_at")
+    fresh = isinstance(expiry, (int, float)) and expiry > time.time()
+    stored = plan.get("decisions") or []
+    decisions = stored if fresh else [
+        dict(d, status="unverified", action="none",
+             selected_candidate=None, reason_codes=["plan_expired"],
+             blockers=["plan_expired"]) for d in stored
+    ]
+    by_id = {d["source_installation_id"]: d for d in decisions}
+    for row in snapshot.get("packages", []):
+        row["update_decision"] = by_id.get(_ids(row))
+        if fresh and row["update_decision"] and row["update_decision"]["status"] == "ready":
+            row["outdated"] = True
+    snapshot["update_decisions"] = decisions
+    snapshot["unified_plan_id"] = plan["id"]
+    snapshot["unified_plan_expires_at"] = expiry
+    snapshot["unified_plan_stale"] = not fresh
+    return snapshot
+
+def validate_request(s, body, *, all_ready=False):
+    if not isinstance(body, dict):
+        raise PlanError("invalid_request")
+    request_id, plan_id = body.get("request_id"), body.get("plan_id")
+    if not isinstance(request_id, str) or not re_full_id(request_id):
+        raise PlanError("invalid_request_id")
+    plan = read_plan(s, plan_id)
+    if not plan:
+        raise PlanError("plan_not_found")
+    if plan.get("expires_at", 0) <= time.time():
+        raise PlanError("plan_expired")
+    submitted = body.get("decisions")
+    if not isinstance(submitted, list):
+        if body.get("decision_id") and body.get("material_fingerprint"):
+            submitted = [{"decision_id": body["decision_id"],
+                          "material_fingerprint": body["material_fingerprint"]}]
+        else:
+            raise PlanError("review_required")
+    identifiers = [x.get("decision_id") for x in submitted if isinstance(x, dict)]
+    if len(identifiers) != len(submitted) or len(identifiers) != len(set(identifiers)):
+        raise PlanError("ambiguous_decisions")
+    known = {x["decision_id"]: x for x in plan["decisions"]}
+    items = []
+    for raw in submitted:
+        decision = known.get(raw["decision_id"])
+        if decision is None or raw.get("material_fingerprint") != decision["material_fingerprint"]:
+            raise PlanError("plan_changed")
+        if decision["status"] != "ready":
+            raise PlanError("decision_not_ready")
+        if decision["action"] == "migrate":
+            candidate = decision["selected_candidate"] or {}
+            if not candidate.get("migration_plan_id") or not candidate.get("migration_fingerprint"):
+                raise PlanError("migration_route_unverified")
+        items.append(decision)
+    if all_ready and set(identifiers) != {
+        d["decision_id"] for d in plan["decisions"] if d["status"] == "ready"}:
+        raise PlanError("all_ready_mismatch")
+    return plan, items
+
+
+def _request_path(s, request_id):
+    return Path(s.DATA_DIR) / "update-requests" / (request_id + ".json")
+
+
+def _canonical_request(plan_id, items):
+    return hashlib.sha256(json.dumps(
+        {"plan_id": plan_id, "decisions": sorted(
+            (x["decision_id"], x["material_fingerprint"]) for x in items)},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _revalidate_migration(s, decision):
+    """Reject a proposal unless the exact displayed provider transaction matches."""
+    import migration_engine
+    candidate = decision.get("selected_candidate") or {}
+    provider = decision.get("target_provider")
+    if (provider not in ("macports", "pixi")
+            or candidate.get("provider") != provider):
+        raise PlanError("migration_route_unverified")
+    try:
+        plan = migration_engine._load_plan(s, candidate["migration_plan_id"])
+        source, target = plan["source"], plan["target"]
+        if (plan.get("action") != "migrate"
+                or plan.get("fingerprint") != candidate.get("migration_fingerprint")
+                or plan.get("profile") != decision["logical_id"]
+                or plan.get("profile") != candidate.get("profile_id")
+                or plan.get("profile_version") != candidate.get("profile_version")
+                or source.get("installation_id") != decision["source_installation_id"]
+                or source.get("provider") != decision["current_provider"]
+                or source.get("version") != decision.get("installed_package_version")
+                or target.get("provider") != provider
+                or target.get("version") != candidate.get("upstream_version")):
+            raise PlanError("plan_changed")
+        if provider == "pixi":
+            expected = target.get("candidate") or {}
+            keys = ("provider", "availability", "execution_supported",
+                    "closure_verified", "upstream_version", "package_version",
+                    "revision", "provider_names", "system", "closure",
+                    "manifest", "lock", "lock_sha256")
+            if any(candidate.get(k) != expected.get(k) for k in keys):
+                raise PlanError("plan_changed")
+            if target.get("mapped_name") != candidate.get("provider_names", [None])[0]:
+                raise PlanError("plan_changed")
+            pinned, generation = expected, target.get("generation_id")
+        else:
+            if candidate.get("provider_names") != target.get("ports"):
+                raise PlanError("plan_changed")
+            pinned, generation = None, None
+        _, fingerprint = migration_engine._material(
+            s, decision["logical_id"], provider=provider,
+            pixi_candidate=pinned, planned_generation=generation)
+        if fingerprint != plan["fingerprint"]:
+            raise PlanError("plan_changed")
+        return plan
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        if isinstance(error, PlanError):
+            raise
+        raise PlanError("plan_changed") from error
+
+
+def execute(s, body, *, all_ready=False):
+    """Idempotent, fail-closed execution of approved same-provider routes only.
+
+    Caller must hold the cross-process operation lock. A crash leaves a durable
+    'needs_recovery' request rather than silently repeating a package mutation.
+    """
+    request_id = body.get("request_id") if isinstance(body, dict) else None
+    path = _request_path(s, request_id) if isinstance(request_id, str) and re_full_id(request_id) else None
+    journal = s.read_json(path) if path else None
+    if journal and journal.get("status") == "completed":
+        supplied = body.get("decisions")
+        if supplied is None and body.get("decision_id"):
+            supplied = [{"decision_id": body.get("decision_id"),
+                         "material_fingerprint": body.get("material_fingerprint")}]
+        fingerprint = hashlib.sha256(json.dumps({
+            "plan_id": body.get("plan_id"), "decisions": sorted(
+                (x.get("decision_id"), x.get("material_fingerprint")) for x in (supplied or []))},
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if fingerprint != journal.get("request_hash"):
+            raise PlanError("request_conflict")
+        return journal["result"]
+    plan, decisions = validate_request(s, body, all_ready=all_ready)
+    signature = _canonical_request(plan["id"], decisions)
+    if journal:
+        if journal.get("request_hash") != signature:
+            raise PlanError("request_conflict")
+        if journal.get("status") == "completed":
+            return journal["result"]
+        raise PlanError("needs_recovery")
+    # Before the first mutation, refresh all changed installation metadata.
+    current = s.compute_snapshot(False, enrich_details=False)
+    rows = {_ids(p): p for p in current.get("packages", [])}
+    for decision in decisions:
+        item = rows.get(decision["source_installation_id"])
+        if (not item
+                or item.get("installed_version") != decision.get("installed_package_version")
+                or (item.get("installed_upstream_version") or item.get("upstream_version")
+                    or item.get("installed_version")) != decision["installed_version"]):
+            raise PlanError("plan_changed")
+        if (item.get("provider") or "homebrew") != decision["current_provider"]:
+            raise PlanError("plan_changed")
+        if decision["action"] == "migrate":
+            _revalidate_migration(s, decision)
+    journal = {"schema_version": 1, "request_id": request_id, "plan_id": plan["id"],
+               "request_hash": signature, "status": "running", "results": [],
+               "started_at": s.now_iso()}
+    provider_ownership.atomic_write_json(path, journal)
+    try:
+        for decision in decisions:
+            s.raise_if_cancel_requested()
+            source = rows[decision["source_installation_id"]]
+            provider = decision["target_provider"]
+            candidate = decision["selected_candidate"]
+            if decision["action"] == "migrate":
+                import migration_engine
+                _revalidate_migration(s, decision)
+                transaction = migration_engine.approve(
+                    s, candidate["migration_plan_id"], request_id=request_id)
+                outcome = {
+                    "ok": transaction.get("status") == "completed",
+                    "name": source["name"], "kind": source["kind"],
+                    "provider": provider, "action": "migrate",
+                    "transaction_id": transaction["transaction_id"],
+                    "code": 0 if transaction.get("status") == "completed" else 1,
+                    "stdout": "Source removed and new provider verified",
+                    "stderr": "",
+                }
+            elif provider != decision["current_provider"]:
+                raise PlanError("review_required")
+            # Fail closed on changed binary closure; no silent source fallback.
+            elif provider == "homebrew":
+                catalog, installed = None, None
+                from update_engine import Engine
+                engine = Engine(s)
+                catalog, installed = engine.catalog(), engine.installed()
+                renewed = _homebrew(s, source, catalog, installed, s.load_settings())
+                if not renewed.get("closure_verified") or renewed.get("closure") != candidate.get("closure"):
+                    raise PlanError("plan_changed")
+                # Delegate to the same source-fallback detector and binary-only
+                # preflight used by legacy updates; do not start a second
+                # Homebrew installer without those safeguards.
+                outcome = s.run_upgrade(source["name"], source["kind"])
+                outcome["provider"] = "homebrew"
+            elif provider == "macports":
+                latest = _ports(s, source, candidate["provider_names"], "update")
+                if (not latest["execution_supported"] or
+                    latest["closure"] != candidate["closure"]):
+                    raise PlanError("plan_changed")
+                outcome = macports_provider.upgrade(s, source)
+            elif provider == "pixi":
+                outcome = _pixi_update(s, source, candidate)
+            else:
+                raise PlanError("provider_route_unavailable")
+            journal["results"].append(outcome)
+            provider_ownership.atomic_write_json(path, journal)
+            if not outcome.get("ok"):
+                journal["status"] = "needs_recovery"
+                provider_ownership.atomic_write_json(path, journal)
+                raise PlanError("needs_recovery")
+        journal["status"] = "completed"
+        journal["completed_at"] = s.now_iso()
+        refreshed, refresh_error = s.safe_refresh_snapshot(current)
+        refreshed.pop("update_decisions", None)
+        refreshed.pop("unified_plan_id", None)
+        provider_ownership.atomic_write_json(_plan_dir(s) / "latest.json", {"plan_id": None})
+        journal["result"] = {
+            "ok": refresh_error is None, "results": journal["results"],
+            "updated_count": sum(bool(r.get("ok")) for r in journal["results"]),
+            "migrated_count": sum(bool(r.get("ok")) and r.get("action") == "migrate"
+                                  for r in journal["results"]),
+            "failed_count": sum(not bool(r.get("ok")) for r in journal["results"]),
+            "attempted_count": len(journal["results"]),
+            "deferred_count": 0, "skipped_count": 0, "remaining_count": 0,
+            "snapshot": refreshed, "inventory_refresh_error": refresh_error,
+            "request_id": request_id,
+        }
+        journal["status"] = "completed"
+        provider_ownership.atomic_write_json(path, journal)
+        s.set_check_progress(running=False, phase="completed", completed_at=s.now_iso(),
+                             message="Verified update batch completed", eta_seconds=0)
+        return journal["result"]
+    except BaseException:
+        journal["status"] = "needs_recovery"
+        provider_ownership.atomic_write_json(path, journal)
+        raise
+'''
+
+UNIFIED_UPDATES_TESTS = r'''import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import unified_updates as u
+import update_selection as sel
+
+
+class FakeService:
+    def __init__(self, root):
+        self.DATA_DIR = Path(root)
+        self.TOOLS_ROOT = Path(root)
+    def read_json(self, path):
+        import json
+        return json.loads(Path(path).read_text()) if Path(path).is_file() else None
+
+
+class Plans(unittest.TestCase):
+    def test_stored_plan_and_expiry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            plan = {"id": "a"*32, "expires_at": time.time()-1, "decisions": []}
+            from provider_ownership import atomic_write_json
+            atomic_write_json(Path(temp)/"update-plans"/("a"*32+".json"), plan)
+            self.assertEqual(u.read_plan(s, "a"*32)["id"], "a"*32)
+            with self.assertRaisesRegex(u.PlanError, "plan_expired"):
+                u.validate_request(s, {"request_id": "b"*32, "plan_id": "a"*32,
+                                       "decisions": []})
+
+    def test_request_rejects_changed_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            d = {"decision_id": "c"*32, "material_fingerprint": "hash",
+                 "status": "ready", "action": "update"}
+            from provider_ownership import atomic_write_json
+            atomic_write_json(Path(temp)/"update-plans"/("a"*32+".json"),
+                              {"id": "a"*32, "expires_at": time.time()+600,
+                               "decisions": [d]})
+            with self.assertRaisesRegex(u.PlanError, "plan_changed"):
+                u.validate_request(s, {"request_id": "b"*32, "plan_id": "a"*32,
+                                       "decisions": [{"decision_id": "c"*32,
+                                                      "material_fingerprint": "wrong"}]})
+
+    def test_legacy_never_authorizes_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            from provider_ownership import atomic_write_json
+            atomic_write_json(Path(temp)/"update-plans"/("a"*32+".json"),
+                              {"id": "a"*32, "expires_at": time.time()+600,
+                               "decisions": []})
+            with self.assertRaisesRegex(u.PlanError, "review_required"):
+                u.validate_request(s, {"request_id": "b"*32, "plan_id": "a"*32,
+                                       "name": "include-what-you-use", "kind": "formula"})
+
+    def test_installation_ids_remain_provider_specific(self):
+        self.assertEqual(u._ids({"name": "jq", "kind": "port", "provider": "macports"}),
+                         "macports:jq")
+        self.assertEqual(u._ids({"name": "jq", "kind": "formula", "provider": "homebrew"}),
+                         "homebrew:formula:jq")
+
+
+    def test_cached_supplemental_classification_is_preserved_for_exact_source(self):
+        from datetime import datetime, timezone, timedelta
+        from provider_ownership import atomic_write_json
+        import installation_evidence as evidence
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.STATE_FILE = Path(temp) / "state.json"
+            s.raise_if_cancel_requested = lambda: None
+            s.is_excluded = lambda name, kind: False
+            audit = {"status": "verified", "active_keg": "/fixture/jq"}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installation_id": "homebrew:formula:jq", "installed_version": "1.7",
+                   "inventory_verification": audit}
+            classification = {"category": "standalone_candidate",
+                              "inventory_fingerprint": evidence.fingerprint(audit),
+                              "checked_at": datetime.now(timezone.utc).isoformat(),
+                              "gaps": [], "consumers": [], "shared_roles": []}
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=classification)], "migrations": []})
+            offers = [{"name": "jq", "status": "classification_only"}]
+            annotated = evidence.annotate(s, offers, [dict(row)], False)
+            self.assertEqual(annotated[0]["classification"], classification)
+            self.assertIsNot(annotated[0]["classification"], classification)
+
+            changed = dict(row, inventory_verification={"status": "verified", "active_keg": "/other"})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [changed], False)[0]
+                             ["classification"]["category"], "unclassified")
+            source_changed = dict(row, installed_version="1.8")
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [source_changed], False)[0]
+                             ["classification"]["category"], "unclassified")
+            stale = dict(classification, checked_at=(datetime.now(timezone.utc) -
+                        timedelta(seconds=950)).isoformat())
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=stale)], "migrations": []})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}], [dict(row)], False)[0]
+                             ["classification"]["category"], "unclassified")
+            atomic_write_json(s.STATE_FILE, {
+                "packages": [dict(row, classification=classification)], "migrations": []})
+            self.assertEqual(evidence.annotate(s, [{"name": "jq"}],
+                             [dict(row, inventory_stale=True)], False)[0]
+                             ["classification"]["category"], "unclassified")
+
+    def test_homebrew_revision_update_discovered_when_outdated_flag_is_false(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "example-portless", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.2_1", "installed_upstream_version": "1.2",
+                   "installed_revision": 1, "outdated": False}
+            ready = dict(u._base_candidate(row, "homebrew", "update"),
+                         availability="verified", upstream_version="1.2",
+                         revision=2, execution_supported=True,
+                         closure_verified=True, blockers=[])
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"example-portless": {"stable_version": "1.2", "revision": 2}}, {})), \
+                 patch.object(u, "_homebrew", return_value=ready) as probe:
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            probe.assert_called_once()
+            decision, = sel.select([row], candidates)
+            self.assertEqual(decision["status"], "ready")
+
+    def test_cross_provider_discovery_when_brew_is_current(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "include-what-you-use", "kind": "formula",
+                   "provider": "homebrew", "installed_version": "1.0",
+                   "outdated": False, "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"include-what-you-use": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", return_value=dict(
+                     u._base_candidate(row, "macports", "migrate"),
+                     availability="verified", upstream_version="2.0",
+                     closure_verified=True, execution_supported=False, blockers=[])), \
+                 patch("migration_engine.plan", return_value={"id": "a"*32, "fingerprint": "f"}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertTrue(row["discovery_complete"])
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["provider"], "macports")
+            self.assertTrue(candidates[0]["execution_supported"])
+            self.assertEqual(candidates[0]["migration_plan_id"], "a"*32)
+
+    def test_unsupported_mapping_never_calls_port_preflight(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "cryptography", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"cryptography": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", side_effect=AssertionError("unsupported probe")):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertFalse(candidates[0]["execution_supported"])
+            self.assertIn("migration_profile_missing", candidates[0]["blockers"])
+
+    def test_pixi_total_time_budget_blocks_without_network(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", side_effect=AssertionError("must not contact Pixi")):
+                candidates = u.collect_candidates(
+                    service, {"packages": [row]}, pixi_scan_budget_seconds=0)
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("pixi_scan_budget_exhausted", candidates[0]["blockers"])
+            self.assertFalse(row["discovery_complete"])
+
+    def test_incomplete_t02_blocks_pixi_without_discovery(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": ["service_registry_unavailable"]}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", side_effect=AssertionError("not standalone")):
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("fresh_classification_required", candidates[0]["blockers"])
+
+    def test_macports_source_has_blocked_pixi_bridge_and_can_still_update(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "tesseract", "kind": "port", "provider": "macports",
+                   "installed_version": "5.3", "installed_upstream_version": "5.3",
+                   "outdated": True}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(None, None)), \
+                 patch.object(u, "_ports", return_value=dict(
+                     u._base_candidate(row, "macports", "update"),
+                     availability="verified", upstream_version="5.4",
+                     closure_verified=True, execution_supported=True, blockers=[])):
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            self.assertEqual(len(candidates), 2)
+            chosen, = sel.select([row], candidates)
+            self.assertEqual(chosen["target_provider"], "macports")
+            self.assertIn("migration_source_provider_unsupported",
+                          candidates[0]["blockers"])
+
+    def test_empty_port_mapping_has_no_phantom_port_candidate(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "libtensorflow", "kind": "formula",
+                   "provider": "homebrew", "installed_version": "1.0",
+                   "outdated": False}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"libtensorflow": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", side_effect=AssertionError("empty mapping")):
+                result = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(result, [])
+
+    def test_collect_candidates_selects_pixi_for_current_brew_with_complete_plan(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7", "outdated": False,
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": [], "consumers": [], "shared_roles": []}}
+            verified = {"provider": "pixi", "availability": "verified",
+                        "execution_supported": True, "closure_verified": True,
+                        "upstream_version": "1.8", "package_version": "1.8",
+                        "revision": None, "provider_names": ["jq"],
+                        "system": {"os": "macos", "arch": "x86_64"},
+                        "closure": [{"arch": "osx-64", "archive_id": "jq-fixture",
+                                     "checksum": "f"*64}],
+                        "manifest": "locked", "lock": "pinned",
+                        "lock_sha256": "f"*64}
+            plan = {"id": "a"*32, "fingerprint": "b"*64,
+                    "target": {"provider": "pixi", "candidate": dict(verified),
+                               "version": "1.8"}, "profile": "jq", "profile_version": 1}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                    {"jq": {"stable_version": "1.7", "revision": 0}}, {})), \
+                 patch("pixi_provider.discover", return_value=verified), \
+                 patch("migration_engine.plan", return_value=plan):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertTrue(row["discovery_complete"])
+            decision, = sel.select([row], candidates)
+            self.assertEqual(decision["status"], "ready")
+            self.assertEqual(decision["target_provider"], "pixi")
+            self.assertEqual(decision["selected_candidate"]["migration_plan_id"], "a"*32)
+
+    def test_pixi_bridge_only_allows_exact_profile_with_plan(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7",
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": [], "consumers": [], "shared_roles": []}}
+            verified = {"provider": "pixi", "availability": "verified",
+                        "execution_supported": True, "closure_verified": True,
+                        "upstream_version": "1.8", "package_version": "1.8",
+                        "provider_names": ["jq"],
+                        "system": {"os": "macos", "arch": "x86_64"},
+                        "closure": [{"arch": "osx-64", "archive_id": "jq-fixture",
+                                     "checksum": "f"*64}],
+                        "manifest": "locked", "lock": "pinned", "lock_sha256": "f"*64}
+            plan = {"id": "a"*32, "fingerprint": "b"*64,
+                    "target": {"provider": "pixi", "candidate": dict(verified),
+                               "version": "1.8"}, "profile": "jq", "profile_version": 1}
+            with patch("pixi_provider.discover", return_value=verified) as discover, \
+                 patch("migration_engine.plan", return_value=plan) as make_plan:
+                candidate = u._pixi_bridge(s, row)
+            discover.assert_called_once()
+            self.assertEqual(make_plan.call_args.kwargs["provider"], "pixi")
+            self.assertIs(make_plan.call_args.kwargs["pixi_candidate"], verified)
+            self.assertEqual(candidate["migration_plan_id"], "a"*32)
+            self.assertEqual(candidate["migration_fingerprint"], "b"*64)
+            self.assertTrue(candidate["execution_supported"])
+            selected, = sel.select([dict(row, discovery_complete=True)], [candidate])
+            self.assertEqual((selected["target_provider"], selected["status"]), ("pixi", "ready"))
+
+    def test_pixi_bridge_failed_transaction_is_blocked(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7",
+                   "classification": {"category": "standalone_candidate"}}
+            with patch("pixi_provider.discover", return_value={
+                    "provider": "pixi", "availability": "verified",
+                    "upstream_version": "1.9"}) as discover, \
+                 patch("migration_engine.plan", side_effect=ValueError("unverified")):
+                candidate = u._pixi_bridge(s, row)
+            discover.assert_called_once()
+            self.assertFalse(candidate["execution_supported"])
+            self.assertNotIn("migration_plan_id", candidate)
+            self.assertIn("pixi_migration_preflight_failed:ValueError",
+                          candidate["blockers"])
+
+    def test_pixi_bridge_unlisted_profile_skips_discovery(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            row = {"name": "ffmpeg", "kind": "formula", "provider": "homebrew",
+                   "classification": {"category": "standalone_candidate"}}
+            with patch("pixi_provider.discover", side_effect=AssertionError("network forbidden")):
+                candidate = u._pixi_bridge(s, row)
+            self.assertFalse(candidate["execution_supported"])
+            self.assertEqual(candidate["blockers"], ["pixi_migration_profile_missing"])
+
+    def test_revalidate_migration_binds_provider_generation_and_lock(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            route = {"provider": "pixi", "availability": "verified",
+                     "execution_supported": True, "closure_verified": True,
+                     "upstream_version": "1.8", "package_version": "1.8",
+                     "revision": None, "provider_names": ["jq"],
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure": [{"arch": "osx-64", "archive_id": "jq-fixture"}],
+                     "manifest": "text", "lock": "bytes", "lock_sha256": "b"*64,
+                     "migration_plan_id": "a"*32, "migration_fingerprint": "c"*64,
+                     "profile_id": "jq", "profile_version": 1}
+            decision = {"logical_id": "jq",
+                        "source_installation_id": "homebrew:formula:jq",
+                        "current_provider": "homebrew", "target_provider": "pixi",
+                        "installed_version": "1.7",
+                        "installed_package_version": "1.7",
+                        "selected_candidate": route}
+            keys = ("provider", "availability", "execution_supported",
+                    "closure_verified", "upstream_version", "package_version",
+                    "revision", "provider_names", "system", "closure",
+                    "manifest", "lock", "lock_sha256")
+            stored = {"action": "migrate", "fingerprint": "c"*64,
+                      "profile": "jq", "profile_version": 1,
+                      "source": {"provider": "homebrew",
+                                 "installation_id": "homebrew:formula:jq",
+                                 "version": "1.7"},
+                      "target": {"provider": "pixi", "version": "1.8",
+                                 "mapped_name": "jq", "generation_id": "d"*32,
+                                 "candidate": {k: route[k] for k in keys}}}
+            with patch("migration_engine._load_plan", return_value=stored), \
+                 patch("migration_engine._material", return_value=({}, "c"*64)) as material:
+                u._revalidate_migration(s, decision)
+            self.assertEqual(material.call_args.kwargs["provider"], "pixi")
+            self.assertEqual(material.call_args.kwargs["planned_generation"], "d"*32)
+            self.assertEqual(material.call_args.kwargs["pixi_candidate"]["lock"], "bytes")
+            with patch("migration_engine._load_plan", return_value=stored), \
+                 patch("migration_engine._material") as material:
+                with self.assertRaisesRegex(u.PlanError, "plan_changed"):
+                    u._revalidate_migration(s, dict(decision,
+                                                   selected_candidate=dict(route, lock="tampered")))
+                material.assert_not_called()
+            with self.assertRaisesRegex(u.PlanError, "migration_route_unverified"):
+                u._revalidate_migration(s, dict(decision, target_provider="macports"))
+
+    def test_selected_decision_tracks_source_upstream_field_fallback(self):
+        source = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                  "installed_version": "1.2_3", "upstream_version": "1.2",
+                  "classification": {"category": "standalone_candidate"},
+                  "discovery_complete": True}
+        decision, = sel.select([source], [])
+        self.assertEqual(decision["installed_version"], "1.2")
+        self.assertEqual(decision["installed_package_version"], "1.2_3")
+
+    def test_migration_compares_exact_package_revision_not_just_upstream(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            candidate = {"provider": "macports", "migration_plan_id": "a"*32,
+                         "migration_fingerprint": "b"*64,
+                         "profile_id": "terminal-notifier", "profile_version": 1,
+                         "provider_names": ["terminal-notifier"],
+                         "upstream_version": "1.3"}
+            decision = {"logical_id": "terminal-notifier",
+                        "source_installation_id": "homebrew:formula:terminal-notifier",
+                        "current_provider": "homebrew", "target_provider": "macports",
+                        "installed_version": "1.2",
+                        "installed_package_version": "1.2_4",
+                        "selected_candidate": candidate}
+            plan = {"action": "migrate", "profile": "terminal-notifier",
+                    "profile_version": 1, "fingerprint": "b"*64,
+                    "source": {"provider": "homebrew",
+                               "installation_id": "homebrew:formula:terminal-notifier",
+                               "version": "1.2_4"},
+                    "target": {"provider": "macports", "version": "1.3",
+                               "ports": ["terminal-notifier"]}}
+            with patch("migration_engine._load_plan", return_value=plan), \
+                 patch("migration_engine._material", return_value=({}, "b"*64)):
+                self.assertIs(u._revalidate_migration(s, decision), plan)
+                with self.assertRaisesRegex(u.PlanError, "plan_changed"):
+                    u._revalidate_migration(s, dict(decision,
+                        installed_package_version="1.2_5"))
+
+    def test_mapped_pixi_candidate_is_discovered_but_not_executable(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", return_value={
+                     "availability": "verified", "upstream_version": "2.0",
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure": [{"arch": "osx-64", "archive_id": "verified-fixture"}],
+                     "closure_verified": True}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["provider"], "pixi")
+            self.assertFalse(candidates[0]["execution_supported"])
+            decision, = sel.select([row], candidates)
+            self.assertNotEqual(decision["status"], "ready")
+            self.assertTrue(any(
+                reason.startswith("pixi_migration_preflight_failed:")
+                for reason in decision["alternatives"][0]["reason_codes"]))
+
+    def test_blocked_pixi_does_not_hide_working_homebrew(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": True,
+                   "classification": {"category": "standalone_candidate"}}
+            home = dict(u._base_candidate(row, "homebrew", "update"),
+                        availability="verified", upstream_version="1.2",
+                        execution_supported=True, closure_verified=True,
+                        blockers=[])
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.2"}}, {})), \
+                 patch.object(u, "_homebrew", return_value=home), \
+                 patch("pixi_provider.discover", return_value={
+                     "availability": "verified", "upstream_version": "2.0",
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure_verified": True, "closure": []}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            selected, = sel.select([row], candidates)
+            self.assertEqual(selected["target_provider"], "homebrew")
+
+    def test_expired_cached_plan_cannot_be_executed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from provider_ownership import atomic_write_json
+            s = FakeService(temp)
+            ident = "a" * 32
+            decision = {"decision_id": "c"*32, "source_installation_id": "homebrew:formula:jq",
+                        "status": "ready", "action": "update", "material_fingerprint": "hash",
+                        "selected_candidate": {"provider": "homebrew"}}
+            atomic_write_json(Path(temp)/"update-plans"/(ident+".json"),
+                              {"id": ident, "expires_at": time.time()-5,
+                               "decisions": [decision]})
+            atomic_write_json(Path(temp)/"update-plans"/"latest.json", {"plan_id": ident})
+            snapshot = {"packages": [{"name": "jq", "kind": "formula", "outdated": True}]}
+            u.attach_cached(s, snapshot)
+            self.assertTrue(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["unified_plan_id"], ident)
+            self.assertEqual(snapshot["update_decisions"][0]["status"], "unverified")
+            self.assertEqual(snapshot["update_decisions"][0]["reason_codes"], ["plan_expired"])
+            self.assertIsNone(snapshot["packages"][0]["update_decision"]["selected_candidate"])
+            self.assertEqual(u.read_plan(s, ident)["decisions"][0], decision)
+            with self.assertRaisesRegex(u.PlanError, "plan_expired"):
+                u.validate_request(s, {"request_id": "b"*32, "plan_id": ident,
+                                       "decisions": [{"decision_id": "c"*32,
+                                                      "material_fingerprint": "hash"}]})
+
+    def test_fresh_cached_plan_remains_ready_with_expiry_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from provider_ownership import atomic_write_json
+            s = FakeService(temp)
+            expiry = time.time()+500
+            plan = {"id": "a"*32, "expires_at": expiry,
+                    "decisions": [{"source_installation_id": "homebrew:formula:jq",
+                                   "status": "ready", "action": "update"}]}
+            atomic_write_json(Path(temp)/"update-plans"/("a"*32+".json"), plan)
+            atomic_write_json(Path(temp)/"update-plans"/"latest.json", {"plan_id": "a"*32})
+            snapshot = {"packages": [{"name": "jq", "kind": "formula", "outdated": False}]}
+            u.attach_cached(s, snapshot)
+            self.assertFalse(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["unified_plan_expires_at"], expiry)
+            self.assertTrue(snapshot["packages"][0]["outdated"])
+            self.assertEqual(snapshot["packages"][0]["update_decision"]["status"], "ready")
+
+    def test_missing_cached_plan_clears_historical_ready(self):
+        with tempfile.TemporaryDirectory() as temp:
+            snapshot = {"unified_plan_id": "a"*32,
+                        "update_decisions": [{"status": "ready"}],
+                        "packages": [{"name": "jq", "kind": "formula",
+                                      "update_decision": {"status": "ready"}}]}
+            u.attach_cached(FakeService(temp), snapshot)
+            self.assertTrue(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["update_decisions"], [])
+            self.assertNotIn("update_decision", snapshot["packages"][0])
+
+    def test_initial_state_without_plan_is_unmodified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            snapshot = {"packages": [{"name": "jq", "kind": "formula"}]}
+            self.assertIs(u.attach_cached(FakeService(temp), snapshot), snapshot)
+            self.assertNotIn("unified_plan_stale", snapshot)
+
+    def test_pixi_user_workspace_cannot_be_upgraded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from unittest.mock import patch
+            service = FakeService(temp)
+            service.TOOLS_ROOT = Path(temp)
+            service.DATA_DIR = Path(temp)
+            row = {"name": "jq", "provider": "pixi", "kind": "tool",
+                   "installed_version": "1.2", "installation_id": "pixi:jq"}
+            with patch.object(u.update_routes, "read_records",
+                              return_value={"jq": {"provider": "pixi",
+                                                    "prefix": "/tmp/unmanaged-user-pixi"}}):
+                candidate = u._pixi(service, row)
+            self.assertFalse(candidate["execution_supported"])
+            self.assertIn("user_environment_not_managed", candidate["blockers"])
+
+    def test_pixi_missing_owner_blocks_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from unittest.mock import patch
+            service = FakeService(temp)
+            row = {"name": "jq", "provider": "pixi", "kind": "tool",
+                   "installed_version": "1.2", "installation_id": "pixi:jq"}
+            with patch.object(u.update_routes, "read_records", return_value={}):
+                candidate = u._pixi(service, row)
+            self.assertIn("pixi_ownership_unverified", candidate["blockers"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+
+UNIFIED_PATCH_DATA = {"backend/brew-updates-service.py":{"origin":"fa29ff482a58a7b96231db8d176bc4dc438191cb","target":"2b2cc8daacd444f0564e2a14663cbbb28ba49ddc","hunks":[[2,1,["\n"]],[10,1,["\n"]],[12,1,["\n"]],[35,1,["\n"]],[41,0,["import unified_updates\n","import operation_lock\n","import provider_ownership\n"]],[42,1,["\n"]],[47,1,["\n"]],[60,1,["\n"]],[62,0,["BACKEND_STARTUP_SHA = hashlib.sha256(b''.join(\n","    p.name.encode() + b'\\0' + hashlib.sha256(p.read_bytes()).digest()\n","    for p in sorted((PROJECT_ROOT / 'backend').glob('*.py')))).hexdigest()\n","PROCESS_STARTED_AT = now_start = time.time()\n"]],[69,1,["\n"]],[83,1,["\n"]],[88,1,["\n"]],[92,1,["    \"running\": False,\n"]],[94,3,["    \"started_at\": None,\n","}\n","\n"]],[99,4,["    \"requested\": False,\n","    \"requested_at\": None,\n","}\n","\n"]],[107,2,["}\n","\n"]],[110,1,["\n"]],[113,5,["    \"requested\": False,\n","    \"requested_at\": None,\n","    \"reason\": None,\n","}\n","\n"]],[120,2,["    \"running\": False,\n","    \"started_at\": None,\n"]],[124,4,["    \"reason\": None,\n","}\n","\n","\n"]],[129,1,["    return {\n"]],[150,3,["    }\n","\n","\n"]],[155,1,["\n"]],[157,1,["\n"]],[161,2,["}\n","\n"]],[164,1,["\n"]],[179,2,["}\n","\n"]],[183,2,["\n","\n"]],[190,2,["\n","\n"]],[194,2,["\n","\n"]],[198,2,["\n","\n"]],[202,2,["\n","\n"]],[207,2,["        return None\n","    try:\n"]],[210,2,["    except ValueError:\n","        return None\n"]],[215,2,["\n","\n"]],[218,1,["    with CHECK_PROGRESS_LOCK:\n"]],[220,2,["\n","\n"]],[223,1,["    with CURRENT_OPERATION_LOCK:\n"]],[225,2,["\n","\n"]],[228,1,["    with PARALLEL_CHECK_LOCK:\n"]],[230,2,["\n","\n"]],[235,1,["    with CURRENT_OPERATION_LOCK:\n"]],[239,2,["\n","\n"]],[243,2,["\n","\n"]],[248,1,["\n"]],[250,2,["        return progress\n","\n"]],[253,2,["        return progress\n","\n"]],[258,2,["\n","    set_check_progress(\n"]],[264,1,["            if interrupted\n"]],[266,1,["        ),\n"]],[274,1,["            if interrupted\n"]],[276,2,["        ),\n","    )\n"]],[280,2,["\n","\n"]],[283,1,["    with CANCEL_STATE_LOCK:\n"]],[285,2,["\n","\n"]],[288,1,["    with CANCEL_STATE_LOCK:\n"]],[291,2,["\n","\n"]],[294,1,["    with CANCEL_STATE_LOCK:\n"]],[298,2,["\n","\n"]],[301,1,["    with DEFERRED_CHECK_LOCK:\n"]],[307,4,["            return True\n","        return False\n","\n","\n"]],[312,1,["    with DEFERRED_CHECK_LOCK:\n"]],[318,1,["        }\n"]],[322,3,["        return payload\n","\n","\n"]],[329,1,["\n"]],[331,1,["        try:\n"]],[335,1,["            )\n"]],[338,2,["            return\n","        except BusyError as exc:\n"]],[342,1,["        except Exception as exc:\n"]],[345,2,["            return\n","\n"]],[349,2,["\n","\n"]],[354,2,["        return\n","\n"]],[358,3,["        return\n","\n","    worker = threading.Thread(\n"]],[363,5,["        daemon=True,\n","    )\n","    worker.start()\n","\n","\n"]],[370,1,["\n"]],[373,2,["\n","    try:\n"]],[376,1,["    except Exception as exc:\n"]],[380,1,["    finally:\n"]],[385,1,["\n"]],[389,2,["\n","\n"]],[392,1,["    with PARALLEL_CHECK_LOCK:\n"]],[395,1,["\n"]],[401,1,["\n"]],[403,2,["\n","    worker = threading.Thread(\n"]],[410,3,["        daemon=True,\n","    )\n","    worker.start()\n"]],[414,2,["\n","\n"]],[417,1,["    *,\n"]],[435,2,[") -> None:\n","    with CHECK_PROGRESS_LOCK:\n"]],[456,1,["            else:\n"]],[474,1,["\n"]],[479,1,["        else:\n"]],[483,2,["\n","\n"]],[487,1,["    with CHECK_PROGRESS_LOCK:\n"]],[495,2,["\n","\n"]],[501,1,["\n"]],[504,2,["        return None\n","\n"]],[508,2,["        return None\n","\n"]],[512,2,["\n","\n"]],[521,1,["        return 0\n"]],[523,2,["        return None\n","\n"]],[530,1,["            continue\n"]],[534,1,["\n"]],[536,2,["        return None\n","\n"]],[540,2,["\n","\n"]],[545,1,["        return None\n"]],[548,1,["        return 0\n"]],[550,2,["\n","\n"]],[555,1,["        raise RuntimeError(\n"]],[558,3,["        )\n","\n","\n"]],[565,2,["\n","\n"]],[570,2,["\n","\n"]],[575,1,["\n"]],[580,2,["\n","    try:\n"]],[588,1,["\n"]],[597,2,["\n","    return {\n"]],[605,3,["    }\n","\n","\n"]],[610,3,["        return None\n","\n","    try:\n"]],[614,3,["    except Exception:\n","        return None\n","\n"]],[619,1,["\n"]],[625,1,["\n"]],[628,1,["        try:\n"]],[632,2,["            pass\n","\n"]],[636,1,["            try:\n"]],[641,1,["        else:\n"]],[643,1,["\n"]],[645,2,["\n","\n"]],[648,1,["    ensure_dirs()\n"]],[651,1,["\n"]],[655,1,["        try:\n"]],[660,1,["\n"]],[666,1,["\n"]],[668,2,["\n","\n"]],[671,1,["    ensure_dirs()\n"]],[677,2,["\n","\n"]],[695,2,["\n","\n"]],[699,2,["\n","\n"]],[702,3,["    settings = load_settings()\n","    records = routes.read_records(TOOLS_ROOT)\n","    for pkg in packages:\n"]],[723,3,["    return packages\n","\n","\n"]],[727,1,["    with acquire_file_lock(UPDATE_HISTORY_LOCK_FILE):\n"]],[729,2,["\n","\n"]],[733,1,["    if raw is None:\n"]],[736,2,["        return []\n","\n"]],[740,2,["        return []\n","\n"]],[744,2,["        if not isinstance(item, dict):\n","            continue\n"]],[747,1,["            {\n"]],[751,1,["                \"ok\": bool(item.get(\"ok\", False)),\n"]],[756,2,["            }\n","        )\n"]],[759,2,["\n","\n"]],[762,1,["    ensure_dirs()\n"]],[767,1,["        return\n"]],[769,2,["\n","\n"]],[773,2,["        return\n","    with acquire_file_lock(UPDATE_HISTORY_LOCK_FILE):\n"]],[778,2,["\n","\n"]],[782,1,["    ensure_dirs()\n"]],[786,3,["            yield\n","            return\n","\n"]],[791,1,["            try:\n"]],[798,3,["\n","        try:\n","            yield\n"]],[803,2,["\n","\n"]],[806,3,["    if not path.exists():\n","        return\n","\n"]],[811,2,["\n","    try:\n"]],[814,1,["        append_service_log(\n"]],[816,3,["        )\n","    except Exception as exc:\n","        append_service_log(\n"]],[820,3,["        )\n","\n","\n"]],[829,2,["    ]\n","\n"]],[836,1,["\n"]],[841,1,["\n"]],[846,1,["    ]\n"]],[848,1,["\n"]],[858,1,["        ]\n"]],[864,1,["        ]\n"]],[867,1,["\n"]],[869,1,["\n"]],[871,1,["    seen: set[str] = set()\n"]],[874,3,["        if not raw:\n","            continue\n","        try:\n"]],[878,1,["        except Exception:\n"]],[881,2,["            continue\n","        seen.add(normalized)\n"]],[884,1,["\n"]],[889,1,["            continue\n"]],[895,2,["            break\n","\n"]],[900,1,["    }\n"]],[903,2,["\n","\n"]],[908,2,["        return \"\"\n","\n"]],[913,1,["\n"]],[917,1,["\n"]],[919,2,["\n","\n"]],[929,1,["        ],\n"]],[935,2,["    }\n","\n"]],[940,2,["        return payload\n","\n"]],[945,1,["    }\n"]],[948,1,["\n"]],[950,3,["    return payload\n","\n","\n"]],[956,2,["\n","\n"]],[960,1,["\n"]],[963,1,["\n"]],[965,1,["        try:\n"]],[968,1,["        except Exception as exc:\n"]],[970,2,["\n","        return {\n"]],[975,3,["        }\n","\n","    try:\n"]],[982,1,["    except Exception as exc:\n"]],[984,1,["\n"]],[991,2,["\n","    return {\n"]],[994,5,["        \"active\": is_launch_agent_loaded(),\n","        \"launch_agent_path\": str(LAUNCH_AGENT_FILE),\n","    }\n","\n","\n"]],[1002,1,["    return {\n"]],[1004,5,["        \"active\": is_launch_agent_loaded(),\n","        \"launch_agent_path\": str(LAUNCH_AGENT_FILE),\n","    }\n","\n","\n"]],[1010,3,["    if not path.exists():\n","        return None\n","    try:\n"]],[1014,4,["    except Exception:\n","        return None\n","\n","\n"]],[1019,6,["    provider_ownership.atomic_write_json(path, payload)\n","\n","\n"]],[1026,1,["    ensure_dirs()\n"]],[1030,2,["\n","\n"]],[1034,2,["\n","\n"]],[1038,2,["\n","\n"]],[1046,1,["    }\n"]],[1055,2,["\n","\n"]],[1059,3,["        return False\n","\n","    try:\n"]],[1063,6,["            return False\n","\n","        used_process_group = False\n","        if hasattr(os, \"killpg\"):\n","            try:\n","                pgid = os.getpgid(proc.pid)\n"]],[1070,5,["                used_process_group = True\n","            except Exception:\n","                used_process_group = False\n","\n","        if not used_process_group:\n"]],[1076,1,["\n"]],[1078,6,["        return True\n","    except subprocess.TimeoutExpired:\n","        used_process_group = False\n","        if hasattr(os, \"killpg\"):\n","            try:\n","                pgid = os.getpgid(proc.pid)\n"]],[1085,5,["                used_process_group = True\n","            except Exception:\n","                used_process_group = False\n","\n","        if not used_process_group:\n"]],[1091,1,["        try:\n"]],[1093,7,["        except Exception:\n","            pass\n","        return True\n","    except Exception:\n","        return False\n","\n","\n"]],[1101,2,["            on_output: Callable[[str, str], None] | None = None,\n","            env_override: dict[str, str] | None = None,\n","            input_data: str | None = None) -> CommandResult:\n"]],[1104,2,["    if tracked_scan:\n","        raise_if_cancel_requested()\n"]],[1107,3,["                           on_output=on_output, env_override=env_override, input_data=input_data)\n","    if tracked_scan:\n","        raise_if_cancel_requested()\n"]],[1111,2,["\n","\n"]],[1114,2,["            on_output: Callable[[str, str], None] | None = None,\n","            env_override: dict[str, str] | None = None,\n","            input_data: str | None = None) -> CommandResult:\n","    if input_data is not None and on_output is not None:\n","        raise ValueError(\"Streaming progress and explicit stdin cannot be combined\")\n"]],[1118,0,["        stdin=subprocess.PIPE if input_data is not None else None,\n"]],[1123,2,["    )\n","\n"]],[1129,2,["\n","    try:\n"]],[1134,1,["\n"]],[1136,1,["                try:\n"]],[1145,1,["\n"]],[1148,1,["            for reader in readers:\n"]],[1151,1,["            try:\n"]],[1156,1,["            for reader in readers:\n"]],[1163,1,["        stdout, stderr = proc.communicate(input=input_data, timeout=timeout)\n"]],[1165,1,["    except subprocess.TimeoutExpired:\n"]],[1172,1,["        else:\n"]],[1175,1,["    finally:\n"]],[1177,1,["            with ACTIVE_COMMAND_LOCK:\n"]],[1181,2,["\n","\n"]],[1184,1,["    settings = load_settings()\n"]],[1187,1,["        raise RuntimeError(\n"]],[1189,3,["        )\n","\n","    try:\n"]],[1194,1,["        raise RuntimeError(\n"]],[1197,2,["\n","\n"]],[1202,2,["\n","\n"]],[1209,1,["\n"]],[1212,1,["                \"ok\": True,\n"]],[1218,3,["            }\n","\n","        return {\n"]],[1226,2,["        }\n","\n"]],[1229,1,["\n"]],[1233,1,["\n"]],[1235,1,["\n"]],[1241,1,["    else:\n"]],[1244,2,["\n","    set_check_progress(\n"]],[1248,3,["    )\n","\n","    return {\n"]],[1256,3,["    }\n","\n","\n"]],[1262,1,["        try:\n"]],[1266,1,["                               current_package=None, eta_seconds=None, completed_at=now_iso())\n"]],[1271,1,["                               current_package=None, eta_seconds=None, completed_at=now_iso())\n"]],[1276,1,["        with CHECK_PROGRESS_LOCK:\n"]],[1280,2,["\n","\n"]],[1287,2,["        )\n","\n"]],[1290,1,["    with CURRENT_OPERATION_LOCK:\n"]],[1294,1,["\n"]],[1298,1,["    try:\n","        if op_name.startswith((\"update\", \"migration\", \"macports\")) and op_name != \"update_plan\":\n","            with operation_lock.OperationLock(TOOLS_ROOT, op_name):\n","                return fn()\n"]],[1300,1,["    except OperationCancelledError:\n"]],[1303,2,["        raise\n","    finally:\n"]],[1313,2,["\n","\n"]],[1316,2,["    if raw is None:\n","        return []\n"]],[1330,3,["    return []\n","\n","\n"]],[1334,1,["    b = brew_bin()\n"]],[1336,1,["    if res.code != 0:\n"]],[1339,2,["\n","    try:\n"]],[1345,1,["\n"]],[1347,7,["\n","    for row in payload.get(\"formulae\", []) or []:\n","        if not isinstance(row, dict):\n","            continue\n","        name = str(row.get(\"name\") or \"\").strip()\n","        if not name:\n","            continue\n"]],[1356,7,["            \"installed_version\": installed_versions[-1] if installed_versions else \"unknown\",\n","            \"latest_version\": str(row.get(\"current_version\") or row.get(\"version\") or \"unknown\"),\n","        }\n","\n","    for row in payload.get(\"casks\", []) or []:\n","        if not isinstance(row, dict):\n","            continue\n"]],[1364,2,["        if not token:\n","            continue\n"]],[1368,4,["            \"installed_version\": installed_versions[-1] if installed_versions else \"unknown\",\n","            \"latest_version\": str(row.get(\"current_version\") or row.get(\"version\") or \"unknown\"),\n","        }\n","\n"]],[1373,2,["\n","\n"]],[1376,1,["    b = brew_bin()\n"]],[1378,1,["    if res.code != 0:\n"]],[1380,1,["\n"]],[1382,1,["    try:\n"]],[1385,2,["    except OperationCancelledError:\n","        raise\n"]],[1392,9,["\n","    for row in payload.get(\"formulae\", []) or []:\n","        if not isinstance(row, dict):\n","            continue\n","\n","        name = str(row.get(\"name\") or \"\").strip()\n","        if not name:\n","            continue\n","\n"]],[1406,1,["\n"]],[1408,2,["        outdated = bool(outdated_meta) or bool(row.get(\"outdated\", False))\n","        if outdated_meta:\n"]],[1411,5,["            latest_version = outdated_meta.get(\"latest_version\") or latest_version\n","\n","        packages.append(\n","            {\n","                \"name\": name,\n"]],[1420,14,["                \"description_he\": \"\",\n","                \"homepage\": str(row.get(\"homepage\") or \"\"),\n","                \"installed_version\": installed_version,\n","                \"latest_version\": latest_version,\n","                \"installed_versions\": installed_versions,\n","                \"outdated\": outdated,\n","                \"current_release_date\": None,\n","                \"current_release_date_source\": None,\n","                \"latest_release_date\": None,\n","                \"latest_release_date_source\": None,\n","                \"outdated_since\": None,\n","                \"days_since_outdated\": None,\n","                \"release_date\": None,\n","                \"release_date_source\": None,\n"]],[1435,8,["                \"ruby_source_path\": str(row.get(\"ruby_source_path\") or \"\"),\n","            }\n","        )\n","\n","    for row in payload.get(\"casks\", []) or []:\n","        if not isinstance(row, dict):\n","            continue\n","\n"]],[1444,3,["        if not token:\n","            continue\n","\n"]],[1450,1,["\n"]],[1452,2,["        outdated = bool(outdated_meta) or bool(row.get(\"outdated\", False))\n","        if outdated_meta:\n"]],[1455,2,["            latest_version = outdated_meta.get(\"latest_version\") or latest_version\n","\n"]],[1460,1,["        else:\n"]],[1462,3,["\n","        packages.append(\n","            {\n"]],[1469,14,["                \"description_he\": \"\",\n","                \"homepage\": str(row.get(\"homepage\") or \"\"),\n","                \"installed_version\": installed_version,\n","                \"latest_version\": latest_version,\n","                \"installed_versions\": installed_versions,\n","                \"outdated\": outdated,\n","                \"current_release_date\": None,\n","                \"current_release_date_source\": None,\n","                \"latest_release_date\": None,\n","                \"latest_release_date_source\": None,\n","                \"outdated_since\": None,\n","                \"days_since_outdated\": None,\n","                \"release_date\": None,\n","                \"release_date_source\": None,\n"]],[1484,4,["                \"ruby_source_path\": str(row.get(\"ruby_source_path\") or \"\"),\n","            }\n","        )\n","\n"]],[1491,5,["            continue\n","        packages.append(\n","            {\n","                \"name\": name,\n","                \"kind\": kind,\n"]],[1498,1,["                \"description_he\": \"\",\n"]],[1504,8,["                \"current_release_date\": None,\n","                \"current_release_date_source\": None,\n","                \"latest_release_date\": None,\n","                \"latest_release_date_source\": None,\n","                \"outdated_since\": None,\n","                \"days_since_outdated\": None,\n","                \"release_date\": None,\n","                \"release_date_source\": None,\n"]],[1514,3,["            }\n","        )\n","\n"]],[1519,1,["    records = routes.read_records(TOOLS_ROOT)\n"]],[1523,1,["        for name in missing:\n"]],[1529,1,["        for name in missing:\n"]],[1545,3,["    return packages\n","\n","\n"]],[1553,2,["\n","\n"]],[1558,1,["        return None\n"]],[1561,2,["\n","    b = brew_bin()\n"]],[1564,3,["    if res.code != 0 or not res.stdout:\n","        return None\n","\n"]],[1568,3,["    if not path.exists():\n","        return None\n","\n"]],[1573,2,["\n","\n"]],[1576,2,["    ruby_source_path = str(pkg.get(\"ruby_source_path\") or \"\").strip()\n","    if ruby_source_path:\n"]],[1582,4,["        if candidate.exists():\n","            return candidate\n","\n","    name = str(pkg.get(\"name\") or \"\").strip()\n"]],[1587,2,["        return None\n","\n"]],[1594,1,["        ]\n"]],[1596,3,["            if candidate.exists():\n","                return candidate\n","\n"]],[1600,4,["            if candidate.exists():\n","                return candidate\n","        return None\n","\n"]],[1607,1,["    ]\n"]],[1609,3,["        if candidate.exists():\n","            return candidate\n","\n"]],[1613,6,["        if candidate.exists():\n","            return candidate\n","\n","    return None\n","\n","\n"]],[1621,2,["        return None\n","\n"]],[1624,5,["    if res.code != 0 or not res.stdout:\n","        return None\n","    return res.stdout.splitlines()[0].strip()\n","\n","\n"]],[1630,1,["    try:\n"]],[1632,4,["    except Exception:\n","        return None\n","\n","\n"]],[1638,2,["    if not source:\n","        return False\n"]],[1642,2,["\n","\n"]],[1646,2,["        return False\n","    res = run_cmd(\n"]],[1650,3,["    )\n","    if res.code != 0:\n","        return False\n"]],[1654,2,["\n","\n"]],[1658,3,["        return []\n","    res = run_cmd(\n","        [\n"]],[1670,1,["        ],\n"]],[1672,4,["    )\n","    if res.code != 0 or not res.stdout:\n","        return []\n","\n"]],[1679,1,["            continue\n"]],[1685,1,["\n"]],[1689,2,["\n","\n"]],[1694,2,["        return None\n","\n"]],[1701,1,["\n"]],[1703,1,["    res = run_cmd(\n"]],[1706,6,["    )\n","    if res.code != 0 or not res.stdout:\n","        return None\n","    return res.stdout.splitlines()[0].strip()\n","\n","\n"]],[1717,1,["    )\n"]],[1723,3,["    return []\n","\n","\n"]],[1727,1,["    pkg: dict[str, Any],\n"]],[1731,1,["    name = str(pkg.get(\"name\") or \"\").strip()\n"]],[1733,1,["\n"]],[1735,3,["\n","    ruby_source_path = str(pkg.get(\"ruby_source_path\") or \"\").strip()\n","    if ruby_source_path:\n"]],[1739,1,["\n"]],[1744,1,["\n"]],[1747,2,["            candidates.extend(\n","                [\n"]],[1751,2,["                ]\n","            )\n"]],[1754,2,["            candidates.extend(\n","                [\n"]],[1758,3,["                ]\n","            )\n","\n"]],[1762,1,["    seen: set[str] = set()\n"]],[1766,2,["            continue\n","        seen.add(normalized)\n"]],[1769,1,["\n"]],[1771,2,["\n","\n"]],[1778,1,[") -> tuple[str | None, str, str | None, str]:\n"]],[1781,2,["        return None, \"unavailable\", None, \"unavailable\"\n","\n"]],[1785,1,["\n"]],[1787,1,["        try:\n"]],[1789,1,["        except Exception as exc:\n"]],[1791,2,["            continue\n","\n"]],[1796,2,["            break\n","\n"]],[1799,2,["        return None, \"unavailable\", None, \"unavailable\"\n","\n"]],[1804,1,["\n"]],[1807,1,["\n"]],[1810,1,["\n"]],[1822,2,["                    )\n","\n"]],[1825,2,["        return (\n","            latest_date,\n"]],[1828,1,["            latest_date,\n"]],[1830,2,["        )\n","\n"]],[1833,2,["\n","\n"]],[1837,2,["\n","\n"]],[1841,2,["\n","\n"]],[1845,1,["        [\n"]],[1848,2,["            str(pkg.get(\"installed_version\") or \"\"),\n","            str(pkg.get(\"latest_version\") or \"\"),\n"]],[1851,4,["        ]\n","    )\n","\n","\n"]],[1857,2,["        return False\n","\n"]],[1861,3,["        return False\n","\n","    try:\n"]],[1865,3,["    except ValueError:\n","        return False\n","\n"]],[1870,1,["\n"]],[1873,2,["\n","\n"]],[1876,1,["    pkg: dict[str, Any],\n"]],[1879,1,[") -> tuple[str | None, str, str | None, str]:\n"]],[1883,1,["        return (\n"]],[1888,2,["        )\n","\n"]],[1892,1,["\n"]],[1898,1,["\n"]],[1905,1,["\n"]],[1910,1,["\n"]],[1914,1,["\n"]],[1920,3,["            str(pkg.get(\"installed_version\") or \"\"),\n","            str(pkg.get(\"latest_version\") or \"\"),\n","        )\n"]],[1929,1,["\n"]],[1931,1,["        current_release_date = latest_release_date\n"]],[1934,1,["\n"]],[1936,1,["        current_release_date = latest_release_date\n"]],[1938,1,["\n"]],[1945,2,["    }\n","\n"]],[1948,2,["\n","\n"]],[1951,3,["    packages: list[dict[str, Any]],\n","    progress_callback: Callable[[int, int, dict[str, Any]], None] | None = None,\n",") -> None:\n"]],[1956,1,["\n"]],[1958,2,["    for pkg in packages:\n","        if pkg.get(\"outdated\"):\n"]],[1961,1,["\n"]],[1963,4,["\n","    total = len(packages)\n","\n","    for index, pkg in enumerate(packages, start=1):\n"]],[1969,1,["\n"]],[1974,1,["        )\n"]],[1979,2,["\n","        if pkg.get(\"outdated\"):\n"]],[1983,1,["        else:\n"]],[1986,1,["\n"]],[1991,4,["\n","        if progress_callback:\n","            progress_callback(index, total, pkg)\n","\n"]],[1997,2,["\n","\n"]],[2001,4,["    if not source:\n","        return \"\"\n","\n","    try:\n"]],[2008,1,["        )\n"]],[2012,1,["\n"]],[2019,1,["\n"]],[2022,1,["    except Exception as exc:\n"]],[2024,3,["        return None\n","\n","\n"]],[2028,3,["    packages: list[dict[str, Any]],\n","    progress_callback: Callable[[int, int, dict[str, Any]], None] | None = None,\n",") -> None:\n"]],[2034,1,["\n"]],[2037,4,["\n","    total = len(packages)\n","\n","    for index, pkg in enumerate(packages, start=1):\n"]],[2044,4,["            if progress_callback:\n","                progress_callback(index, total, pkg)\n","            continue\n","\n"]],[2051,4,["            if progress_callback:\n","                progress_callback(index, total, pkg)\n","            continue\n","\n"]],[2056,5,["            pkg[\"description_he\"] = desc_en\n","            if progress_callback:\n","                progress_callback(index, total, pkg)\n","            continue\n","\n"]],[2066,3,["        else:\n","            pkg[\"description_he\"] = desc_en\n","\n"]],[2070,4,["\n","        if progress_callback:\n","            progress_callback(index, total, pkg)\n","\n"]],[2076,2,["\n","\n"]],[2081,2,["\n","\n"]],[2087,1,["    return {\n"]],[2098,3,["    }\n","\n","\n"]],[2104,1,["    for pkg in packages:\n"]],[2110,2,["                if key in old:\n","                    pkg[key] = old[key]\n"]],[2114,2,["                if key in old:\n","                    pkg[key] = old[key]\n"]],[2118,2,["                if key in old:\n","                    pkg[key] = old[key]\n"]],[2125,2,["\n","\n"]],[2130,1,["\n"]],[2134,1,["\n"]],[2136,4,["\n","    b = brew_bin()\n","\n","    try:\n"]],[2141,1,["            if track_progress:\n"]],[2149,2,["                )\n","\n"]],[2157,1,["            else:\n"]],[2159,2,["\n","            if track_progress:\n"]],[2162,3,["\n","        if track_progress:\n","            set_check_progress(\n"]],[2167,3,["                done=0,\n","                total=1,\n","                eta_seconds=None,\n"]],[2171,2,["            )\n","\n"]],[2174,4,["\n","        if track_progress:\n","            set_check_progress(done=1, total=1, eta_seconds=0)\n","            set_check_progress(\n"]],[2180,3,["                done=0,\n","                total=1,\n","                eta_seconds=None,\n"]],[2184,2,["            )\n","\n"]],[2187,4,["\n","        if track_progress:\n","            set_check_progress(done=1, total=1, eta_seconds=0)\n","\n"]],[2192,1,["\n"]],[2194,7,["            if not track_progress:\n","                return\n","            raise_if_cancel_requested()\n","            eta = estimate_eta_seconds(progress_started_at, done, total)\n","            current = f\"{pkg.get('kind')}:{pkg.get('name')}\"\n","            set_check_progress(\n","                phase=\"resolving_dates\",\n"]],[2202,9,["                done=done,\n","                total=total,\n","                eta_seconds=eta,\n","                current_package=current,\n","            )\n","\n","        if track_progress:\n","            set_check_progress(\n","                phase=\"resolving_dates\",\n"]],[2212,7,["                done=0,\n","                total=total_packages,\n","                eta_seconds=None,\n","                current_package=\"\",\n","            )\n","\n","        if enrich_details:\n"]],[2220,1,["        else:\n"]],[2222,1,["\n"]],[2224,7,["            if not track_progress:\n","                return\n","            raise_if_cancel_requested()\n","            eta = estimate_eta_seconds(progress_started_at, done, total)\n","            current = f\"{pkg.get('kind')}:{pkg.get('name')}\"\n","            set_check_progress(\n","                phase=\"translating_descriptions\",\n"]],[2232,9,["                done=done,\n","                total=total,\n","                eta_seconds=eta,\n","                current_package=current,\n","            )\n","\n","        if track_progress:\n","            set_check_progress(\n","                phase=\"translating_descriptions\",\n"]],[2242,7,["                done=0,\n","                total=total_packages,\n","                eta_seconds=None,\n","                current_package=\"\",\n","            )\n","\n","        if enrich_details:\n"]],[2250,1,["\n"]],[2253,1,["\n"]],[2260,2,["        }\n","\n"]],[2265,5,["        )\n","\n","        if track_progress and complete_progress:\n","            set_check_progress(\n","                running=False,\n"]],[2273,3,["                total=total_packages,\n","                eta_seconds=0,\n","                current_package=\"\",\n"]],[2277,3,["                completed_at=now_iso(),\n","            )\n","\n"]],[2281,4,["    except Exception as exc:\n","        if track_progress and complete_progress:\n","            set_check_progress(\n","                running=False,\n"]],[2287,1,["                eta_seconds=0,\n"]],[2289,5,["                completed_at=now_iso(),\n","            )\n","        raise\n","\n","\n"]],[2297,1,["\n"]],[2301,1,["\n"]],[2304,1,["\n"]],[2306,1,["        if not isinstance(item, dict):\n"]],[2308,4,["\n","        name = str(item.get(\"name\") or \"\").strip()\n","        kind = str(item.get(\"kind\") or \"\").strip()\n","\n"]],[2315,1,["\n"]],[2318,2,["            continue\n","\n"]],[2322,1,["\n"]],[2325,1,["\n"]],[2327,2,["\n","\n"]],[2332,1,["    return {\n"]],[2336,3,["    }\n","\n","\n"]],[2342,1,["        return \"\"\n"]],[2346,2,["\n","\n"]],[2352,2,["        \"name\": name,\n","        \"kind\": kind,\n"]],[2363,1,["    }\n"]],[2365,1,["\n"]],[2368,1,["\n"]],[2377,1,["        }\n"]],[2379,1,["\n"]],[2389,1,["                    continue\n"]],[2393,1,["                    continue\n"]],[2395,1,["                try:\n"]],[2406,1,["                            self.state[\"stage\"] = \"building\"\n"]],[2409,1,["                            self.state[\"stage\"] = \"building\"\n"]],[2412,1,["                    continue\n"]],[2415,1,["\n"]],[2420,1,["\n"]],[2422,1,["        with CHECK_PROGRESS_LOCK:\n"]],[2425,2,["            }\n","\n"]],[2430,1,["            return\n"]],[2440,1,["                stage = \"downloading\"\n"]],[2442,1,["                stage = \"finishing\"\n"]],[2446,1,["                stage = \"downloading\"\n"]],[2456,1,["                stage = \"finishing\"\n"]],[2462,2,["\n","\n"]],[2473,2,["        pkg = package_from_snapshot(state, name, kind)\n","        if not pkg:\n"]],[2476,1,["        item = engine.plan([pkg])[0]\n"]],[2482,1,["        if not pkg:\n"]],[2485,2,["    settings = load_settings()\n","    from update_engine import Engine\n"]],[2490,2,["        pkg = package_from_snapshot(state, name, kind)\n","        if not pkg:\n"]],[2493,1,["        item = engine.plan([pkg])[0]\n"]],[2498,1,["    if kind == \"formula\":\n"]],[2503,4,["    b = brew_bin()\n","\n","    if kind == \"formula\":\n","        cmd = [b, \"upgrade\", \"--force-bottle\", name]\n"]],[2509,1,["    else:\n"]],[2511,1,["\n"]],[2517,1,["\n"]],[2521,1,["        if activity.state[\"stage\"] == \"building\":\n"]],[2523,1,["            with ACTIVE_COMMAND_LOCK:\n"]],[2526,2,["\n","    try:\n"]],[2529,2,["                      on_output=observe, env_override={\n","                          **engine.brew_env,\n","                          \"HOMEBREW_NO_AUTO_UPDATE\": \"1\",\n","                          \"HOMEBREW_NO_AUTOREMOVE\": \"1\",\n","                          \"HOMEBREW_NO_INSTALL_CLEANUP\": \"1\",\n","                      })\n","    finally:\n"]],[2532,1,["        with CHECK_PROGRESS_LOCK:\n"]],[2540,1,["\n"]],[2545,1,["    else:\n"]],[2547,2,["\n","    return {\n"]],[2551,2,["        \"name\": name,\n","        \"kind\": kind,\n"]],[2557,3,["    }\n","\n","\n"]],[2564,3,["    return None\n","\n","\n"]],[2570,1,["    *,\n"]],[2576,2,["        name = str(item.get(\"name\") or \"\").strip()\n","        kind = str(item.get(\"kind\") or \"\").strip()\n"]],[2579,2,["            continue\n","\n"]],[2586,2,["        )\n","\n"]],[2591,1,["\n"]],[2593,1,["            {\n"]],[2595,3,["                \"name\": name,\n","                \"kind\": kind,\n","                \"ok\": bool(item.get(\"ok\", False)),\n"]],[2599,2,["                \"installed_version\": installed_version,\n","                \"latest_version\": latest_version,\n"]],[2602,3,["            }\n","        )\n","\n"]],[2606,2,["\n","\n"]],[2610,1,["\n"]],[2615,1,["\n"]],[2620,1,["\n"]],[2625,1,["\n"]],[2628,3,["    return payload\n","\n","\n"]],[2632,1,["    try:\n"]],[2635,1,["    except Exception as exc:\n"]],[2640,2,["\n","\n"]],[2643,1,["    from update_engine import Engine\n"]],[2645,2,["\n","\n"]],[2648,1,["    from update_engine import Engine\n"]],[2650,2,["\n","\n"]],[2654,2,["\n","\n"]],[2659,1,["        title = \"Mac Update Manager\"\n"]],[2661,1,["    else:\n"]],[2667,1,["\n"]],[2669,1,["        title = \"Mac Update Manager\"\n"]],[2677,1,["\n"]],[2684,1,["\n"]],[2699,3,["\n","\n","\n"]],[2704,1,["\n"]],[2707,1,["\n"]],[2715,1,["\n"]],[2719,1,["            return {}\n"]],[2721,3,["        if not raw:\n","            return {}\n","        try:\n"]],[2726,2,["            return {}\n","\n"]],[2730,1,["            return False\n"]],[2733,1,["            return True\n"]],[2739,1,["            try:\n"]],[2745,2,["                    identifier = body.get(\"id\")\n","                    approved = mac_manager._migration_engine._load_plan(sys.modules[__name__], identifier)\n","                    if approved.get(\"action\") not in (\"rollback\", \"resume\"):\n","                        raise unified_updates.PlanError(\"review_required\", \"Use the unified update list to approve new migrations\")\n","                    result = mac_manager._migration_engine.approve(sys.modules[__name__], identifier,\n","                                                                    request_id=body.get(\"request_id\"))\n","                    return {\"ok\": True, \"migration\": result,\n","                            \"snapshot\": compute_snapshot(False, enrich_details=False)}\n"]],[2758,1,["        try:\n"]],[2760,1,["        except BusyError as exc:\n"]],[2762,1,["        except unified_updates.PlanError as exc:\n","            self._send_json(409, {\"ok\": False, \"error\": exc.code, \"detail\": str(exc)})\n","        except Exception as exc:\n"]],[2764,2,["        return True\n","\n","    def _apply_unified_request(self, body, *, all_ready=False):\n","        try:\n","            def operation():\n","                reset_check_progress_for_run()\n","                set_check_progress(operation_name=\"unified_update\", phase=\"preflight\",\n","                                   message=\"Validating displayed provider decisions\",\n","                                   running=True, eta_seconds=None)\n","                return unified_updates.execute(sys.modules[__name__], body, all_ready=all_ready)\n","            response = run_with_progress(\"update_unified\", operation)\n","            self._send_json(200, response)\n","        except unified_updates.PlanError as exc:\n","            code = 400 if exc.code in {\"invalid_request\", \"invalid_request_id\", \"ambiguous_decisions\"} else 409\n","            self._send_json(code, {\"ok\": False, \"error\": exc.code, \"detail\": str(exc),\n","                                   \"plan\": unified_updates.read_plan(sys.modules[__name__])})\n","        except (BusyError, operation_lock.OperationBusy) as exc:\n","            self._send_json(409, {\"ok\": False, \"error\": \"busy\", \"detail\": str(exc)})\n","        except Exception as exc:\n","            self._send_json(500, {\"ok\": False, \"error\": \"update_failed\", \"detail\": str(exc)})\n","        return True\n","\n"]],[2768,1,["            operation = read_current_operation()\n"]],[2777,1,["                    \"version\": \"1.3.4\",\n"]],[2780,2,["                    \"capabilities\": [\"provider-decisions-v1\", \"migration-recovery-v2\", \"batch-idempotency-v1\"],\n","                    \"backend_sha256\": BACKEND_STARTUP_SHA,\n","                    \"backend_code_sha256\": BACKEND_STARTUP_SHA,\n","                    \"process_started_at\": PROCESS_STARTED_AT,\n","                    \"build_id\": \"unified-intel-1.3.4\",\n"]],[2783,3,["            )\n","            return\n","\n"]],[2787,6,["            try:\n","                settings = load_settings()\n","                self._send_json(\n","                    200,\n","                    {\n","                        \"ok\": True,\n"]],[2797,3,["                    },\n","                )\n","            except Exception as exc:\n"]],[2801,2,["            return\n","\n"]],[2804,2,["            try:\n","                settings = load_settings()\n"]],[2807,3,["                self._send_json(\n","                    200,\n","                    {\n"]],[2816,3,["                    },\n","                )\n","            except Exception as exc:\n"]],[2820,2,["            return\n","\n"]],[2825,1,["                try:\n"]],[2829,1,["                    return\n"]],[2832,1,["                    return\n"]],[2841,1,["                    continue\n"]],[2849,0,["            unified_updates.attach_cached(sys.modules[__name__], state)\n","            transactions = DATA_DIR / \"migrations\" / \"transactions\"\n","            state[\"pending_recovery\"] = [\n","                {\"transaction_id\": row.get(\"transaction_id\"),\n","                 \"status\": row.get(\"status\"), \"stage\": row.get(\"stage\"),\n","                 \"logical_id\": (row.get(\"plan\") or {}).get(\"profile\")}\n","                for path in sorted(transactions.glob(\"*/journal.json\"))\n","                if (row := read_json(path)) is not None\n","                and row.get(\"status\") not in (\"completed\", \"rolled_back\", \"canceled\")\n","            ] if transactions.is_dir() else []\n"]],[2850,2,["            return\n","\n","        if self.path == \"/api/update-plan\":\n","            self._send_json(200, {\"ok\": True, \"plan\": unified_updates.read_plan(sys.modules[__name__])})\n","            return\n","\n","        if self.path.startswith(\"/api/update-requests/\"):\n","            request_id = self.path.removeprefix(\"/api/update-requests/\")\n","            if not unified_updates.re_full_id(request_id):\n","                self._send_json(400, {\"ok\": False, \"error\": \"invalid_request_id\"})\n","                return\n","            path = DATA_DIR / \"update-requests\" / (request_id + \".json\")\n","            journal = read_json(path)\n","            if journal:\n","                transactions = []\n","                for txn_path in (DATA_DIR / \"migrations\" / \"transactions\").glob(\"*/journal.json\"):\n","                    txn = read_json(txn_path) or {}\n","                    if txn.get(\"request_id\") == request_id:\n","                        transactions.append({\"transaction_id\": txn.get(\"transaction_id\"),\n","                                             \"status\": txn.get(\"status\"),\n","                                             \"stage\": txn.get(\"stage\")})\n","                self._send_json(200, {\"ok\": True, \"request\": journal,\n","                                      \"transactions\": transactions})\n","            else:\n","                self._send_json(404, {\"ok\": False, \"error\": \"request_not_found\"})\n","            return\n","\n"]],[2854,2,["            return\n","\n"]],[2857,5,["            try:\n","                self._send_json(\n","                    200,\n","                    {\n","                        \"ok\": True,\n"]],[2863,3,["                    },\n","                )\n","            except Exception as exc:\n"]],[2867,4,["            return\n","\n","        self._send_json(404, {\"ok\": False, \"error\": \"not_found\"})\n","\n"]],[2873,1,["            return\n"]],[2875,1,["            try:\n"]],[2879,1,["                settings = load_settings()\n"]],[2881,1,["                save_settings(settings)\n"]],[2885,5,["            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"detail\": str(exc)})\n","            return\n","        if self.path == \"/api/update-plan\":\n","            try:\n"]],[2892,1,["                    reset_check_progress_for_run()\n"]],[2900,3,["            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"detail\": str(exc)})\n","            except Exception as exc:\n"]],[2908,1,["            return\n"]],[2912,2,["                self._send_json(200, payload)\n","            else:\n"]],[2915,2,["            return\n","\n"]],[2918,1,["            body = self._read_json_body()\n"]],[2920,2,["\n","            try:\n"]],[2923,1,["                settings = load_settings()\n"]],[2925,1,["                save_settings(settings)\n"]],[2927,5,["\n","                self._send_json(\n","                    200,\n","                    {\n","                        \"ok\": True,\n"]],[2933,3,["                    },\n","                )\n","            except Exception as exc:\n"]],[2937,2,["            return\n","\n"]],[2940,1,["            body = self._read_json_body()\n"]],[2942,2,["\n","            try:\n"]],[2945,1,["                settings = load_settings()\n"]],[2947,2,["                save_settings(settings)\n","\n"]],[2950,4,["                self._send_json(\n","                    200,\n","                    {\n","                        \"ok\": True,\n"]],[2956,3,["                    },\n","                )\n","            except Exception as exc:\n"]],[2960,2,["            return\n","\n"]],[2963,1,["            operation = read_current_operation()\n"]],[2965,1,["\n"]],[2970,1,["                )\n"]],[2974,5,["                self._send_json(\n","                    202,\n","                    {\n","                        \"ok\": True,\n","                        \"parallel\": True,\n"]],[2981,1,["                        \"operation\": operation,\n"]],[2983,4,["                    },\n","                )\n","                return\n","\n"]],[2989,5,["                self._send_json(\n","                    202,\n","                    {\n","                        \"ok\": True,\n","                        \"parallel\": True,\n"]],[2996,1,["                        \"operation\": operation,\n"]],[2998,6,["                    },\n","                )\n","                return\n","\n","            try:\n","                payload = run_with_progress(\n"]],[3006,4,["                )\n","                self._send_json(200, payload)\n","            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"error\": \"busy\", \"detail\": str(exc), \"operation\": read_current_operation()})\n"]],[3012,1,["            except Exception as exc:\n"]],[3014,2,["            return\n","\n"]],[3017,1,["            body = self._read_json_body()\n","            if body.get(\"plan_id\"):\n","                return self._apply_unified_request(body)\n"]],[3020,2,["\n","            try:\n"]],[3023,1,["\n"]],[3028,2,["                    reset_check_progress_for_run()\n","                    set_check_progress(\n"]],[3034,1,["                        total=1,\n"]],[3036,4,["                        current_package=f\"{kind}:{name}\",\n","                        planned_packages=planned,\n","                        completed_packages=completed,\n","                        failed_packages=failed,\n"]],[3044,2,["                    )\n","\n"]],[3052,1,["\n"]],[3054,2,["\n","                    set_check_progress(\n"]],[3057,1,["                        total=1,\n"]],[3059,9,["                        current_package=f\"{kind}:{name}\",\n","                        completed_packages=completed,\n","                        failed_packages=failed,\n","                        remaining_packages=[],\n","                        cancel_requested=is_cancel_requested(),\n","                        canceled=cancelled,\n","                    )\n","\n","                    set_check_progress(\n"]],[3071,8,["                        planned_packages=planned,\n","                        completed_packages=completed,\n","                        failed_packages=failed,\n","                        remaining_packages=[],\n","                        cancel_requested=is_cancel_requested(),\n","                        canceled=cancelled,\n","                    )\n","\n"]],[3080,1,["\n"]],[3086,1,["                    )\n"]],[3088,1,["\n"]],[3093,2,["                        set_check_progress(\n","                            running=False,\n"]],[3097,13,["                            done=1,\n","                            total=1,\n","                            eta_seconds=0,\n","                            current_package=\"\",\n","                            planned_packages=planned,\n","                            completed_packages=completed,\n","                            failed_packages=failed,\n","                            remaining_packages=[],\n","                            cancel_requested=is_cancel_requested(),\n","                            canceled=False,\n","                            error=None,\n","                            completed_at=now_iso(),\n","                        )\n"]],[3111,2,["                        set_check_progress(\n","                            running=False,\n"]],[3115,9,["                            done=1,\n","                            total=1,\n","                            eta_seconds=0,\n","                            current_package=\"\",\n","                            planned_packages=planned,\n","                            completed_packages=completed,\n","                            failed_packages=failed,\n","                            remaining_packages=[],\n","                            cancel_requested=is_cancel_requested(),\n"]],[3125,3,["                            error=None,\n","                            completed_at=now_iso(),\n","                        )\n"]],[3129,2,["                        set_check_progress(\n","                            running=False,\n"]],[3133,10,["                            done=1,\n","                            total=1,\n","                            eta_seconds=0,\n","                            current_package=\"\",\n","                            planned_packages=planned,\n","                            completed_packages=completed,\n","                            failed_packages=failed,\n","                            remaining_packages=[],\n","                            cancel_requested=is_cancel_requested(),\n","                            canceled=False,\n"]],[3144,3,["                            completed_at=now_iso(),\n","                        )\n","\n"]],[3152,1,["\n"]],[3155,3,["            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"error\": \"busy\", \"detail\": str(exc), \"operation\": read_current_operation()})\n","            except Exception as exc:\n"]],[3159,2,["            return\n","\n"]],[3162,1,["            body = self._read_json_body()\n","            if body.get(\"plan_id\"):\n","                return self._apply_unified_request(body, all_ready=True)\n","            try:\n"]],[3164,4,["                self._send_json(200, payload)\n","            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"error\": \"busy\", \"detail\": str(exc), \"operation\": read_current_operation()})\n","            except Exception as exc:\n"]],[3169,2,["            return\n","\n"]],[3172,1,["            body = self._read_json_body()\n","            if body.get(\"plan_id\"):\n","                return self._apply_unified_request(body)\n"]],[3174,2,["\n","            try:\n"]],[3177,1,["                payload = run_with_progress(\n"]],[3180,2,["                )\n","                self._send_json(200, payload)\n"]],[3184,3,["            except BusyError as exc:\n","                self._send_json(409, {\"ok\": False, \"error\": \"busy\", \"detail\": str(exc), \"operation\": read_current_operation()})\n","            except Exception as exc:\n"]],[3188,5,["            return\n","\n","        self._send_json(404, {\"ok\": False, \"error\": \"not_found\"})\n","\n","\n"]],[3194,1,["    ensure_dirs()\n"]],[3210,1,["        with CHECK_PROGRESS_LOCK:\n"]],[3215,1,["\n"]],[3218,1,["            return\n"]],[3221,1,["\n"]],[3227,1,["\n"]],[3229,1,["\n"]],[3231,1,["    try:\n"]],[3233,1,["    finally:\n"]],[3237,2,["\n","\n"]],[3240,1,["    ensure_dirs()\n"]],[3244,1,["\n"]],[3248,2,["            {\n","                \"ok\": True,\n"]],[3255,5,["        )\n","    )\n","    return 0\n","\n","\n"]],[3268,2,["\n","\n"]],[3272,2,["    ensure_dirs()\n","\n"]],[3275,1,["\n"]],[3278,1,["\n"]],[3281,1,["\n"]],[3283,3,["    return 0\n","\n","\n"]]]},"renderer/app.js":{"origin":"5f0952f4d9a5de44bd7a55111a46f6ac7c87e2b2","target":"a4c5a2a0e9f46205450228cc7628eddc3d13ef6c","hunks":[[1,1,["\n"]],[18,1,["\n"]],[95,1,["\n"]],[125,1,["\n"]],[141,1,["\n"]],[151,1,["  }\n"]],[154,2,["}\n","\n"]],[168,1,["  };\n"]],[170,2,["}\n","\n"]],[179,2,["}\n","\n"]],[185,3,["    return;\n","  }\n","\n"]],[192,1,["\n"]],[196,1,["\n"]],[202,2,["  }\n","\n"]],[207,2,["  }\n","\n"]],[214,2,["  }\n","\n"]],[221,2,["  }\n","\n"]],[225,3,["  }\n","}\n","\n"]],[231,2,["}\n","\n"]],[237,1,["\n"]],[241,6,["    }));\n","  }\n","\n","  renderAppUpdateProgress();\n","}\n","\n"]],[250,2,["}\n","\n"]],[255,6,["    installAppUpdateBtn.disabled = true;\n","    renderSettingsSummary();\n","    renderAppUpdateProgress();\n","    return;\n","  }\n","\n"]],[269,1,["\n"]],[272,1,["      } else {\n"]],[274,2,["      }\n","\n"]],[278,1,["    } else {\n"]],[281,2,["    }\n","  } else {\n"]],[285,8,["    }));\n","    installAppUpdateBtn.disabled = true;\n","  }\n","\n","  renderSettingsSummary();\n","  renderAppUpdateProgress();\n","}\n","\n"]],[294,1,["  try {\n"]],[296,1,["    if (!raw) {\n"]],[298,2,["    }\n","    const parsed = JSON.parse(raw);\n"]],[303,2,["    };\n","  } catch {\n"]],[306,3,["  }\n","}\n","\n"]],[311,2,["}\n","\n"]],[317,1,["  };\n"]],[319,2,["}\n","\n"]],[322,1,["  checkAppUpdateBtn.disabled = true;\n"]],[324,6,["  if (!silent) {\n","    clearAppUpdateProgress();\n","  }\n","\n","  if (!silent) {\n","    installAppUpdateBtn.disabled = true;\n"]],[331,3,["  }\n","\n","  try {\n"]],[335,1,["    appUpdateState = payload;\n"]],[338,1,["  } catch (err) {\n"]],[343,9,["    }\n","    renderSettingsSummary();\n","  } finally {\n","    appUpdateProgressEnabled = false;\n","    clearAppUpdateProgress();\n","    checkAppUpdateBtn.disabled = false;\n","  }\n","}\n","\n"]],[355,1,["  }\n"]],[359,2,["}\n","\n"]],[365,2,["}\n","\n"]],[369,3,["    return;\n","  }\n","\n"]],[374,1,["  checkAppUpdateBtn.disabled = true;\n"]],[378,2,["\n","  try {\n"]],[381,2,["    appUpdateState = payload;\n","\n"]],[386,3,["      return;\n","    }\n","\n"]],[391,1,["    setInlineStatus(\n"]],[394,4,["    );\n","    installAppUpdateBtn.disabled = !shouldAllowInstall(appUpdateState);\n","    appUpdateProgressEnabled = false;\n","  } catch (err) {\n"]],[399,3,["    installAppUpdateBtn.disabled = !shouldAllowInstall(appUpdateState);\n","    appUpdateProgressEnabled = false;\n","  } finally {\n"]],[403,5,["    checkAppUpdateBtn.disabled = false;\n","    renderAppUpdateProgress();\n","  }\n","}\n","\n"]],[410,2,["}\n","\n"]],[414,3,["  const selectedCount = selectedPackagesFromSnapshot().length;\n","  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))).length;\n","  const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;\n"]],[418,1,["\n"]],[420,3,["  updateAllBtn.disabled = busyLoading || operationRunning || !allowed || (!!snapshot?.unified_plan_id && !snapshot?.update_decisions?.some(d => d.status === 'ready'));\n","\n","  if (updateSelectedBtn) {\n"]],[424,3,["  }\n","\n","  if (selectVisibleOutdatedBtn) {\n"]],[428,6,["  }\n","\n","  if (clearSelectionBtn) {\n","    clearSelectionBtn.disabled = busyLoading || operationRunning || selectedCount === 0;\n","  }\n","\n"]],[436,2,["  });\n","\n"]],[440,3,["  });\n","}\n","\n"]],[445,1,["  showMessage(i18n.t('message.brewPathRequired'), true);\n"]],[447,3,["}\n","\n","\n"]],[456,1,["\n"]],[458,1,["\n"]],[466,1,["  const labels = {\n"]],[471,1,["  };\n"]],[483,1,["  }\n"]],[496,1,["    const text = document.createElement('p');\n"]],[500,1,["    panel.appendChild(text);\n"]],[508,1,["    }\n"]],[510,2,["  } else {\n","    const text = document.createElement('p');\n"]],[514,4,["    panel.appendChild(text);\n","  }\n","}\n","\n"]],[529,2,["  operationStatusUnverified = false;\n","  lastKnownOperationRunning = !!progress.running;\n"]],[532,5,["  presentOperationStatus();\n","  applyActionAvailability();\n","  return true;\n","}\n","\n"]],[542,4,["  operationStatusUnverified = false;\n","  presentOperationStatus();\n","}\n","\n"]],[548,3,["  presentOperationStatus();\n","}\n","\n"]],[558,6,["      return;\n","    }\n","  }\n","  try {\n","    const payload = await window.brewApp.getProgress();\n","    if (generation !== operationRequestGeneration) return;\n"]],[568,7,["  } catch {\n","    if (generation !== operationRequestGeneration) return;\n","    statusUnavailable();\n","    if (!progressPollTimer) startProgressPolling();\n","  }\n","}\n","\n"]],[576,1,["  const labels = {\n"]],[588,1,["  };\n"]],[590,2,["}\n","\n"]],[599,4,["    }\n","    setOperationStatusBadge('running');\n","  }\n","\n"]],[605,7,["  }\n","\n","  applyActionAvailability();\n","\n","  presentOperationStatus();\n","}\n","\n"]],[616,2,["}\n","\n"]],[622,2,["}\n","\n"]],[628,2,["}\n","\n"]],[633,1,["    if (!key) return;\n"]],[635,2,["  });\n","\n"]],[639,3,["  }\n","}\n","\n"]],[645,2,["  }\n","\n"]],[649,2,["  }\n","\n"]],[653,3,["  }\n","}\n","\n"]],[659,1,["\n"]],[663,2,["}\n","\n"]],[667,2,["}\n","\n"]],[675,2,["}\n","\n"]],[679,2,["}\n","\n"]],[682,3,["  presentOperationStatus();\n","}\n","\n"]],[687,1,["  const actionGeneration = operationRequestGeneration;\n"]],[690,3,["  }\n","\n","  try {\n"]],[694,1,["    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;\n"]],[697,1,["\n"]],[702,1,["        if (showFeedback) {\n"]],[706,2,["        }\n","      } else {\n"]],[711,1,["        }\n"]],[716,1,["        } else {\n"]],[718,2,["        }\n","        if (showFeedback) {\n"]],[721,4,["        }\n","      }\n","    }\n","\n"]],[726,1,["\n"]],[728,2,["    await loadUpdateHistory();\n","\n"]],[732,6,["    }\n","  } catch (err) {\n","    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;\n","    statusUnavailable();\n","    if (!progressPollTimer) startProgressPolling();\n","    if (showFeedback) {\n"]],[739,2,["    }\n","  } finally {\n"]],[743,4,["    }\n","  }\n","}\n","\n"]],[752,1,["\n"]],[755,2,["    presentOperationStatus();\n","    if (showFeedback) {\n"]],[758,4,["    }\n","    return;\n","  }\n","\n"]],[765,4,["    presentOperationStatus();\n","    return;\n","  }\n","\n"]],[772,2,["  presentOperationStatus();\n","\n"]],[775,1,["\n"]],[778,3,["    return;\n","  }\n","\n"]],[783,3,["  }\n","}\n","\n"]],[791,3,["  }\n","\n","  return {\n"]],[796,3,["  };\n","}\n","\n"]],[804,2,["  }\n","\n"]],[809,3,["  });\n","}\n","\n"]],[815,1,["  }\n"]],[822,2,["}\n","\n"]],[828,3,["  }\n","}\n","\n"]],[836,2,["}\n","\n"]],[843,2,["}\n","\n"]],[853,2,["}\n","\n"]],[856,1,["  if (item?.canceled) {\n"]],[858,2,["  }\n","\n"]],[863,2,["  }\n","\n"]],[866,5,["    return i18n.t('message.skippedReasonNotOutdated');\n","  }\n","\n","  const code = Number(item?.code || 0);\n","  if (code === 124) {\n"]],[872,2,["  }\n","  if (Number.isFinite(code) && code !== 0) {\n"]],[875,2,["  }\n","\n"]],[878,2,["}\n","\n"]],[881,1,["  if (item?.canceled) {\n"]],[883,2,["  }\n","\n"]],[886,2,["  const code = Number(item?.code || 0);\n","\n"]],[890,1,["  }\n"]],[892,2,["    return i18n.t('progress.failureExplainCommandTimeout');\n","  }\n"]],[896,1,["  }\n"]],[899,1,["  }\n"]],[902,6,["  }\n","\n","  if (code === 124) {\n","    return i18n.t('progress.failureExplainCommandTimeout');\n","  }\n","  if (Number.isFinite(code) && code !== 0) {\n"]],[909,2,["  }\n","\n"]],[912,2,["}\n","\n"]],[919,1,["  }\n"]],[921,2,["}\n","\n"]],[924,3,["  if (!container) return;\n","  clearNode(container);\n","\n"]],[928,6,["  if (!list.length) {\n","    container.appendChild(makeProgressEmptyNode());\n","    return;\n","  }\n","\n","  list.forEach((item) => {\n"]],[936,1,["\n"]],[940,2,["\n","    if (mode === 'completed') {\n"]],[943,1,["    } else {\n"]],[945,2,["    }\n","\n"]],[948,2,["\n","    if (mode === 'completed') {\n"]],[952,2,["        const note = document.createElement('div');\n","        note.className = 'update-live-item-note';\n"]],[955,1,["        row.appendChild(note);\n"]],[957,2,["        const note = document.createElement('div');\n","        note.className = 'update-live-item-note';\n"]],[960,4,["        row.appendChild(note);\n","      }\n","    }\n","\n"]],[965,3,["  });\n","}\n","\n"]],[969,2,["  if (!container) return;\n","\n"]],[975,5,["    }\n","  });\n","\n","  clearNode(container);\n","\n"]],[981,1,["  if (!list.length) {\n"]],[983,4,["    container.appendChild(makeProgressEmptyNode());\n","    return;\n","  }\n","\n"]],[988,2,["\n","  list.forEach((item) => {\n"]],[992,1,["\n"]],[998,2,["    }\n","\n"]],[1002,1,["\n"]],[1006,1,["\n"]],[1009,1,["\n"]],[1013,1,["      } else {\n"]],[1015,3,["      }\n","    });\n","\n"]],[1019,2,["  });\n","\n"]],[1022,1,["    if (!validKeys.has(key)) {\n"]],[1024,4,["    }\n","  });\n","}\n","\n"]],[1045,1,["  );\n"]],[1049,1,["  };\n"]],[1053,1,["  });\n"]],[1057,1,["  });\n"]],[1068,2,["}\n","\n"]],[1073,1,["\n"]],[1084,1,["\n"]],[1086,4,["    updateLivePanelEl.classList.remove('visible');\n","    return;\n","  }\n","\n"]],[1091,1,["\n"]],[1096,1,["\n"]],[1101,1,["\n"]],[1105,2,["}\n","\n"]],[1112,2,["}\n","\n"]],[1119,1,["\n"]],[1122,1,["        clearTimeout(timer);\n"]],[1124,1,["      })\n"]],[1126,1,["        clearTimeout(timer);\n"]],[1128,4,["      });\n","  });\n","}\n","\n"]],[1133,1,["  const raw = String(value || '').trim();\n"]],[1139,2,["  }\n","  return {\n"]],[1143,3,["  };\n","}\n","\n"]],[1148,1,["  return {\n"]],[1155,3,["  };\n","}\n","\n"]],[1160,1,["\n"]],[1167,1,["\n"]],[1175,2,["  }\n","\n"]],[1180,1,["\n"]],[1182,2,["}\n","\n"]],[1185,2,["  const scheduler = settingsState?.scheduler;\n","  if (!scheduler) {\n"]],[1188,4,["    settingsSummaryEl.textContent = i18n.t('settings.loading');\n","    return;\n","  }\n","\n"]],[1194,2,["}\n","\n"]],[1199,1,["\n"]],[1204,1,["\n"]],[1208,2,["}\n","\n"]],[1214,1,["  const scheduler = settingsState?.scheduler;\n"]],[1216,3,["\n","  if (!scheduler) {\n","    settingsSummaryEl.textContent = i18n.t('settings.loading');\n"]],[1221,3,["    return;\n","  }\n","\n"]],[1229,1,["\n"]],[1231,1,["  renderSettingsSummary();\n"]],[1233,3,["  applyActionAvailability();\n","}\n","\n"]],[1237,1,["  try {\n"]],[1240,2,["    renderSettings();\n","  } catch (err) {\n"]],[1244,3,["  }\n","}\n","\n"]],[1250,2,["\n","  try {\n"]],[1253,2,["    settingsState = {\n","      ...(settingsState || {}),\n"]],[1256,5,["      settings: {\n","        ...(settingsState?.settings || {}),\n","      },\n","    };\n","    renderSettings();\n"]],[1262,1,["  } catch (err) {\n"]],[1264,3,["  }\n","}\n","\n"]],[1270,2,["\n","  try {\n"]],[1273,4,["    settingsState = {\n","      ...(settingsState || {}),\n","      settings: {\n","        ...(settingsState?.settings || {}),\n"]],[1278,1,["      },\n"]],[1280,1,["    };\n"]],[1283,8,["    renderSettingsSummary();\n","    applyActionAvailability();\n","    await loadState();\n","  } catch (err) {\n","    setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathSaveFailed', { error: err.message }), true);\n","  }\n","}\n","\n"]],[1296,1,["  selectedPackageKeys.clear();\n"]],[1298,1,["  renderTable();\n"]],[1300,4,["  showMessage(i18n.t('message.brewPathRequired'), true);\n","  applyActionAvailability();\n","}\n","\n"]],[1306,2,["\n","  try {\n"]],[1312,1,["\n"]],[1318,5,["      );\n","      return;\n","    }\n","\n","    setInlineStatus(\n"]],[1325,1,["    );\n"]],[1329,6,["    }\n","  } catch (err) {\n","    setInlineStatus(brewPathStatusEl, i18n.t('settings.brewPathSaveFailed', { error: err.message }), true);\n","  }\n","}\n","\n"]],[1343,8,["  loaderStepEls.forEach((stepEl) => {\n","    stepEl.classList.remove('active', 'done');\n","  });\n","\n","  if (loaderCancelBtn) {\n","    loaderCancelBtn.disabled = true;\n","  }\n","\n"]],[1352,2,["    updateLivePanelEl.classList.remove('visible');\n","  }\n"]],[1361,2,["}\n","\n"]],[1367,1,["  }\n"]],[1370,1,["  }\n"]],[1377,1,["  }\n"]],[1379,2,["}\n","\n"]],[1385,2,["}\n","\n"]],[1389,2,["  loaderStepEls.forEach((stepEl) => {\n","    stepEl.classList.remove('active', 'done');\n"]],[1394,1,["\n"]],[1397,3,["      return;\n","    }\n","\n"]],[1402,4,["    }\n","  });\n","}\n","\n"]],[1408,4,["    return;\n","  }\n","\n","  lastKnownOperationRunning = !!progress.running;\n"]],[1413,1,["  if (progress.running) {\n"]],[1415,2,["  }\n","\n"]],[1422,4,["    presentOperationStatus();\n","    return;\n","  }\n","\n"]],[1427,1,["\n"]],[1433,1,["\n"]],[1447,1,["\n"]],[1453,2,["\n","  if (loaderCancelBtn) {\n"]],[1459,2,["  }\n","\n"]],[1463,1,["\n"]],[1465,3,["\n","  if (progress.running) {\n","    setOperationStatusBadge('running');\n"]],[1472,1,["  } else {\n"]],[1474,3,["  }\n","}\n","\n"]],[1478,1,["\n"]],[1483,2,["  try {\n","    const payload = await window.brewApp.getProgress();\n"]],[1489,1,["    }\n"]],[1492,1,["  } catch {\n"]],[1494,1,["  } finally {\n"]],[1496,3,["  }\n","}\n","\n"]],[1503,2,["}\n","\n"]],[1510,1,["  }\n"]],[1512,2,["}\n","\n"]],[1517,6,["\n","  if (loaderCancelBtn) {\n","    loaderCancelBtn.disabled = true;\n","  }\n","\n","  try {\n"]],[1526,1,["    } else {\n"]],[1528,2,["    }\n","  } catch (err) {\n"]],[1531,1,["  } finally {\n"]],[1534,3,["  }\n","}\n","\n"]],[1539,2,["}\n","\n"]],[1545,2,["  }\n","\n"]],[1549,2,["  }\n","\n"]],[1553,2,["  }\n","\n"]],[1557,2,["  }\n","\n"]],[1562,3,["  }\n","}\n","\n"]],[1569,2,["  }\n","\n"]],[1573,2,["  }\n","\n"]],[1577,2,["  }\n","\n"]],[1581,2,["  }\n","\n"]],[1589,3,["  }\n","}\n","\n"]],[1594,3,["  updateHistoryFilterControls();\n","}\n","\n"]],[1598,2,["  if (!normalizedTerm) return true;\n","  const text = [\n"]],[1606,6,["  ]\n","    .map((value) => String(value || '').toLowerCase())\n","    .join(' ');\n","  return text.includes(normalizedTerm);\n","}\n","\n"]],[1614,3,["}\n","\n","\n"]],[1622,2,["}\n","\n"]],[1625,3,["  return String(pkg?.update_decision?.source_installation_id || pkg?.installation_id || packageSelectionKey(pkg?.name, pkg?.kind));\n","}\n","function unifiedReady(pkg) {\n","  return pkg?.update_decision?.status === 'ready';\n","}\n","function unifiedPayload(packages) {\n","  if (!snapshot?.unified_plan_id) return null;\n","  if (packages.some(p => !unifiedReady(p))) throw new Error(\n","    i18n.lang === 'he' ? 'החבילה חסומה. יש לבצע בדיקה חדשה.' : 'Package is blocked. Run another check.');\n","  if (!globalThis.crypto?.randomUUID) throw new Error('Secure request identifiers are unavailable');\n","  return {\n","    request_id: globalThis.crypto.randomUUID().replaceAll('-', ''),\n","    plan_id: snapshot.unified_plan_id,\n","    decisions: packages.map(p => ({\n","      decision_id: p.update_decision.decision_id,\n","      material_fingerprint: p.update_decision.material_fingerprint,\n","    })),\n","  };\n","}\n","\n"]],[1629,1,["  const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];\n"]],[1631,1,["    .filter((pkg) => !pkg?.excluded && !pkg?.update_block_reason && pkg?.outdated && (!snapshot?.unified_plan_id || unifiedReady(pkg)) && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))\n"]],[1635,0,["      installation_id: pkg?.installation_id,\n","      update_decision: pkg?.update_decision,\n"]],[1637,2,["}\n","\n"]],[1640,1,["  const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];\n"]],[1643,1,["      .filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg)))\n"]],[1646,2,["  );\n","\n"]],[1650,1,["    if (!validKeys.has(key)) {\n"]],[1653,3,["    }\n","  });\n","\n"]],[1657,2,["}\n","\n"]],[1660,1,["  const selectedCount = selectedPackagesFromSnapshot().length;\n"]],[1662,1,["\n"]],[1665,3,["  }\n","\n","  if (updateSelectedBtn) {\n"]],[1669,2,["  }\n","\n"]],[1673,3,["  const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;\n","\n","  if (selectVisibleOutdatedBtn) {\n"]],[1677,7,["  }\n","\n","  if (clearSelectionBtn) {\n","    clearSelectionBtn.disabled = busyLoading || operationRunning || selectedCount === 0;\n","  }\n","}\n","\n"]],[1689,2,["    return;\n","  }\n"]],[1692,2,["}\n","\n"]],[1700,4,["  });\n","  renderTable();\n","}\n","\n"]],[1706,4,["  selectedPackageKeys.clear();\n","  renderTable();\n","}\n","\n"]],[1713,2,["}\n","\n"]],[1719,3,["  return true;\n","}\n","\n"]],[1724,2,["}\n","\n"]],[1728,2,["}\n","\n"]],[1731,1,["  const raw = String(value || '').trim();\n"]],[1735,2,["}\n","\n"]],[1743,4,["  });\n","  return direction === 'desc' ? -cmp : cmp;\n","}\n","\n"]],[1750,1,["\n"]],[1754,1,["\n"]],[1756,3,["  return direction === 'desc' ? -cmp : cmp;\n","}\n","\n"]],[1761,1,["\n"]],[1765,1,["      break;\n"]],[1768,1,["      break;\n"]],[1771,1,["      break;\n"]],[1774,1,["      break;\n"]],[1777,1,["      break;\n"]],[1779,1,["      cmp = compareNumberValues(\n"]],[1782,3,["        direction,\n","      );\n","      break;\n"]],[1788,1,["      cmp = compareNumberValues(\n"]],[1791,4,["        direction,\n","      );\n","      break;\n","    }\n"]],[1797,2,["      break;\n","    default:\n"]],[1800,3,["      break;\n","  }\n","\n"]],[1805,2,["}\n","\n"]],[1810,1,["\n"]],[1813,2,["  }\n","\n"]],[1816,2,["}\n","\n"]],[1819,1,["  try {\n"]],[1821,1,["    if (!raw) {\n"]],[1823,3,["    }\n","\n","    const parsed = JSON.parse(raw);\n"]],[1828,2,["\n","    if (!isSortableColumnKey(key)) {\n"]],[1831,2,["    }\n","\n"]],[1834,1,["  } catch {\n"]],[1836,3,["  }\n","}\n","\n"]],[1844,2,["}\n","\n"]],[1848,3,["    return;\n","  }\n","\n"]],[1853,2,["    tableSortState = {\n","      key: normalizedKey,\n"]],[1856,4,["    };\n","  } else {\n","    tableSortState = {\n","      key: normalizedKey,\n"]],[1861,3,["    };\n","  }\n","\n"]],[1865,2,["}\n","\n"]],[1868,4,["  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));\n","\n","  headers.forEach((th) => {\n","    const key = String(th.dataset.colKey || '').trim();\n"]],[1874,1,["\n"]],[1876,1,["\n"]],[1881,4,["      }\n","      return;\n","    }\n","\n"]],[1888,1,["\n"]],[1892,1,["    } else {\n"]],[1894,2,["    }\n","\n"]],[1900,4,["    }\n","  });\n","}\n","\n"]],[1905,8,["  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));\n","\n","  headers.forEach((th) => {\n","    const key = String(th.dataset.colKey || '').trim();\n","    if (!isSortableColumnKey(key)) {\n","      return;\n","    }\n","\n"]],[1914,1,["\n"]],[1918,2,["    };\n","\n"]],[1922,5,["        return;\n","      }\n","      onSort();\n","    });\n","\n"]],[1929,10,["        return;\n","      }\n","      event.preventDefault();\n","      onSort();\n","    });\n","  });\n","\n","  renderTableSortIndicators();\n","}\n","\n"]],[1942,2,["}\n","\n"]],[1947,1,["  }\n"]],[1950,1,["  }\n"]],[1952,2,["}\n","\n"]],[1958,2,["}\n","\n"]],[1961,2,["  if (!normalizedTerm) return true;\n","  const text = [\n"]],[1968,6,["  ]\n","    .map((value) => String(value || '').toLowerCase())\n","    .join(' ');\n","  return text.includes(normalizedTerm);\n","}\n","\n"]],[1977,2,["}\n","\n"]],[1982,2,["}\n","\n"]],[1987,2,["}\n","\n"]],[1999,1,["    default:\n"]],[2001,3,["  }\n","}\n","\n"]],[2011,2,["  });\n","\n"]],[2014,2,["}\n","\n"]],[2018,1,["\n"]],[2025,3,["    return;\n","  }\n","\n"]],[2030,1,["\n"]],[2033,1,["\n"]],[2036,1,["\n"]],[2040,1,["\n"]],[2044,1,["\n"]],[2047,1,["\n"]],[2050,1,["\n"]],[2056,1,["\n"]],[2060,1,["\n"]],[2063,1,["\n"]],[2067,3,["  });\n","}\n","\n"]],[2075,1,["\n"]],[2078,1,["\n"]],[2083,1,["  } else {\n"]],[2085,5,["  }\n","\n","  updateHistoryFilterControls();\n","}\n","\n"]],[2093,3,["  renderHistoryPanel();\n","\n","  try {\n"]],[2100,1,["    );\n"]],[2102,1,["  } catch (err) {\n"]],[2104,1,["  } finally {\n"]],[2106,4,["    renderHistoryPanel();\n","  }\n","}\n","\n"]],[2113,1,["  }\n"]],[2116,1,["  }\n"]],[2118,2,["}\n","\n"]],[2126,1,["  }\n"]],[2128,2,["}\n","\n"]],[2135,1,["  }\n"]],[2137,2,["}\n","\n"]],[2142,2,["    return i18n.t('message.skippedReasonNotOutdated');\n","  }\n"]],[2145,2,["}\n","\n"]],[2157,1,["\n"]],[2164,3,["  });\n","}\n","\n"]],[2168,1,["  const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];\n"]],[2172,1,["\n"]],[2175,1,["\n"]],[2179,1,["\n"]],[2181,2,["}\n","\n"]],[2188,2,["  });\n","  renderTableSortIndicators();\n"]],[2191,1,["\n"]],[2197,1,["\n"]],[2199,1,["    tableTitleEl.textContent = activeTab === 'outdated'\n"]],[2201,3,["        count: i18n.formatNumber(list.length),\n","        query: searchRaw,\n","      })\n"]],[2205,3,["        count: i18n.formatNumber(list.length),\n","        query: searchRaw,\n","      });\n"]],[2209,1,["    tableTitleEl.textContent = activeTab === 'outdated'\n"]],[2212,2,["  } else {\n","    tableTitleEl.textContent = activeTab === 'outdated'\n"]],[2218,3,["      });\n","  }\n","\n"]],[2222,2,["  if (!list.length) {\n","    const tr = document.createElement('tr');\n"]],[2231,1,["    } else {\n"]],[2233,1,["    }\n"]],[2235,1,["    tbodyEl.appendChild(tr);\n"]],[2237,4,["    applyActionAvailability();\n","    return;\n","  }\n","\n"]],[2242,2,["    const tr = document.createElement('tr');\n","\n"]],[2249,1,["\n"]],[2257,2,["    }\n","\n"]],[2265,1,["\n"]],[2272,1,["\n"]],[2276,1,["\n"]],[2280,1,["\n"]],[2284,1,["\n"]],[2291,1,["\n","    if (pkg.update_decision) {\n","      const d = pkg.update_decision;\n","      const info = document.createElement('div');\n","      info.className = 'small muted'; info.dir = 'auto';\n","      info.textContent = (d.current_provider === d.target_provider ? d.target_provider\n","        : d.current_provider + ' → ' + d.target_provider) + ' · ' + d.status\n","        + ' · ' + (d.reason_codes || []).join(', ');\n","      tdStatus.appendChild(info);\n","    }\n"]],[2298,1,["    }\n"]],[2300,1,["    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))) {\n"]],[2303,1,["\n"]],[2313,2,["      });\n","\n"]],[2317,1,["    } else {\n"]],[2319,2,["    }\n","\n"]],[2322,1,["    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))) {\n"]],[2326,1,["      btn.addEventListener('click', () => updateOne(pkg.name, pkg.kind, btn, pkg));\n"]],[2328,1,["    } else {\n"]],[2330,2,["    }\n","\n"]],[2344,4,["\n","    tbodyEl.appendChild(tr);\n","  });\n","\n"]],[2349,3,["  applyActionAvailability();\n","}\n","\n"]],[2358,2,["    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n","  }\n"]],[2361,1,["  renderTable();\n"]],[2363,2,["  renderHistoryPanel();\n","  renderAppUpdateStatus();\n"]],[2366,2,["  applyActionAvailability();\n","\n"]],[2376,2,["}\n","\n"]],[2379,2,["  clearMessage();\n","\n"]],[2384,2,["    renderCards(snapshot);\n","    renderTable();\n"]],[2388,4,["    applyActionAvailability();\n","    return;\n","  }\n","\n"]],[2394,2,["  }\n","  try {\n"]],[2397,4,["    renderCards(snapshot);\n","    renderTable();\n","    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n","  } catch (err) {\n"]],[2402,1,["  } finally {\n"]],[2405,4,["    }\n","  }\n","}\n","\n"]],[2411,2,["}\n","\n"]],[2414,3,["  if (!ensureBrewConfiguredForActions()) return;\n","  clearMessage();\n","\n"]],[2418,2,["  try {\n","    const payload = await window.brewApp.getProgress();\n"]],[2421,1,["  } catch {\n"]],[2423,2,["  }\n","\n"]],[2429,3,["    applyActionAvailability();\n","  }\n","\n"]],[2434,1,["\n"]],[2441,1,["        } else {\n"]],[2443,1,["        }\n"]],[2451,1,["      } else {\n"]],[2453,1,["      }\n"]],[2457,4,["    }\n","    return;\n","  }\n","\n"]],[2462,5,["  beginOperationRequest();\n","  const actionGeneration = operationRequestGeneration;\n","  let operationResponse = null;\n","  startProgressPolling();\n","  try {\n"]],[2470,2,["      return;\n","    }\n"]],[2473,3,["    renderCards(snapshot);\n","    renderTable();\n","    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n"]],[2477,1,["  } catch (err) {\n"]],[2479,13,["    if (/fetch failed/i.test(String(err?.message || ''))) {\n","      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });\n","    }\n","  } finally {\n","    await finishOperationRequest(operationResponse, actionGeneration);\n","    setLoading(false, 'message.loadingState');\n","  }\n","}\n","\n","async function updateOne(name, kind, sourceBtn = null, row = null) {\n","  if (!ensureBrewConfiguredForActions()) return;\n","  const request = row && snapshot?.unified_plan_id ? unifiedPayload([row]) : null;\n","  if (!request && !confirm(i18n.t('confirm.updateOne', { name, kind: kindLabel(kind) }))) return;\n","\n"]],[2494,3,["  }\n","\n","  clearMessage();\n"]],[2499,13,["  beginOperationRequest();\n","  const actionGeneration = operationRequestGeneration;\n","  let operationResponse = null;\n","  startProgressPolling();\n","\n","  try {\n","    const res = operationResponse = await window.brewApp.updateOne(name, kind, request);\n","    snapshot = res.snapshot;\n","    renderCards(snapshot);\n","    renderTable();\n","    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n","\n","    if (res?.result?.ok || (request && res?.ok)) {\n"]],[2517,1,["      }\n"]],[2519,1,["\n"]],[2525,2,["      }\n","    } else {\n"]],[2529,4,["    }\n","\n","    await loadUpdateHistory();\n","  } catch (err) {\n"]],[2534,6,["    if (/fetch failed/i.test(String(err?.message || ''))) {\n","      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });\n","    }\n","  } finally {\n","    await finishOperationRequest(operationResponse, actionGeneration);\n","    setLoading(false, 'message.loadingState');\n"]],[2542,4,["    }\n","  }\n","}\n","\n"]],[2547,2,["  if (!ensureBrewConfiguredForActions()) return;\n","\n"]],[2552,6,["    return;\n","  }\n","\n","  const selectedRows = (snapshot?.packages || []).filter(pkg =>\n","    selected.some(item => item.installation_id === pkg.installation_id));\n","  const request = snapshot?.unified_plan_id ? unifiedPayload(selectedRows) : null;\n","  if (!request && !confirm(i18n.t('confirm.updateSelected', { count: i18n.formatNumber(selected.length) }))) return;\n","\n","  if (updateSelectedBtn) {\n"]],[2559,3,["  }\n","\n","  clearMessage();\n"]],[2564,8,["  beginOperationRequest();\n","  const actionGeneration = operationRequestGeneration;\n","  let operationResponse = null;\n","  startProgressPolling();\n","\n","  try {\n","    const res = operationResponse = await window.brewApp.updateSelected(request || selected);\n","    snapshot = res.snapshot;\n"]],[2573,4,["    renderCards(snapshot);\n","    renderTable();\n","    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n","\n"]],[2578,2,["      success: i18n.formatNumber(res.updated_count || 0),\n","      failed: i18n.formatNumber(res.failed_count || 0),\n"]],[2581,3,["    });\n","\n","    const results = Array.isArray(res?.results) ? res.results : [];\n"]],[2589,1,["\n"]],[2593,2,["      }\n","\n"]],[2597,4,["      })}`;\n","    }\n","\n","    if (res?.inventory_refresh_error) {\n"]],[2603,4,["        error: res.inventory_refresh_error,\n","      })}`;\n","    }\n","\n"]],[2608,2,["\n","    const verifiedLatestCount = results.reduce((acc, result) => {\n"]],[2611,4,["      const pkg = findPackageInSnapshot(result?.name, result?.kind);\n","      return pkg && !pkg.outdated ? acc + 1 : acc;\n","    }, 0);\n","    if (verifiedLatestCount > 0) {\n"]],[2616,4,["    }\n","\n","    await loadUpdateHistory();\n","  } catch (err) {\n"]],[2621,6,["    if (/fetch failed/i.test(String(err?.message || ''))) {\n","      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });\n","    }\n","  } finally {\n","    await finishOperationRequest(operationResponse, actionGeneration);\n","    setLoading(false, 'message.loadingState');\n"]],[2628,3,["  }\n","}\n","\n"]],[2632,3,["  if (!ensureBrewConfiguredForActions()) return;\n","  const request = snapshot?.unified_plan_id ? unifiedPayload(\n","    (snapshot?.packages || []).filter(unifiedReady)) : null;\n","  if (!request && !confirm(i18n.t('confirm.updateAll'))) return;\n","\n"]],[2636,2,["\n","  clearMessage();\n"]],[2640,10,["  beginOperationRequest();\n","  const actionGeneration = operationRequestGeneration;\n","  let operationResponse = null;\n","  startProgressPolling();\n","  try {\n","    const res = operationResponse = await window.brewApp.updateAll(request);\n","    snapshot = res.snapshot;\n","    renderCards(snapshot);\n","    renderTable();\n","    updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });\n"]],[2651,5,["      success: i18n.formatNumber(res.updated_count || 0),\n","      failed: i18n.formatNumber(res.failed_count || 0),\n","    }));\n","\n","    if (res?.inventory_refresh_error) {\n"]],[2657,1,["        error: res.inventory_refresh_error,\n"]],[2659,4,["    }\n","\n","    const results = Array.isArray(res?.results) ? res.results : [];\n","    const verifiedLatestCount = results.reduce((acc, result) => {\n"]],[2664,4,["      const pkg = findPackageInSnapshot(result?.name, result?.kind);\n","      return pkg && !pkg.outdated ? acc + 1 : acc;\n","    }, 0);\n","    if (verifiedLatestCount > 0) {\n"]],[2669,4,["    }\n","\n","    await loadUpdateHistory();\n","  } catch (err) {\n"]],[2674,6,["    if (/fetch failed/i.test(String(err?.message || ''))) {\n","      await refreshRuntimeStatus({ showFeedback: true, reloadState: false });\n","    }\n","  } finally {\n","    await finishOperationRequest(operationResponse, actionGeneration);\n","    setLoading(false, 'message.loadingState');\n"]],[2681,3,["  }\n","}\n","\n"]],[2685,1,["  try {\n"]],[2688,1,["    const parsed = JSON.parse(raw);\n"]],[2690,1,["  } catch {\n"]],[2692,3,["  }\n","}\n","\n"]],[2696,1,["  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));\n"]],[2698,3,["  headers.forEach((th) => {\n","    const key = String(th.dataset.colKey || '').trim();\n","    if (!key) return;\n"]],[2702,1,["  });\n"]],[2704,2,["}\n","\n"]],[2707,1,["  const headers = Array.from(document.querySelectorAll('thead th[data-col-key]'));\n"]],[2709,4,["\n","  headers.forEach((th) => {\n","    const key = String(th.dataset.colKey || '').trim();\n","    if (!key) return;\n"]],[2716,2,["    }\n","\n"]],[2720,1,["\n"]],[2722,2,["      event.preventDefault();\n","\n"]],[2729,1,["\n"]],[2733,1,["\n"]],[2738,2,["      };\n","\n"]],[2747,2,["      };\n","\n"]],[2751,4,["    });\n","  });\n","}\n","\n"]],[2760,4,["    renderTable();\n","  });\n","});\n","\n"]],[2767,2,["});\n","\n"]],[2772,5,["    updateSearchControls();\n","    renderTable();\n","  });\n","}\n","\n"]],[2781,3,["    packageSearchTerm = '';\n","    updateSearchControls();\n","    renderTable();\n"]],[2785,3,["  });\n","}\n","\n"]],[2791,5,["    updateSearchControls();\n","    renderTable();\n","  });\n","}\n","\n"]],[2799,5,["    updateSearchControls();\n","    renderTable();\n","  });\n","}\n","\n"]],[2806,1,["    packageSearchTerm = '';\n"]],[2812,6,["    }\n","    updateSearchControls();\n","    renderTable();\n","  });\n","}\n","\n"]],[2821,4,["    renderHistoryPanel();\n","  });\n","}\n","\n"]],[2828,4,["    renderHistoryPanel();\n","  });\n","}\n","\n"]],[2835,4,["    renderHistoryPanel();\n","  });\n","}\n","\n"]],[2842,4,["    renderHistoryPanel();\n","  });\n","}\n","\n"]],[2855,5,["    }\n","    renderHistoryPanel();\n","  });\n","}\n","\n"]],[2881,2,["  }\n","});\n"]],[2888,3,["  }\n","});\n","\n"]],[2899,1,["\n"]],[2903,1,["  applyActionAvailability();\n"]],[2906,1,["  renderAppUpdateStatus();\n"]],[2909,2,["}\n","\n"]],[2913,1,["  try {\n"]],[2917,1,["    });\n"]],[2920,1,["    await loadState();\n"]],[2922,2,["});\n","\n"]]]}}
+
+UNIFIED_MODIFIED_FILES = {
+    "backend/installation_evidence.py": "\"\"\"Bounded local installation evidence; classification never authorizes migration.\"\"\"\nfrom __future__ import annotations\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport re\nimport shutil\nimport threading\nimport time\n\nCONTEXT = threading.local()\nPOLICY = 'local-evidence-v1'\n# Only explicitly known, read-only version probes are executed.\nVERSION_PROBES = {'llvm': ('clang', ['--version'], r'clang version (\\d+\\.\\d+\\.\\d+)')}\nDEVELOPMENT_MARKERS = {'node.h', 'Python.h', 'ruby.h', 'jvm.h', 'jni.h', 'rustc', 'llvm-config',\n                       'pg_config', 'go', 'gofmt', 'javac', 'clang', 'clang++', 'gcc', 'g++', 'swiftc', 'ghc'}\n\ndef reset():\n    CONTEXT.inventory = None\n\ndef command(s, args, timeout=30):\n    s.raise_if_cancel_requested()\n    result = s.run_cmd(args, timeout=timeout, cancellable=True,\n                       env_override={'HOMEBREW_NO_AUTO_UPDATE':'1', 'HOMEBREW_NO_AUTOREMOVE':'1'})\n    s.raise_if_cancel_requested()\n    return result\n\ndef read_receipt(path):\n    try:\n        data = json.loads(path.read_text())\n        return data if isinstance(data, dict) else None\n    except (OSError, ValueError):\n        return None\n\ndef versions(version):\n    text = str(version or 'unknown')\n    match = re.fullmatch(r'(.+?)_(\\d+)', text)\n    return {'package_version':text, 'upstream_version':match[1] if match else text,\n            'revision':int(match[2]) if match else 0}\n\ndef fingerprint(audit):\n    return hashlib.sha256(json.dumps({k:v for k,v in audit.items() if k!='checked_at'},sort_keys=True).encode()).hexdigest()\n\ndef inspect(s, row, prefix, cellar):\n    name = row['name']\n    entries = row.get('installed') or []\n    listed = [str(e['version']) for e in entries if isinstance(e, dict) and e.get('version')]\n    base = cellar / name\n    opt = prefix / 'opt' / name\n    issues, warnings, receipts = [], [], []\n    for version in sorted(set(listed) | ({p.name for p in base.iterdir() if p.is_dir()} if base.is_dir() else set())):\n        s.raise_if_cancel_requested()\n        path = base / version / 'INSTALL_RECEIPT.json'\n        data = read_receipt(path)\n        receipts.append({'version':version, 'path':str(path), 'present':path.is_file(),\n                         'sha256':hashlib.sha256(path.read_bytes()).hexdigest() if data is not None else None,\n                         'runtime_dependencies':(data or {}).get('runtime_dependencies'),\n                         'used_options':(data or {}).get('used_options', []),\n                         'bottle_rebuild':((data or {}).get('source') or {}).get('bottle', {}).get('rebuild')})\n    active = None\n    if opt.is_symlink() or opt.exists():\n        resolved = opt.resolve()\n        if resolved.is_dir() and resolved.parent == base.resolve():\n            active = resolved\n        else:\n            issues.append('active_link_missing_or_outside_installation')\n    linked = str(row.get('linked_keg') or '')\n    if active is None and not issues:\n        if linked and (base / linked).is_dir():\n            active = base / linked\n        elif len(listed) == 1 and (base / listed[0]).is_dir():\n            active = base / listed[0]\n        else:\n            issues.append('active_keg_unverified')\n    if active and linked and linked != active.name:\n        issues.append('linked_keg_disagrees_with_opt')\n    active_receipt = next((r for r in receipts if active and r['version']==active.name), None)\n    if active and (not active_receipt or active_receipt['runtime_dependencies'] is None):\n        issues.append('active_receipt_missing_or_incomplete')\n    if active and active.name not in listed:\n        issues.append('active_keg_missing_from_manager_inventory')\n    for record in receipts:\n        if not record['present'] and (not active or record['version'] != active.name):\n            warnings.append('inactive_receipt_missing:'+record['version'])\n    value = active.name if active else listed[0] if len(listed)==1 else 'unknown'\n    result = dict(status='verified' if not issues else 'unverified', checked_at=s.now_iso(),\n                  manager_versions=listed, manager_linked_keg=linked or None,\n                  active_keg=str(active) if active else None, opt_path=str(opt),\n                  receipts=receipts, issues=issues, warnings=warnings, **versions(value))\n    if name in VERSION_PROBES and active:\n        executable, args, pattern = VERSION_PROBES[name]\n        path = active/'bin'/executable\n        resolved = shutil.which(executable)\n        result['command_resolution'] = {'name':executable, 'path':resolved,\n            'resolved_path':str(Path(resolved).resolve()) if resolved else None,\n            'installation_executable':str(path)}\n        if path.is_file():\n            probe = command(s, [str(path), *args])\n            text = probe.stdout + probe.stderr\n            match = re.search(pattern, text)\n            result['version_probe'] = {'path':str(path), 'code':probe.code,\n                                       'version':match[1] if match else None, 'output':text[-2000:]}\n            if probe.code or not match:\n                result['warnings'].append('version_probe_unavailable')\n                result['functional_status']='failed' if probe.code else 'unverified'\n            elif match[1] != result['upstream_version']:\n                result['status']='conflict'\n                result['issues'].append('executable_version_disagrees_with_receipt')\n        else:\n            result['warnings'].append('version_probe_executable_missing')\n    return result\n\ndef collect(s, payload):\n    prefix_result = command(s, [s.brew_bin(), '--prefix'])\n    cellar_result = command(s, [s.brew_bin(), '--cellar'])\n    if prefix_result.code or cellar_result.code:\n        raise RuntimeError('Homebrew installation roots could not be verified')\n    prefix, cellar = Path(prefix_result.stdout.strip()), Path(cellar_result.stdout.strip())\n    if not prefix.is_absolute() or not cellar.is_absolute() or not cellar.is_dir():\n        raise RuntimeError('Homebrew returned an invalid installation root')\n    rows = {r['name']:r for r in payload.get('formulae', []) if isinstance(r,dict) and r.get('name')}\n    omitted=[]\n    # Reconcile only the Cellar's two installation levels, never user projects.\n    for directory in sorted(cellar.iterdir()):\n        s.raise_if_cancel_requested()\n        if directory.is_dir() and directory.name not in rows:\n            installed=[{'version':p.name} for p in directory.iterdir() if p.is_dir() and (p/'INSTALL_RECEIPT.json').is_file()]\n            if installed:\n                row=dict(name=directory.name,installed=installed,versions={},audit_metadata_missing=True)\n                rows[directory.name]=row\n                omitted.append(row)\n    audits, reverse, gaps = {}, {}, []\n    for name, row in rows.items():\n        s.raise_if_cancel_requested()\n        try:\n            audits[name] = inspect(s,row,prefix,cellar)\n            active=audits[name]['active_keg']\n            for receipt in audits[name]['receipts']:\n                if receipt['runtime_dependencies'] is None:\n                    if active and receipt['version']==Path(active).name:\n                        gaps.append(name+':runtime_dependencies_unavailable')\n                for dep in receipt['runtime_dependencies'] or []:\n                    key=str(dep.get('full_name') or dep.get('name') or '').split('/')[-1]\n                    if key:\n                        reverse.setdefault(key,[]).append({'name':name,'source':receipt['path'],'installed_version':receipt['version'],\n                            'declared_directly':dep.get('declared_directly'), 'version':dep.get('version')})\n            if audits[name]['issues']:\n                gaps.extend(name+':'+x for x in audits[name]['issues'])\n        except s.OperationCancelledError:\n            raise\n        except Exception as error:\n            audits[name]=dict(status='unverified',package_version='unknown',issues=[str(error)],\n                             warnings=[],receipts=[],active_keg=None,checked_at=s.now_iso())\n            gaps.append(name+':inventory_unverified')\n    for row in payload.get('casks',[]):\n        for dependency in (row.get('depends_on') or {}).get('formula',[]):\n            reverse.setdefault(dependency.split('/')[-1],[]).append(dict(name=row.get('token'),kind='cask',\n                source='current_cask_dependency_metadata',installed_version=row.get('installed')))\n    CONTEXT.inventory = dict(rows=rows,audits=audits,reverse=reverse,gaps=gaps,\n                             prefix=str(prefix),cellar=str(cellar),omitted=omitted)\n    return CONTEXT.inventory\n\ndef inventory_fields(s, row, context):\n    audit = context['audits'].get(row['name']) if context else None\n    if not audit:\n        audit=dict(status='unverified',package_version='unknown',issues=['inventory_evidence_unavailable'],checked_at=s.now_iso())\n    fields=dict(installed_version=audit['package_version'], inventory_verification=audit,\n                manager_installed_versions=[str(x.get('version')) for x in row.get('installed',[]) if isinstance(x,dict)],\n                installed_upstream_version=audit.get('upstream_version'),installed_revision=audit.get('revision'),\n                latest_upstream_version=(row.get('versions') or {}).get('stable'),latest_revision=row.get('revision'))\n    if audit['status'] != 'verified' or row.get('audit_metadata_missing'):\n        fields.update(inventory_stale=True,update_block_reason='inventory_unavailable')\n    if audit.get('functional_status')=='failed':\n        fields.update(inventory_stale=True,update_block_reason='inventory_unavailable')\n    return fields\n\ndef verified_dependencies(s, payload):\n    context=getattr(CONTEXT,'inventory',None)\n    if context is None:context=collect(s,payload)\n    result={}\n    for name,audit in context['audits'].items():\n        valid=[r for r in audit.get('receipts',[]) if r['present'] and r['runtime_dependencies'] is not None]\n        result[name]={'versions':[r['version'] for r in valid],\n                      'options':[x for r in valid for x in r.get('used_options',[])]}\n    return result\n\ndef file_evidence(s, root):\n    evidence=dict(commands=[],libraries=[],headers=[],pkg_config=[],development=[],mach_o=[],\n                  formula_source=None,service_definition=None,config_paths=[],data_paths=[],gaps=[])\n    started=time.monotonic()\n    scanned=0\n    # Bounded installation tree only. Do not follow directory symlinks.\n    for directory, dirs, files in os.walk(root, followlinks=False,\n            onerror=lambda error:evidence['gaps'].append('installation_directory_unreadable:'+str(error))):\n        s.raise_if_cancel_requested()\n        if time.monotonic()-started > 20 or scanned > 20000:\n            evidence['gaps'].append('installation_file_scan_limit')\n            break\n        relative=Path(directory).relative_to(root)\n        for name in dirs:\n            path=Path(directory)/name\n            if path.is_symlink() and not path.resolve().is_relative_to(root.resolve()):\n                evidence['gaps'].append('external_directory_link:'+str(path.relative_to(root)))\n        if relative.parts and relative.parts[0] in {'share','libexec'}:\n            dirs[:]=[d for d in dirs if not d.startswith('.')]\n        for name in files:\n            scanned+=1\n            if scanned % 64 == 0: s.raise_if_cancel_requested()\n            path=Path(directory)/name\n            rel=str(path.relative_to(root))\n            if name in DEVELOPMENT_MARKERS and (name.endswith('.h') or os.access(path,os.X_OK)):\n                evidence['development'].append(rel)\n            if relative.parts and relative.parts[0] in {'bin','sbin'} and os.access(path,os.X_OK):\n                evidence['commands'].append(str(path))\n            if name.endswith(('.dylib','.a')) or re.search(r'\\.so(?:\\.\\d+)*$',name):\n                # Bundled private libraries do not imply an exported library API.\n                if relative.parts and relative.parts[0]=='lib': evidence['libraries'].append(rel)\n            if relative.parts and relative.parts[0]=='include': evidence['headers'].append(rel)\n            if name.endswith('.pc'): evidence['pkg_config'].append(rel)\n    formula_dir=root/'.brew'\n    formula_files=sorted(formula_dir.glob('*.rb')) if formula_dir.is_dir() else []\n    if len(formula_files)==1 and formula_files[0].resolve().is_relative_to(root.resolve()):\n        path=formula_files[0]\n        text=path.read_text(errors='replace')\n        evidence['formula_source']=str(path)\n        evidence['formula_sha256']=hashlib.sha256(path.read_bytes()).hexdigest()\n        evidence['service_definition']=bool(re.search(r'^\\s*service\\s+do\\b',text,re.M))\n        # Only extract literal, formula-owned locations; do not evaluate Ruby.\n        for kind,pattern in [('config_paths',r'\\betc\\s*/\\s*\"([^\"\\n]+)\"'),('data_paths',r'\\bvar\\s*/\\s*\"([^\"\\n]+)\"')]:\n            evidence[kind]=sorted(set(re.findall(pattern,text)))\n    else:\n        evidence['gaps'].append('installed_formula_service_metadata_unavailable')\n    binaries=[]\n    for raw in evidence['commands']:\n        path=Path(raw)\n        try:\n            if not path.resolve().is_relative_to(root.resolve()):\n                evidence['gaps'].append('external_command_target:'+str(path))\n                continue\n            with path.open('rb') as stream: magic=stream.read(4)\n            if magic in {b'\\xcf\\xfa\\xed\\xfe',b'\\xfe\\xed\\xfa\\xcf',b'\\xca\\xfe\\xba\\xbe',b'\\xbe\\xba\\xfe\\xca'}:\n                binaries.append(path)\n        except OSError as error:\n            evidence['gaps'].append('executable_unreadable:'+str(path))\n    for path in binaries[:24]:\n        if time.monotonic()-started>30:\n            evidence['gaps'].append('linkage_inspection_time_limit')\n            break\n        result=command(s,['/usr/bin/otool','-L',str(path)],timeout=10)\n        evidence['mach_o'].append(dict(path=str(path),code=result.code,output=result.stdout[-12000:]))\n        if result.code: evidence['gaps'].append('linkage_inspection_failed:'+str(path))\n    if len(binaries)>24: evidence['gaps'].append('linkage_inspection_limit')\n    return evidence\n\ndef classify(evidence):\n    roles=[]\n    files=evidence.get('files',{})\n    if files.get('service_definition') or evidence.get('service'):\n        roles.append('service')\n    if evidence.get('consumers') or files.get('libraries') or files.get('headers') or files.get('pkg_config') or files.get('development'):\n        roles.append('shared_environment')\n    gaps=list(dict.fromkeys(evidence.get('gaps',[])+files.get('gaps',[])))\n    audit=evidence.get('inventory',{})\n    if audit.get('status')!='verified': gaps.append('installation_unverified')\n    if audit.get('functional_status')=='failed': gaps.append('known_command_probe_failed')\n    if not roles and not files.get('commands'): gaps.append('no_verified_command')\n    # Positive roles survive incomplete evidence; automation always requires completeness.\n    category=roles[0] if roles else 'insufficient_information' if gaps else 'standalone_candidate'\n    if category=='standalone_candidate': roles.append('standalone')\n    reasons=[]\n    if 'service' in roles: reasons.append('service_definition_or_registration')\n    if evidence.get('consumers'): reasons.append('documented_installed_consumers')\n    if any(files.get(k) for k in ('libraries','headers','pkg_config')): reasons.append('exported_library_interface')\n    if files.get('development'): reasons.append('development_environment_interface')\n    if category=='standalone_candidate': reasons.append('complete_local_evidence_without_shared_roles')\n    if gaps: reasons.append('required_evidence_incomplete')\n    return dict(category=category,roles=roles,reasons=reasons,consumers=evidence.get('consumers',[]),\n                gaps=sorted(set(gaps)),automation_candidate=category=='standalone_candidate',policy=POLICY)\n\ndef reusable_cached_classification(previous, current):\n    \"\"\"Reuse T02 evidence only for the unchanged physical, verified source.\"\"\"\n    from datetime import datetime, timezone\n    audit = current.get('inventory_verification') or {}\n    identity = current.get('installation_id')\n    if (not identity or audit.get('status') != 'verified'\n            or current.get('inventory_stale')):\n        return None\n    physical = [row for row in previous.get('packages', [])\n                if isinstance(row, dict) and row.get('installation_id') == identity\n                and row.get('provider') == 'homebrew'\n                and row.get('kind') == 'formula'\n                and row.get('name') == current.get('name')\n                and row.get('installed_version') == current.get('installed_version')]\n    if len(physical) != 1:\n        return None\n    cached = physical[0].get('classification')\n    if not isinstance(cached, dict):\n        offers = [offer for offer in previous.get('migrations', [])\n                  if isinstance(offer, dict) and offer.get('name') == current.get('name')]\n        cached = offers[0].get('classification') if len(offers) == 1 else None\n    if not isinstance(cached, dict) or cached.get('inventory_fingerprint') != fingerprint(audit):\n        return None\n    try:\n        checked = datetime.fromisoformat(cached['checked_at'].replace('Z', '+00:00'))\n        if checked.tzinfo is None:\n            return None\n        age = (datetime.now(timezone.utc) - checked).total_seconds()\n        if not -60 <= age < 900:\n            return None\n    except (KeyError, AttributeError, TypeError, ValueError):\n        return None\n    return dict(cached)\n\n\ndef annotate(s, offers, packages, refresh, report=False):\n    context=getattr(CONTEXT,'inventory',None)\n    previous=s.read_json(s.STATE_FILE) or {}\n    by_name={p['name']:p for p in packages if p.get('provider')=='homebrew' and p.get('kind')=='formula'}\n    services=None\n    if refresh and context and offers:\n        try:\n            result=command(s,[s.brew_bin(),'services','list','--json'],timeout=45)\n            services=json.loads(result.stdout) if not result.code else None\n            if not isinstance(services,list): services=None\n        except s.OperationCancelledError: raise\n        except Exception: services=None\n    for offer in offers:\n        s.raise_if_cancel_requested()\n        name=offer['name']\n        if name=='ngrok' or s.is_excluded(name,'formula'): continue\n        if report:\n            s.set_check_progress(current_package=name,message='Checking installation role: '+name,eta_seconds=None)\n        pkg=by_name.get(name,{})\n        audit=pkg.get('inventory_verification',{})\n        if not refresh:\n            cached = reusable_cached_classification(previous, pkg)\n            offer['classification'] = (cached if cached is not None else\n                dict(category='unclassified', roles=[],\n                     gaps=['fresh_classification_required'], reasons=[], consumers=[]))\n            continue\n        evidence=dict(name=name,installation_id=pkg.get('installation_id'),checked_at=s.now_iso(),\n                      inventory=audit,consumers=(context or {}).get('reverse',{}).get(name,[]),\n                      gaps=[],service=None)\n        try:\n            if context is None:\n                evidence['gaps'].append('installed_dependency_graph_unavailable')\n            else:\n                evidence['gaps'].extend(context['gaps'])\n                root=audit.get('active_keg')\n                if root: evidence['files']=file_evidence(s,Path(root))\n                row=context['rows'].get(name,{})\n                evidence['options']=[r.get('used_options',[]) for r in audit.get('receipts',[])]\n                evidence['variants']=row.get('used_options',[])\n                if services is None: evidence['gaps'].append('service_registry_unavailable')\n                else: evidence['service']=next((r for r in services if r.get('name')==name),None)\n                # A Homebrew service row may merely describe a stopped service.\n                files=evidence.get('files',{})\n                prefix=Path(context['prefix'])\n                evidence['owned_paths']=[dict(path=str(prefix/base/value),exists=(prefix/base/value).exists())\n                    for key,base in [('config_paths','etc'),('data_paths','var')] for value in files.get(key,[])\n                    if not Path(value).is_absolute() and '..' not in Path(value).parts]\n            classification=classify(evidence)\n        except s.OperationCancelledError: raise\n        except Exception as error:\n            evidence['gaps'].append('collection_failed:'+str(error))\n            classification=classify(evidence)\n        inventory_fingerprint=fingerprint(audit)\n        data=json.dumps(evidence,sort_keys=True,ensure_ascii=False).encode()\n        key=hashlib.sha256(data).hexdigest()\n        path=s.DATA_DIR/'migration-evidence'/(key+'.json')\n        s.raise_if_cancel_requested()\n        references=[]\n        try:\n            path.parent.mkdir(parents=True,exist_ok=True)\n            s.atomic_write_json(path,evidence)\n            references=[str(path)]\n        except OSError as error:\n            classification['gaps'].append('evidence_persistence_failed:'+str(error))\n            classification['automation_candidate']=False\n            if classification['category']=='standalone_candidate':classification['category']='insufficient_information'\n        classification.update(checked_at=evidence['checked_at'],inventory_fingerprint=inventory_fingerprint,\n                              evidence_refs=references)\n        offer['classification']=classification\n    return offers\n",
+    ".github/workflows/ci.yml": "name: CI\n\non:\n  pull_request:\n  push:\n    branches: [ main, master ]\n\njobs:\n  validate:\n    runs-on: macos-latest\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Node\n        uses: actions/setup-node@v4\n        with:\n          node-version: 22\n          cache: npm\n\n      - name: Setup Python\n        uses: actions/setup-python@v5\n        with:\n          python-version: '3.14'\n\n      - name: Install dependencies\n        run: npm ci\n\n      - name: JavaScript syntax check\n        run: |\n          node --check renderer/app.js\n          node --check renderer/i18n.js\n          node --check electron/main.js\n          node --check electron/preload.js\n\n      - name: Python syntax check\n        run: |\n          python3 -m compileall -q backend tools tests\n          python3 -m py_compile tools/implement-mac-manager.py tools/verify-migration.py\n\n      - name: Focused cached-plan regression checks\n        run: |\n          python3 -m unittest discover -s tests -p 'test_unified_updates.py'\n          python3 -m unittest discover -s tests -p 'test_update_selection.py'\n          python3 -m unittest discover -s tests -p 'test_macports_provider.py'\n          python3 -m unittest discover -s tests -p 'test_pixi_provider.py'\n          python3 -m unittest discover -s tests -p 'test_migration_engine.py'\n          python3 -m unittest discover -s tests -p 'test_migration_profiles.py'\n          node tests/stale-plan-ui.cjs\n          python3 tools/implement-mac-manager.py unified-check\n\n      - name: Packaging smoke check\n        run: npm run pack\n",
+    "docs/MAC_MANAGER_TASKS.md": "# מנהל עדכוני Mac — משימות והמשך עבודה\n\nעודכן: 20.10.2026 לאחר הבהרת המטרה וחלוקת הבדיקות עם המשתמש.\nגרסת המקור: 1.3.3 לפי package.json. בעדכון תיעוד זה לא נבדקה אפליקציה חיה\nולא הורצו בדיקות מוצר. תוצאות קודמות הן תוצאות היסטוריות בלבד.\n\n## מצב פיתוח נוכחי — 20.10.2026, שלב 3 בקוד ff48877\n\n**מקור האמת למימוש הוא [דוח מצב 1.3.4](UNIFIED_IMPLEMENTATION_STATUS.md).**\nהטבלה, הסעיפים והסימונים ההיסטוריים בהמשך מתארים גם את baseline של 1.3.3; סימון ישן כפתוח **אינו** אומר שקוד לא נכתב, וסימון קוד כהושלם אינו אישור בדיקות קבלה.\n\n| תחום | מצב קוד בענף 1.3.4 | מה עוד נדרש |\n| --- | --- | --- |\n| T01/T02 | מימושי בסיס נבדקו בעבר ב־1.3.2 | רגרסיות מול הקוד החדש |\n| T03 | מנוע מעבר Homebrew→MacPorts, גיבוי, routing, ownership, resume/rollback, ובניית מנוע Pixi קיימים בקוד | בדיקות כשל ושחזור מלאות במסלול Pixi המחובר, קבלה במחשב |\n| T04 | גילוי Homebrew/MacPorts/Pixi ממופה גם כשה־Brew הנוכחי אינו מיושן; השוואת גרסאות, חסמים, מגבלת Pixi; מנוע Pixi לפרופילי `jq`/`pandoc` | ל־`jq`/`pandoc` קיימת בחירה מוגנת עם תוכנית עסקה; נדרשים fault-injection וקבלה מלאה |\n| T07 | תוכניות שמורות ל־15 דקות, API ו־UI מאוחדים עבור חלק מהפעולות, סקריפט `--checks/--full` כתוב | מסלולי legacy, חוויית 409, תרגומים, רגרסיות ומסירה |\n| T05/T06 | המשך אופציונלי וחסמים ספציפיים | מחוץ לשלב הבא |\n\n**ראיות:** [CI #39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017): 63 בדיקות Python ממוקדות, Node לבדיקת תוקף תוכנית, בדיקות תחביר, 37 outputs ב־`unified-check`, אריזה בסיסית. לא ריצת `--checks` מלאה, לא HTTP/Electron, לא בדיקת מוצר על ה־Mac.\n\n### שלבי המשך לביצוע בנפרד עם אישור המשתמש\n\n1. **תיעוד** — יישור קוד 555ae7b עם תיעוד/גנרטור (שלב התיעוד הנוכחי).\n2. **T04: סקירה — הושלמה ברמת ניתוח קוד (שלב 2)** — [דוח מפורט](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md#שלב-2--דוח-סקירת-חוזים-ובטיחות-לקראת-חיבור-homebrewpixi) מזהה P0: חסימת bridge, אימות ברירת מחדל MacPorts, ושימור T02 ב־refresh=False; אין שינוי במימוש.\n3. **T04: חיבור — הושלם ברמת קוד (שלב 3)** — `ready` נוצר רק למסלול Pixi עם פרופיל `jq`/`pandoc` ותוכנית עסקה מאומתת; בדיקות קבלה עדיין פתוחות.\n4. **T03/T04: ביצוע** — חיבור למבצע המאוחד וכיסוי failure/restart/rollback.\n5. **T04: בחירה** — רגרסיות השוואה, completeness ושמות ספקים.\n6. **T07: API** — צמצום נתיבי legacy ועקיפות.\n7. **T07: UI** — הסרת אשף כפול ויישור נימוקים, סיכומים ושגיאות.\n8. **בדיקות** — Python, HTTP/Electron, כשלי מערכת ו־fixtures מבודדים.\n9. **מסירה** — גנרטור, bundle, manifest, pack/install מבוקרים.\n10. **ביקורת** — בדיקת diff, גבולות בטיחות, תיעוד והכנה לקבלת משתמש.\n\n**כללי עצירה:** אין מעבר חבילות אמיתי, התקנה/הסרה, שינוי PATH, הפצת release או מיזוג ל־`main` במהלך צעדי הקוד. המסלול `--full` קיים אך אינו אישור להרצה בלי סיום פיתוח ובדיקה.\n\n## המטרה המחייבת\n\nבדיקה אחת → בחירת ספק אוטומטית לפי חבילה מוכנה וגרסה מתאימה ל־Mac Intel →\nבחירת חבילות → לחיצה על עדכון → ביצוע ושמירת הספק החדש לאחר מעבר מוצלח.\nהמעבר הוא חלק מהעדכון המוצג למשתמש, בלי אישור נוסף לכל חבילה.\n\n[מטרת המוצר והחלטות העבודה](PRODUCT_GOAL.md) היא המסמך המחייב.\n[תיעוד המימוש](MAC_MANAGER.md) מתאר את הקוד הקיים והפערים מול המטרה.\nאין לפרש קיום קובץ או API כהשלמת מעבר אמיתי, שחזור או חוויית העדכון הרצויה.\n\n## תמונת מצב\n\n| משימה | מצב | מה הוכח ומה חסר |\n| --- | --- | --- |\n| T01 — אמינות מצב ומלאי | הושלמה לפי דוח 1.3.2 | חיווי סופי, טיפול בתשובות ישנות, receipts וקגים; תיקון LLVM עצמו פתוח ב־T06 |\n| T02 — סיווג מועמדות | הושלמה לפי דוח 1.3.2 | כלי/ספרייה/שירות/חסר מידע עם ראיות; סיווג אינו היתר ביצוע |\n| T03 — מעבר ובעלות מתמשכת | קוד מתקדם, משימה פתוחה | מנוע MacPorts ופרופילי Pixi קבועים קיימים; כיסוי כשל/חיבור מלא/קבלה עדיין חסרים |\n| T04 — Pixi ובחירת ספקים | בחירה + preflight לפרופילי Pixi קשיחים בקוד; עדיין פתוחה | נדרש כיסוי כשל/שחזור מלא ובדיקת קבלה; אין מעבר מוצר מוכח |\n| T05 — מסלולים רשמיים | המשך, עדיפות נמוכה | רק אחרי מסלול Homebrew/MacPorts/Pixi הרגיל; אין להרחיב עכשיו ללא צורך |\n| T06 — חבילות חסומות | פתוחה | ממצאים היסטוריים לאימות; תיקון נפרד לכל חסם מבוסס |\n| T07 — עדכון אחיד ובדיקות בפקודה | מימוש חלקי, פתוחה | תוכניות ואינטגרציית UI/API קיימות; legacy וקבלה מלאה פתוחים |\n\n## החלטות עבודה\n\n- Intel, חבילות בינאריות וכל תלויותיהן; בלי נפילה לבניית מקור או ירידה בגרסה.\n- Homebrew, MacPorts, Pixi לפי התאמה. בשוויון לשמר ספק; לבחור גרסה חדשה\n  מתאימה ממסלול נתמך ולבדוק מחדש חלופה כשהספק הקיים אינו נותן מענה.\n- לחיצת עדכון מאשרת את הפעולות המוצגות, כולל מעבר ספק. דרישת הרשאת macOS\n  כשנחוצה אינה אישור מעבר נוסף שהאפליקציה צריכה להמציא.\n- לשמור ngrok מוחרג, הגדרות, היסטוריה, תזמון וזהות התראות. לא לחפש פרויקטים\n  פרטיים; אפשרות לסקריפט פרטי אינה חסם. תלויים מתועדים ושירותים דורשים טיפול.\n- כל שינוי מוצר, בדיקות ותיעוד מופק דרך `tools/implement-mac-manager.py`;\n  את הסקריפט עורכים ב־apply_patch. כל פקודות הטרמינל בסשן אינטראקטיבי.\n- לשמר את העבודה הלא מחויבת והגיבויים. אין להפעיל apply/document-tasks ישנים\n  כדי לתקן תיעוד, ואין לאפס README או מניפסט קודם בגלל כשל תנאי קדם.\n- הסוכן יבצע אימות קצר וממוקד בלבד; המשתמש יריץ את הבדיקות המלאות בסקריפט.\n  הוראה זו מחליפה את החלוקה הישנה שבה הסוכן הריץ הכול והמשתמש רק פיילוט.\n\n## T01 — אמינות מצב הפעולה והמלאי\n\n**מניע:** למנוע ״ממתין״ או טעינה אחרי סיום, והחלטות על בסיס גרסה שאינה פעילה.\n**מצב:** הושלמה לפי [ראיות 1.3.2](T01_T02_VALIDATION.md), 20.10.2026.\n\n- [x] תוצאה סופית שאינה נמחקת ב־finally, ברענון או בשינוי שפה.\n- [x] סיכום עדכונים, כשל, ביטול ודילוגים, לרבות אפס התקנות והכול נדחה.\n- [x] התייחסות לתשובות ישנות, ניתוק ובדיקה במקביל לעדכון.\n- [x] הפרדת גרסה מדווחת, קג פעיל, receipt, נתיב פקודה ו־revision.\n\n**המשך:** לשמר ברגרסיות. אין להסיק מדוח 1.3.2 שקוד 1.3.3 כולו נבדק.\nתיקון clang/LLVM שהתגלה אינו כלול בסגירת T01.\n\n## T02 — סיווג מועמדות למעבר\n\n**מניע:** לדעת מה אפשר להעביר ככלי עצמאי ומה דורש טיפול בתלויים/שירותים.\n**מצב:** הושלמה לפי [ראיות 1.3.2](T01_T02_VALIDATION.md), 20.10.2026.\n\n- [x] איסוף ראיות מקומי ותלויים, בלי חיפוש בפרויקטים פרטיים.\n- [x] סיווג עצמאי / ספרייה או סביבה משותפת / שירות / חסר מידע.\n- [x] נימוק, פער מידע וראיות, בנפרד מזמינות בינארית ומיכולת ביצוע.\n\n**המשך:** להשתמש באותו איסוף לפני ביצוע; סיווג שמור אינו תחליף לאימות עדכני.\n\n## T03 — השלמת המעבר ושמירת הספק\n\n**מניע:** חלופה שמופיעה ברשימה צריכה להפוך לעדכון עובד, עם בעלות עקבית.\n**מצב:** תשתית חלקית קיימת; [סקירת הפערים](T03_VALIDATION.md). פתוחה.\n\n- [x] נוספו migration_engine.py ו־migration_profiles.py, תוכניות ויומני עסקה.\n- [x] נוסף מסלול קוד ל־IWYU לצד פיילוט ההתראות הישן; אין בכך הוכחת קבלה.\n- [ ] לאמת נתונים עדכניים מאיסוף T02 משותף, שינוי תוכנית, החרגות ונעילה בין תהליכים.\n- [ ] להשלים גיבוי מאומת, ביטול, המשך ו־rollback אמיתיים בלי דריסת שינוי עצמאי.\n- [ ] להשלים הפעלת פקודות, בעלות על shims ובדיקת PATH ושימוש לפני הסרת מקור.\n- [ ] להשלים רישום ספק רק אחרי הצלחה, ללא רשומת tool כפולה מול מלאי MacPorts.\n- [ ] לגלות עדכונים עתידיים דרך הספק החדש ולהריץ בדיקת שימוש אחרי עדכונו.\n- [ ] לשמר helper וזהות התראות קיימים; אין להעביר LLVM כחלק מפיילוט IWYU.\n- [ ] לחבר את המעבר לביצוע העדכונים הנבחרים ב־T07, ללא אשף אישור נוסף.\n\n**תנאי השלמה:** דוח המשתמש מוכיח מעבר נתמך, אימות שימוש, גיבוי ושחזור מבוקר,\nומלאי ועדכון מהספק החדש אחרי פתיחה מחדש. בדיקות כשל מבודדות עוברות.\nהפיילוטים הם ראיות הנדסיות בלבד; הם אינם הגדרת המוצר או משימה שהמשתמש צריך לנהל.\n\n## T04 — גילוי Pixi ובחירת ספק אוטומטית\n\n**מניע:** לבחור מסלול Intel מתאים מכל הספקים הנתמכים, מעבר למיפויי MacPorts.\n**מצב:** פתוחה; קוד גילוי משופר ומנוע Pixi עבור jq/pandoc נכתבו ב־1.3.4, אך bridge לבחירת מסלול מבצע עדיין חסום. ראו [דוח מצב](UNIFIED_IMPLEMENTATION_STATUS.md).\n\n- [ ] להגדיר מודל הצעה משותף: זהות תוכנה, בעלים נוכחי, ספק מבצע, גרסאות,\n  התאמה למערכת, סגירת תלויות, זמינות בינארית, יכולת ביצוע ונימוק בחירה.\n- [ ] לחבר Homebrew bottles, MacPorts archives ו־Pixi osx-64 למודל זה;\n  לפתור תלויות ולאמת קבצים ומטא־נתונים, תוך שמירת כשל ספק כמידע חלקי.\n- [ ] לבחור את הגרסה המתאימה החדשה ביותר מבין המסלולים שניתנים לביצוע;\n  בשוויון לשמר בעלים, בלי downgrade ובלי השוואת revisions בין ספקים.\n- [ ] לחבר ביצוע Pixi למנגנון המעבר ולשמור סביבות ונתיבים קיימים.\n- [ ] לשמור בעלות ולבדוק עדכון עתידי גם כשאין עותק Homebrew.\n\n**תנאי השלמה:** סריקה רגילה מציגה בחירה ונימוק; עדכון נבחר מתבצע בספק שנבחר,\nונשמר לאחר פתיחה מחדש. חבילה חסומה לא מפילה חבילות עם מסלול תקין.\n\n## T05 — ספקים רשמיים עצמאיים\n\n**מניע:** לתת מענה עתידי כשמנהלי החבילות אינם מספקים מסלול Intel מתאים.\n**מצב:** פתוחה, אחרי זרימת העדכון המרכזית; אין הרחבת מימוש אוטומטית במסגרת T03.\n\n- [ ] לבדוק מסלול רשמי רק לחבילה שנדרש עבורה פתרון; Nmap הוא ממצא היסטורי.\n- [ ] להגדיר גילוי גרסה, אימות קובץ, התקנה, שימוש, בעלות ועדכון עתידי.\n\n**תנאי השלמה:** מסלול נתמך שנבדק מקצה לקצה; קישור הורדה אינו מסלול שהושלם.\n\n## T06 — טיפול בחסמים קיימים\n\n**מניע:** לטפל במקרים שהמנגנון הכללי עדיין אינו יכול לבצע ולהציג סיבה מדויקת.\n**מצב:** פתוחה. הממצאים הבאים היסטוריים ודורשים אימות לפני שינוי התקנות.\n\n- [ ] LLVM: בדוח 1.3.2 הקג הפעיל 22.1.5, עותק 23.1.3_2 ללא receipt,\n  ו־clang נכשל בגלל Z3 חסר. תיקון נפרד; לא להחליף ספריות ABI באופן שרירותי.\n- [ ] Poppler/Pixi: תועד פתרון תלויות osx-64, לא התקנה או בדיקת שימוש.\n- [ ] libunistring: לבחון מחדש חסם משותף לחבילות שנמצאו, בלי ערבוב ספקי ספריות.\n- [ ] לאמת זמינות ומיפויים של nmap, socat, libtensorflow, merve ו־whisper.cpp.\n- [ ] לספריות ושירותים להכין טיפול בתלויים, ABI, הגדרות ונתונים לפני ביצוע.\n\n**תנאי השלמה:** לכל מקרה עדכני יש פעולה שהוכחה או חסם מתוארך ופעולה הבאה.\nאין חובה מלאכותית למצוא עדכון לכל התקנה או להעביר ספרייה במסלול כלי עצמאי.\n\n## T07 — עדכון נבחרים/הכול וסקריפט בדיקות אחד\n\n**מניע:** המשתמש מפעיל בדיקה ועדכון; המערכת מטפלת בבחירת ספק ובמעבר.\n**מצב:** פתוחה. כפתור ״עדכן הכול״ מחובר בחלקו להחלטות המאוחדות ב־1.3.4, אך legacy ותהליכי מעבר מסוימים טרם אוחדו ונבדקו.\n\n- [ ] להציג ברשימה אחידה מקור, יעד, ספק מבצע, סיבת בחירה ומעבר מתוכנן.\n- [ ] להעביר את כל החבילות הנבחרות לאותו מתכנן וביצוע, גם כשנדרש מעבר ספק.\n- [ ] הלחיצה על עדכון מאשרת את הפעולות המוצגות; לבטל דרישת אישור מעבר נפרד.\n  שינוי מהותי מאז התצוגה יוחזר לסקירת הבחירה המעודכנת לפני שינוי התקנות.\n- [ ] להציג חסם רק לחבילה המושפעת, ולשמר תוצאה סופית, ביטול ושתי שפות.\n- [ ] להכין פקודה אחת לבדיקות המלאות שהמשתמש מריץ: בדיקות קוד מבודדות,\n  HTTP, ממשק ורגרסיות; ואימות אמיתי לאחר הצגת הפעולות ואישור כולל אחד.\n- [ ] לשמור דוח וחתימות, להפריד סימולציה ואימות מחשב, ולא לסמן דילוג כעובר.\n- [ ] לקשור דוח לתוכן שנבדק; לבנות/להתקין רק בהתאם למצב בדיקות מוכח,\n  לשמור אפליקציה והגדרות קודמות, ולא להחליף בזמן פעולה פעילה.\n\n**תנאי השלמה:** דוח המשתמש מוכיח בדיקה → בחירה → עדכון במספר ספקים → סיכום →\nפתיחה מחדש ועדכון אצל הספק הנכון. לשמר החרגות, היסטוריה וזהות התראות.\nהסקריפט הנוכחי של IWYU אינו בדיקת קבלה כזו; אין למסור את פקודתו כהשלמת היעד.\n\n## סדר העבודה הבא\n\nשלבי העבודה העדכניים מפורטים למעלה תחת **״שלבי המשך לביצוע בנפרד״**. אין להתחיל שוב ביצירת חוזי Candidate/Decision או במנוע Pixi שכבר נכתבו. תחילה לסקור את החיבור הנוכחי, אחר כך לחבר ביצוע בטוח, ורק בהמשך להשלים UI, רגרסיות, גנרטור ובדיקת קבלה. T05/T06 נותרות מחוץ לסבב הזה.\n\n## ראיות והמשך בשיחה אחרת\n\n- [דוח T01/T02](T01_T02_VALIDATION.md): בדיקות 1.3.2 ותוצאות 239 התקנות\n  ו־28 מועמדות מהסריקה שתועדה. אלה אינם נתוני מלאי חיים.\n- [דוח T03](T03_VALIDATION.md): מה נוסף ב־1.3.3, מה טרם הוכח ומגבלות הסקריפט.\n- [מלאי 19.10.2026](audit-2026-10-19/README.md) ודוחות binary-preflight,\n  macports-binary-coverage: תמונות מצב היסטוריות, לא החלטות ביצוע נוכחיות.\n- נתוני האפליקציה: `~/Library/Application Support/Homebrew Update Manager/`.\n- גיבויים ודוחות: `~/.local/share/brew-update-manager/recovery/`.\n\nבשיחה הבאה לקרוא PRODUCT_GOAL.md, מסמך זה ו־MAC_MANAGER.md, הוראות AGENTS\nומצב Git. לשמר שינויים קיימים; לא להפעיל חבילות ישנות מעל הקבצים הנוכחיים.\nלקרוא את דוח המשתמש כשישנו ולהמשיך מהפער המוכח, ללא בדיקות מלאות חוזרות.\nאין לבצע מעבר אמיתי בזמן פיתוח. מסירה מקומית בלבד, בלי push/release.\n\nעדכון התיעוד הנוכחי מופק בפקודת `direction-docs-apply` של הגנרטור, עם גיבוי\nומניפסט נפרדים תחת `recovery/documentation-direction-2026-10-20/`.\nהוא אינו משנה מניפסטי bundles 001/002/003. בדיקות ישנות שדורשות hash התיעוד\nהמקורי עשויות לעצור בצדק; יש להתאים חבילת מימוש חדשה, לא לעקוף את ההגנה.\n\n## תוכנית המימוש הפעילה ודוח הבסיס — 20.10.2026\n\n[תוכנית מימוש מפורטת ל־T03/T04/T07](INTEL_UPDATE_IMPLEMENTATION_PLAN.md)\nמגדירה קבצים, חוזים, אלגוריתם בחירה, עסקה ושחזור, UI, בדיקות וסדר מסירה.\nהיא תוכנית לביצוע, לא דיווח על השלמת המוצר.\n\nהמשתמש הריץ את סקריפט הבדיקות: כל 19 השלבים עברו, כולל 83 בדיקות Python.\n[דוח הריצה](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t03-1.3.3/checks-1792496033916688000/summary.json).\nבקריאת הדוח חתימות 42 קובצי הקוד התאימו. לא בוצע מעבר חבילות אמיתי.\nהסוכן לא הריץ את החבילה מחדש. דוח זה הוא בסיס לקוד 1.3.3, לא בדיקה לשינויי התוכנית.\nבזמן baseline 1.3.3 הפקודה --full עוד לא הייתה קיימת; **בענף 1.3.4 היא כבר כתובה אך לא עברה בדיקת קבלה מלאה**. T03/T04/T07 עדיין פתוחות.\n\n\n## תמונת מצב ביניים היסטורית — תחילת פיתוח 1.3.4 (20.10.2026)\n\nקוד עבודה בענף \\`feat/unified-intel-134-foundations\\`, ב־PR טיוטה מס' 1.\nזו **אינה גרסה מותקנת או מוכנה להפצה**. הנתונים של משתמש ה־Mac אינם שונו\nבידי הסוכן. ה־CI מבצע בדיקות תחביר ו־packaging smoke בלבד, לא את בדיקות\nה־Python/Electron המלאות או מעבר הספק האמיתי.\n\nקיים בקוד:\n- בחירת גרסה וספק עם החלטות שמורות, סיבות, 15 דקות תוקף ו־fingerprint.\n- כיסוי עדכונים בינאריים של Homebrew formula, MacPorts וכלים מנוהלים ב־Pixi.\n- ניהול בעלות על התקנות, נעילת פעולות בין תהליכים, ורישום request IDs למניעת\n  הפעלה כפולה אחרי ניתוק.\n- תשתית מעבר Homebrew ל־MacPorts לפרופילים מוכרים, עם גיבוי קג, יומן,\n  בדיקת שימוש, ניתוב פקודות שמגן על קבצים זרים וסקירת resume/rollback.\n- UI אחיד, תוכניות API, כפתור פעולה אחד, ותוצאות עם מזהי בקשה.\n- סקריפט \\`tools/verify-migration.py --checks/--full\\` לגרסה 1.3.4.\n  \\`--full\\` יכול להחליף את האפליקציה המקומית ודורש YES לשינוי חבילות.\n\nעדיין לא הוכח / נשאר לבדיקה או להשלמה:\n- קבלת Mac אמיתית של IWYU אחרי החלפה, ניקוי, שחזור והפעלה מחדש.\n- פיילוט Pixi אמיתי; מעבר חדש מ־Homebrew ל־Pixi אינו מופעל עדיין\n  כעסקה נתמכת (עדכון של סביבת Pixi מנוהלת קיים בנפרד).\n- קבלה מעמיקה של Cask ובדיקת closure/metadata לכל שאר החבילות.\n- רגרסיות HTTP/renderer, תרחישי כשל מלאים ו־restore של bundle 004.\n- חתימות קוד/חבילה, ניתוב ב־login shell, הרשאת מנהל ו־recovery נבדקים\n  בקבלה המקומית; קיומן של הפונקציות אינו הוכחת התנהגותן ב־Mac.\n\n**אין לסגור T03/T04/T07** לפני דוח \\`--checks\\` מלא ודוח \\`--full\\`\nשמפריד הצלחה מדמה מקבלה אמיתית. אין לאשר מעבר בלתי מזוהה או לפרסם release.\n\n\n## תמונת מצב ביניים היסטורית — לפני 15 קומיטי T04 (20.10.2026)\n\nהטבלה והמשימות למעלה משמרות **תמונת בסיס 1.3.3**; יש להבחין בין מה שכבר קיים בקוד בענף לבין מה שנבדק על ה־Mac. [דוח המימוש העדכני](UNIFIED_IMPLEMENTATION_STATUS.md) קובע את המצב.\n\n- T03: מנוע גיבוי/ניתוב/שחזור קיים לכלים עם פרופיל; חסרות בדיקות תקלה וקבלה אמיתית.\n- T04: adapters תלת־ספקיים קיימים, אך הסריקה אינה אוספת כל חלופה לכל מקור; Homebrew→Pixi עדיין אינו מסלול מעבר מבצע.\n- T07: UI/API מאוחדים קיימים אך legacy נותר, ויש להשלים רגרסיות, תרגומי שגיאות ו־409.\n- תיקוני תוקף תוכנית `0f2f999`/`855a995` אושרו ב־[CI ממוקד](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595): 10 בדיקות Python, בדיקת JS, בדיקת מחולל ואריזה בסיסית. זו אינה בדיקת קבלה.\n- פקודת `--full` קיימת ב־1.3.4 אך אין לפרסם או להריץ כקבלה מאושרת לפני השלמת קוד ובדיקות.\n\n### תיקון תאריך מצב בעקבות 15 קומיטי T04\n\nהסטטוסים ההיסטוריים לעיל קדמו לקומיטים `bfc2066` עד `555ae7b`. אין להסיק מהם שגילוי חלופות אינו ממומש, או ש־Homebrew→Pixi לא קיים כלל במנוע. **נכון לקומיט 555ae7b מנוע Pixi נכתב לפרופילים קבועים, אבל ה־bridge עדיין מסרב לבחור בו לביצוע**. יש להמשיך לפי טבלת המצב בראש קובץ זה.\n\n### עדכון לאחר סקירה — שלב 2 הושלם ברמת בדיקת קוד\n\nהדוח ב־[תוכנית T04](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md) כולל נתיב קריאה → תכנון → ביצוע → שחזור, ממצאים P0/P1/P2, מפת קבצים, בדיקות נדרשות ותנאי סף ל־ready. **לא שונה קוד מוצר בשלב זה.** השלב הבא באישור המשתמש הוא שלב 3 (חיבור המנגנון המוגן, רק אחרי תיקון תנאי הסף). בדיקת Mac אמיתית נשארת נפרדת.\n\n### סיום שלב 3 / השלב הבא\n\nשלב 3 הושלם ברמת הקוד: שמירת T02 בטוחה בין סריקות, הפיכת `_pixi_bridge` לבחירה מאומתת רק אחרי תוכנית עסקה, אימות ספק מפורש ו־lock/generation בעת ביצוע, מניעת דילוג על פרופיל/transaction plan, ובדיקות רגרסיה ממוקדות. **אין להפעיל מעבר על המחשב** עדיין; שלב 4 הבא הוא בדיקות כשל/התאוששות מקצה לקצה (ב־fixtures בלבד), לא הרחבת רשימת הכלים ולא התקנת Pixi אמיתית.\n",
+    "docs/MAC_MANAGER.md": "# Mac Update Manager — implementation and product direction\n\nUpdated 2026-10-20. Source version: 1.3.3. This documentation-only review did not\nquery a live service or rerun product tests. The installed build and package state\nmust not be inferred from package.json alone.\n\nRead [the product goal](PRODUCT_GOAL.md) for the user's current requirements and\n[the task record](MAC_MANAGER_TASKS.md) for status and acceptance criteria. Those\ndecisions replace earlier designs requiring a separate approval for each migration\nor full test runs by the coding agent before handing the user a test script.\n\n## Current development source — 1.3.4, Stage 3 (2026-10-20)\n\nThis section supersedes older 1.3.3 runtime descriptions below; the installed Mac\napplication has **not** been inspected or changed as part of this source review.\n\n- Unified, fingerprinted decisions last 15 minutes and use physical installation identities.\n- Normal checks now discover **mapped** alternatives even with `brew.outdated=false`.\n  Revisions are compared only within the same provider. Unknown/missing T02 evidence\n  or time-limited Pixi discovery leaves an explicit blocker rather than guessing.\n- Managed Pixi updates remain separate from cross-provider migration.\n- The Homebrew→Pixi transaction engine is connected to the selector for **only**\n  fixed `jq`/`pandoc` profiles with current T02 evidence and verified, persisted\n  migration plans. Selection requires plan ID/fingerprint. Execution checks exact\n  provider, source package revision, locked closure and generation; final approval\n  re-discovers Pixi and fails closed on drift. This is tested in focused fixtures,\n  **not** live Intel Mac acceptance. All other Pixi migration profiles stay blocked.\n- Existing Homebrew→MacPorts profile migration and recovery code remains guarded;\n  legacy update routes and old per-migration UI still require review.\n- Current focused [CI 39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017)\n  passed 63 targeted Python tests, JS stale-plan test, 37-file no-write bundle\n  check, source syntax and packaging smoke. It did **not** run full HTTP/Electron,\n  crash/recovery or live Intel Mac acceptance.\n- `tools/verify-migration.py --checks/--full` is present in source, but `--full`\n  is potentially mutating and **must not** be run as a release acceptance step yet.\n\nSee [implementation status](UNIFIED_IMPLEMENTATION_STATUS.md), [T04 execution\nplan](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md) and [task sequence](MAC_MANAGER_TASKS.md).\n\n## Required user flow — not yet complete\n\nStart Check discovers updates and compares supported providers for native Intel\nmacOS. Select the newest suitable upstream version with a ready binary runtime\nclosure. Retain the existing owner on an otherwise equal route. Homebrew, MacPorts\nand Pixi participate as their execution routes are implemented and verified.\n\nShow installed/target versions, current/executing provider and the reason. A source\nprovider change is visible before the user clicks Update selected/all. That click\nauthorizes the displayed actions; there is no separate per-package migration\nwizard. macOS may still require administrator credentials. Revalidate before any\nchange; a materially changed proposal returns for updated selection.\n\nAfter successful migration, persist provider ownership and discover future versions\nfrom that provider even without the Homebrew copy. Unknown metadata is unverified,\nnot absent. Unsupported migration blocks the affected package with a reason.\nNever silently build from source, downgrade, or discard exclusions and user data.\n\n## Existing inventory and update paths\n\nHomebrew formulae/casks, active MacPorts ports and existing isolated tools share\nan inventory. `kind=port` identifies MacPorts in the selection API; legacy\nformula/cask requests remain Homebrew identities. Existing Pixi-managed tools\ndo not establish general Pixi alternative discovery or migration support.\n\nMacPorts preflight resolves runtime archives for the current OS/architecture and\nchecks archive/signature availability. Installation uses MacPorts' binary mode\nand signature verification. Availability alone does not prove a working migration.\nCatalog refresh and cache handling exist; provider freshness and error behavior\nstill need regression coverage when integrated into the common selection policy.\n\nCombined scans report provider stages and preserve partial errors. Version 1.3.2\nintroduced final progress in operation responses, retained terminal results,\nprotection against old responses and unverified status after communication loss.\nInventory evidence separates manager versions, active keg, receipt, PATH and\nupstream/revision. Only explicitly configured commands, initially LLVM clang,\nare probed. Evidence conflicts block affected decisions.\n\nT02 classifies candidate roles using receipts, reverse dependencies, files,\ninterfaces, services and bounded linkage checks. Private projects are not scanned.\nEvidence is stored in `migration-evidence` under the application data directory.\nA standalone classification does not itself authorize execution.\n\n## Existing migration APIs — internal/legacy path\n\n- `POST /api/migrations/plan {name}` creates a proposal.\n- `POST /api/migrations/approve {id}` executes a supported proposal.\n- `POST /api/migrations/recovery-plan {transaction_id, action}` creates a recovery\n  proposal; **historical 1.3.3 note:** recovery approval was not then wired.\n  Current 1.3.4 recovery behavior is described in the status document.\n- `POST /api/macports/sync` requests catalog refresh with macOS authorization.\n\nThe old terminal-notifier implementation remains separate. The 1.3.3 additions\ndelegate other names to `migration_engine.py`; `migration_profiles.py` defines\nterminal-notifier and include-what-you-use profiles. This is partial groundwork,\nnot a completed common transaction engine. Current update-all does not perform\ngeneral cross-provider migrations. See [the T03 review](T03_VALIDATION.md).\n\nThe current engine writes plans and transactions under `DATA_DIR/migrations/`\nand a route record under `TOOLS_ROOT/migrations/routes.json`. A written route\ndoes not prove shims were activated or future provider upgrades are integrated.\nDo not put MacPorts ownership into the legacy installed.json tool registry and\nthereby manufacture a duplicate installed tool.\n\nThe existing notification helper, permission identity, app/data/profile identity,\nlaunch agent, exclusions (including ngrok), settings and history must remain stable.\n\n## Validation and delivery\n\nThe coding agent implements code/tests and performs only focused lightweight\nchecks appropriate to the edit. The user runs the full suite and acceptance\nscript; inspect its saved report and avoid rerunning unchanged suites needlessly.\nFull unrun checks must be reported as pending. Isolated checks must not mutate\nreal packages; real acceptance shows the actions and asks for one overall approval.\n\n`tools/verify-migration.py --checks` now calls `verify-current-code.py` directly,\nindependent of old bundle manifests, and saves per-step logs and a summary.\nThe full suite awaits the user run. The 1.3.4 `--full` code exists but is not\naccepted for live use. The former IWYU-only helper description below is historical. Its\nlimitations and the distinction between historical runs and future validation\nare recorded in T03_VALIDATION.md. Do not recommend a real migration until its\npreflight, activation, rollback and acceptance gaps are resolved.\n\n[The 1.3.2 validation report](T01_T02_VALIDATION.md) preserves historical evidence;\nit does not certify later edits. Local delivery only; no push or release is implied.\n\n## Generator and recovery\n\nProduct, tests and documentation are generated through\n`tools/implement-mac-manager.py`; edit that script with apply_patch and run terminal\ncommands interactively. Preserve dirty work. Never replay legacy apply or\ndocument-tasks over a newer bundle, reset README, or overwrite recovery manifests\nto silence a precondition failure.\n\nThe 2026-10-20 direction update uses `direction-docs-check`, `direction-docs-apply`\nand `direction-docs-restore`. These touch documentation only, with a separate\nbackup and manifest under `recovery/documentation-direction-2026-10-20/`.\nRestore refuses subsequent independent edits. Existing bundles keep their old\nmanifests; their hash checks may correctly reject these newer documentation\nfiles. Adapt the next implementation/verification bundle to the current baseline.\n\n\n## Branch 1.3.4 — implementation in progress\n\nSee [unified implementation status](UNIFIED_IMPLEMENTATION_STATUS.md). The installed 1.3.3 application is unchanged; source and fixtures on the feature branch have not passed user acceptance.\n\n\n## Current 1.3.4 development branch (2026-10-20)\n\nHistorical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Mapped provider discovery and a fixed-profile Pixi migration engine were subsequently added in T04. The fixed-profile Pixi selection bridge is now coded; legacy bypass paths, failure/recovery suites and native Mac acceptance remain open. No release or local install.\n",
+    "backend/update_routes.py": "\"\"\"Binary tool routes. Never replace libraries inside Homebrew's prefix.\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport os\nfrom pathlib import Path\nimport re\nimport shlex\nimport time\n\n\n# Deliberately limited to command line tools; databases, compilers and shared\n# libraries need a project/data migration rather than an executable replacement.\nPIXI_TOOLS = {\n    \"ansible\": (\"ansible\", [\"ansible\", \"ansible-playbook\", \"ansible-galaxy\", \"ansible-vault\"], [\"ansible\", \"--version\"]),\n    \"cmake\": (\"cmake\", [\"cmake\", \"ctest\", \"cpack\"], [\"cmake\", \"--version\"]),\n    \"deno\": (\"deno\", [\"deno\"], [\"deno\", \"--version\"]),\n    \"doxygen\": (\"doxygen\", [\"doxygen\"], [\"doxygen\", \"--version\"]),\n    \"ffmpeg\": (\"ffmpeg\", [\"ffmpeg\", \"ffprobe\"], [\"ffmpeg\", \"-version\"]),\n    \"gh\": (\"gh\", [\"gh\"], [\"gh\", \"--version\"]),\n    \"git\": (\"git\", [\"git\", \"git-upload-pack\", \"git-receive-pack\"], [\"git\", \"--version\"]),\n    \"jq\": (\"jq\", [\"jq\"], [\"jq\", \"--version\"]),\n    \"node\": (\"nodejs\", [\"node\", \"npm\", \"npx\"], [\"node\", \"--version\"]),\n    \"pandoc\": (\"pandoc\", [\"pandoc\"], [\"pandoc\", \"--version\"]),\n    \"poppler\": (\"poppler\", [\"pdftotext\", \"pdfinfo\", \"pdftoppm\", \"pdftocairo\", \"pdfseparate\", \"pdfunite\", \"pdfimages\", \"pdffonts\"], [\"pdfinfo\", \"-v\"]),\n    \"tesseract\": (\"tesseract\", [\"tesseract\"], [\"tesseract\", \"--version\"]),\n    \"uv\": (\"uv\", [\"uv\", \"uvx\"], [\"uv\", \"--version\"]),\n    \"whisper.cpp\": (\"whisper.cpp\", [\"whisper-cli\"], [\"whisper-cli\", \"--help\"]),\n}\n\n\ndef version_key(value):\n    return tuple(int(x) for x in re.findall(r\"\\d+\", str(value).split(\"_\")[0]))\n\n\ndef package_version(value):\n    version = str(value).split(\"_\")[0]\n    if not re.fullmatch(r\"[0-9][0-9A-Za-z.+-]*\", version):\n        raise ValueError(f\"Unsupported version constraint: {value}\")\n    return version\n\n\ndef read_records(root: Path):\n    try:\n        return json.loads((root / \"installed.json\").read_text())\n    except FileNotFoundError:\n        return {}\n\n\ndef route_for(name, kind, settings):\n    if kind != \"formula\":\n        return \"homebrew\"\n    enabled = settings.get(\"binary_tools\", [])\n    if name not in enabled:\n        return \"homebrew\"\n    if name == \"azure-cli\":\n        return \"uv\"\n    if name in {\"node\", \"deno\"}:\n        return \"native\"\n    return \"pixi\" if name in PIXI_TOOLS else \"homebrew\"\n\n\ndef prepare_workspace(root: Path, name, version, platform):\n    package_version(version)\n    directory = root / \"environments\" / name / str(time.time_ns())\n    directory.mkdir(parents=True)\n    conda_name = PIXI_TOOLS[name][0]\n    manifest = directory / \"pixi.toml\"\n    manifest.write_text(\n        '[workspace]\\nname = \"managed-tool\"\\nchannels = [\"conda-forge\"]\\n'\n        f'platforms = [\"{platform}\"]\\n\\n[dependencies]\\n'\n        f'{json.dumps(conda_name)} = {json.dumps(\">=\" + package_version(version))}\\n'\n        + ('python = \"3.14.*\"\\n' if name == \"ansible\" else '')\n    )\n    return directory, manifest\n\n\ndef validate_lock(manifest: Path, python: str, run, env):\n    # Pixi can export a machine-readable, explicit set without a YAML dependency.\n    export_dir = manifest.parent / \"explicit\"\n    result = run([env[\"PIXI_BIN\"], \"workspace\", \"export\", \"conda-explicit-spec\", str(export_dir),\n                  \"--manifest-path\", str(manifest), \"--no-config\"], timeout=120, env_override=env)\n    if result.code:\n        raise RuntimeError(result.stderr or result.stdout)\n    urls = [line.strip() for path in export_dir.glob(\"*\") if path.is_file()\n            for line in path.read_text().splitlines() if line.startswith(\"https://\")]\n    if not urls or any(not url.startswith(\"https://conda.anaconda.org/conda-forge/\")\n                       or not any(f\"/{subdir}/\" in url for subdir in (env[\"PIXI_PLATFORM\"], \"noarch\"))\n                       for url in urls):\n        raise RuntimeError(\"Lock does not consist exclusively of trusted platform binaries\")\n    return urls\n\n\ndef activate(root: Path, name, provider, directory: Path, prefix: Path, version, executables, probe_output):\n    \"\"\"Publish a complete tool update only after ownership of every shim is proved.\n\n    The installed.json record and the exact generated wrapper bytes form the\n    legacy ownership manifest; arbitrary files and broken links are blocked.\n    \"\"\"\n    import hashlib\n    from provider_ownership import atomic_write_json\n    root = Path(root)\n    bin_dir = root / \"bin\"\n    active_dir = root / \"active\"\n    link = active_dir / name\n    prefix = Path(prefix)\n    available = list(dict.fromkeys(executables))\n    if not available or not all((prefix / \"bin\" / command).is_file() for command in available):\n        raise RuntimeError(\"Provider did not supply all mandatory tool commands\")\n    if name not in PIXI_TOOLS and provider == \"pixi\":\n        raise RuntimeError(\"Unmapped Pixi package\")\n    if name == \"ngrok\":\n        raise RuntimeError(\"Excluded package\")\n    records = read_records(root)\n    previous = records.get(name)\n    if os.path.lexists(link):\n        if not link.is_symlink() or not previous or os.readlink(link) != previous.get(\"prefix\"):\n            raise RuntimeError(\"Active tool routing is not owned by the manager\")\n    elif previous and previous.get(\"prefix\"):\n        raise RuntimeError(\"Prior managed active pointer is missing\")\n    if previous and set(previous.get(\"executables\", [])) != set(available):\n        raise RuntimeError(\"Existing command set differs from required profile\")\n    def wrapper(command):\n        return ('#!/bin/sh\\n' +\n                f'export CONDA_PREFIX={shlex.quote(str(link))}\\n' +\n                f'export PATH={shlex.quote(str(link / \"bin\"))}:{shlex.quote(str(bin_dir))}:\"$PATH\"\\n' +\n                f'exec {shlex.quote(str(link / \"bin\" / command))} \"$@\"\\n')\n    import hashlib\n    for command in available:\n        destination = bin_dir / command\n        if not os.path.lexists(destination):\n            continue\n        if not previous or destination.is_symlink() or not destination.is_file():\n            raise RuntimeError(\"Unmanaged tool shim conflict: \" + str(destination))\n        raw = destination.read_bytes()\n        actual = hashlib.sha256(raw).hexdigest()\n        old_hash = (previous.get(\"owned_shims\") or {}).get(command)\n        legacy = hashlib.sha256(wrapper(command).encode()).hexdigest()\n        if actual != old_hash and not (old_hash is None and actual == legacy):\n            raise RuntimeError(\"Independently changed managed shim: \" + command)\n    bin_dir.mkdir(parents=True, exist_ok=True)\n    active_dir.mkdir(parents=True, exist_ok=True)\n    staged_wrappers = []\n    try:\n        for command in available:\n            destination = bin_dir / command\n            staged = destination.parent / (\".\" + command + \".\" + str(time.time_ns()) + \".next\")\n            staged.write_text(wrapper(command))\n            staged.chmod(0o755)\n            staged_wrappers.append((staged, destination))\n        staged_active = active_dir / (\".\" + name + \".\" + str(time.time_ns()) + \".next\")\n        staged_active.symlink_to(prefix)\n        # Existing shims execute through link, so switch only after all\n        # destinations and preconditions are rechecked.\n        for command in available:\n            destination = bin_dir / command\n            if os.path.lexists(destination):\n                prior_hash = (previous or {}).get(\"owned_shims\", {}).get(command)\n                actual_hash = hashlib.sha256(destination.read_bytes()).hexdigest()\n                if destination.is_symlink() or (prior_hash and actual_hash != prior_hash) or (\n                        not prior_hash and actual_hash != hashlib.sha256(wrapper(command).encode()).hexdigest()):\n                    raise RuntimeError(\"Shim changed during installation\")\n        for staged, destination in staged_wrappers:\n            os.replace(staged, destination)\n        os.replace(staged_active, link)\n        record = {\"provider\": provider, \"version\": version, \"prefix\": str(prefix),\n                  \"workspace\": str(directory), \"executables\": available,\n                  \"owned_shims\": {c: hashlib.sha256((bin_dir / c).read_bytes()).hexdigest()\n                                  for c in available},\n                  \"verified_at\": time.time(), \"probe_output\": probe_output[-3000:]}\n        records[name] = record\n        atomic_write_json(root / \"installed.json\", records)\n        return record\n    finally:\n        for staged, _ in staged_wrappers:\n            if os.path.lexists(staged):\n                staged.unlink()\n\n\ndef bottle_blockers(name, formulae, installed, excluded):\n    \"\"\"Conservative runtime closure from Homebrew's platform-selected API.\n\n    Missing metadata, non-default options, and unavailable runtime bottles fail\n    closed. Build-only dependencies are unnecessary when pouring a bottle.\n    \"\"\"\n    blockers = []\n    visited = set()\n\n    def visit(current, root=False):\n        if current in visited:\n            return\n        visited.add(current)\n        if f\"formula:{current}\" in excluded:\n            blockers.append({\"name\": current, \"reason\": \"excluded_dependency\"})\n            return\n        row = formulae.get(current)\n        if not row:\n            blockers.append({\"name\": current, \"reason\": \"metadata_unavailable\"})\n            return\n        old = installed.get(current, {})\n        latest = str(row.get(\"stable_version\", \"\"))\n        revision = int(row.get(\"revision\") or 0)\n        if revision:\n            latest += f\"_{revision}\"\n        if not root and latest in old.get(\"versions\", []):\n            return\n        if old.get(\"options\"):\n            blockers.append({\"name\": current, \"reason\": \"custom_build_options\"})\n        if not row.get(\"bottle_checksum\") or not row.get(\"bottle_tag\"):\n            blockers.append({\"name\": current, \"reason\": \"source_required\"})\n        for dependency in row.get(\"stable_dependencies\", []):\n            if isinstance(dependency, str):\n                visit(dependency)\n            elif isinstance(dependency, dict):\n                for dep, category in dependency.items():\n                    if category not in (\":build\", \":test\", \":optional\"):\n                        visit(dep)\n\n    visit(name, root=True)\n    return blockers\n",
+    "tools/verify-current-code.py": "#!/usr/bin/env python3\n\"\"\"Run existing isolated source checks and save reports; never migrate packages.\"\"\"\nfrom __future__ import annotations\nimport ast\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport shutil\nimport signal\nimport subprocess\nimport sys\nimport tempfile\nimport time\n\nROOT = Path(__file__).resolve().parents[1]\nREPORTS = Path.home() / '.local/share/brew-update-manager/recovery/unified-intel-1.3.4/runs'\n\ndef syntax():\n    files = sorted(p for folder in ('backend', 'tools', 'tests')\n                   for p in (ROOT / folder).rglob('*.py') if '__pycache__' not in p.parts)\n    for path in files:\n        ast.parse(path.read_bytes(), filename=str(path))\n    print(f'Python syntax: {len(files)} files OK')\n\ndef main():\n    out = REPORTS / ('checks-' + str(time.time_ns()))\n    out.mkdir(parents=True)\n    sources = sorted(p for folder in ('backend', 'tools', 'tests', 'renderer', 'electron')\n                     for p in (ROOT / folder).rglob('*')\n                     if p.is_file() and '__pycache__' not in p.parts\n                     and p.suffix in {'.py', '.js', '.cjs', '.html', '.css', '.json', '.tcl'})\n    sources += [ROOT / 'package.json', ROOT / 'package-lock.json']\n    hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()\n              for p in sorted(set(sources))}\n    report = {'mode': 'isolated_code_checks', 'real_migration': False,\n              'started_at': time.time(), 'code_sha256': hashes, 'steps': [],\n              'scope': 'Existing source suites only; no installed-app or real-migration acceptance'}\n    (out / 'code-sha256.json').write_text(json.dumps(hashes, indent=2) + '\\n')\n    def save():\n        (out / 'summary.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\\n')\n        lines = ['# דוח בדיקות קוד מבודדות', '', 'תוצאה: ' + report.get('result', 'running'),\n                 '', 'לא בוצעו מעבר, עדכון או הסרה של חבילות.',\n                 'הדוח אינו בדיקת קבלה לאפליקציה המותקנת או למעבר ספק אמיתי.', '']\n        lines += [f\"- {s['name']}: {s['status']} ({s.get('log', '')})\" for s in report['steps']]\n        if report.get('error'): lines += ['', report['error']]\n        (out / 'summary.md').write_text('\\n'.join(lines) + '\\n')\n    save()\n    print('דוח ולוגים:', out, flush=True)\n    node = shutil.which('node')\n    electron = ROOT / 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'\n    if not node or not electron.is_file():\n        report.update(result='prerequisite_missing', error='Node or local Electron is missing; no dependency installation was attempted')\n        save()\n        return 2\n    js = sorted(p for folder in ('electron', 'renderer', 'tools', 'tests')\n                for p in (ROOT / folder).rglob('*') if p.suffix in {'.js', '.cjs'})\n    commands = [('python-syntax', [sys.executable, str(Path(__file__).resolve()), '--syntax-only'], 60),\n                ('python-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py'], 600)]\n    commands += [('syntax-' + str(p.relative_to(ROOT)).replace('/', '-'), [node, '--check', str(p)], 30) for p in js]\n    commands += [('http', [node, str(ROOT / 'tests/service-http.cjs')], 90),\n                 ('progress-ui', [str(electron), str(ROOT / 'tests/progress-ui.cjs')], 120),\n                 ('operation-results-ui', [str(electron), str(ROOT / 'tests/operation-results-ui.cjs')], 120),\n                 ('whitespace', ['git', 'diff', '--check'], 30)]\n    code = 0\n    with tempfile.TemporaryDirectory(prefix='mac-manager-checks-') as temporary:\n        env = {**os.environ, 'BREW_UPDATE_DATA_DIR': temporary, 'PYTHONDONTWRITEBYTECODE': '1'}\n        for name, argv, timeout in commands:\n            step = {'name': name, 'argv': argv, 'status': 'running', 'log': name + '.log'}\n            report['steps'].append(step)\n            save()\n            print('בודק:', name, flush=True)\n            process = None\n            started = time.monotonic()\n            try:\n                with (out / step['log']).open('wb') as log:\n                    process = subprocess.Popen(argv, cwd=ROOT, env=env, stdout=log,\n                                               stderr=subprocess.STDOUT, start_new_session=True)\n                    while True:\n                        remaining = timeout - (time.monotonic() - started)\n                        if remaining <= 0: raise subprocess.TimeoutExpired(argv, timeout)\n                        try:\n                            result = process.wait(timeout=min(20, remaining))\n                            break\n                        except subprocess.TimeoutExpired:\n                            print(f'עדיין בודק: {name} ({int(time.monotonic() - started)} שניות)', flush=True)\n                step.update(returncode=result, status='pass' if result == 0 else 'fail')\n                if result != 0: code = 1\n            except (subprocess.TimeoutExpired, KeyboardInterrupt, OSError) as error:\n                if process is not None and process.poll() is None:\n                    # Only the isolated subprocess group created above belongs to us.\n                    os.killpg(process.pid, signal.SIGTERM)\n                    try: process.wait(timeout=5)\n                    except subprocess.TimeoutExpired:\n                        os.killpg(process.pid, signal.SIGKILL)\n                        process.wait()\n                step.update(status='unverified', error=str(error) or 'Interrupted by user')\n                code = 2\n            step['elapsed_seconds'] = round(time.monotonic() - started, 2)\n            save()\n            if code == 2: break\n        completed = {s['name'] for s in report['steps']}\n        for name, argv, _ in commands:\n            if name not in completed:\n                report['steps'].append({'name': name, 'argv': argv, 'status': 'not_run'})\n    changed = [rel for rel, sha in hashes.items()\n               if not (ROOT / rel).is_file() or hashlib.sha256((ROOT / rel).read_bytes()).hexdigest() != sha]\n    if changed:\n        report['error'] = 'Source files changed during checks: ' + ', '.join(changed)\n        code = 2\n    report.update(finished_at=time.time(), exit_code=code,\n                  result={0: 'pass', 1: 'fail', 2: 'unverified'}[code])\n    save()\n    print('הבדיקות הסתיימו:', report['result'], '\\nדוח:', out, flush=True)\n    return code\n\nif __name__ == '__main__':\n    if sys.argv[1:] == ['--syntax-only']: syntax()\n    elif sys.argv[1:]: raise SystemExit('This runner accepts no arguments')\n    else: raise SystemExit(main())\n",
+    "tools/verify-migration.py": "#!/usr/bin/env python3\n\"\"\"User-operated 1.3.4 Intel code checks, packaged-app and update acceptance.\n\nThe agent does not run this command. --full is authorization to replace only\nthe local Mac Update Manager app; package mutations still need one explicit\nYES tied to the displayed immutable plan.\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport plistlib\nimport shutil\nimport subprocess\nimport sys\nimport threading\nimport time\nimport urllib.error\nimport urllib.request\nimport uuid\n\nROOT = Path(__file__).resolve().parents[1]\nRECOVERY = Path.home() / \".local/share/brew-update-manager/recovery/unified-intel-1.3.4\"\nAPPLICATION = Path(\"/Applications/Mac Update Manager.app\")\nBUILT = ROOT / \"dist/mac/Mac Update Manager.app\"\nAPP_ID = \"com.tzoharlary.brewupdatemanager\"\nVERSION = \"1.3.4\"\n\n\nclass Blocked(RuntimeError):\n    pass\n\n\ndef sha(path):\n    return hashlib.sha256(Path(path).read_bytes()).hexdigest()\n\n\ndef backend_digest(directory):\n    return hashlib.sha256(b\"\".join(\n        path.name.encode() + b\"\\0\" + hashlib.sha256(path.read_bytes()).digest()\n        for path in sorted(Path(directory).glob(\"*.py\")))).hexdigest()\n\n\ndef signature():\n    files = sorted(\n        path for folder in (\"backend\", \"electron\", \"renderer\", \"tests\", \"tools\")\n        for path in (ROOT / folder).rglob(\"*\")\n        if path.is_file() and \"__pycache__\" not in path.parts\n        and path.suffix in (\".py\", \".js\", \".cjs\", \".json\", \".html\", \".css\", \".tcl\"))\n    files += [ROOT / \"package.json\", ROOT / \"package-lock.json\"]\n    return {str(path.relative_to(ROOT)): sha(path) for path in sorted(set(files))}\n\n\ndef unique_report():\n    path = RECOVERY / \"runs\" / (\"run-\" + str(time.time_ns()))\n    path.mkdir(parents=True)\n    return path\n\n\nclass Report:\n    def __init__(self, mode):\n        self.dir = unique_report()\n        self.data = {\n            \"schema_version\": 1, \"mode\": mode,\n            \"started_at\": time.time(), \"version\": VERSION,\n            \"code_checks\": \"not_run\", \"packaged_app\": \"not_run\",\n            \"simulated_scenarios\": \"not_run\", \"live_migration\": \"not_run\",\n            \"restart_verification\": \"not_run\", \"steps\": [],\n        }\n        self.save()\n\n    def save(self):\n        (self.dir / \"summary.json\").write_text(\n            json.dumps(self.data, ensure_ascii=False, indent=2, default=str) + \"\\n\")\n        lines = [\"# דוח בדיקת מנהל עדכוני Mac Intel\", \"\",\n                 \"גרסה: \" + VERSION, \"תוצאה: \" + self.data.get(\"result\", \"running\"), \"\"]\n        for key in (\"code_checks\", \"packaged_app\", \"simulated_scenarios\",\n                    \"live_migration\", \"restart_verification\"):\n            lines.append(\"- \" + key + \": \" + str(self.data[key]))\n        lines += [\"\", \"## שלבים\", \"\"]\n        lines += [\"- \" + x[\"name\"] + \": \" + x[\"status\"] +\n                  (\" — \" + x[\"detail\"] if x.get(\"detail\") else \"\")\n                  for x in self.data[\"steps\"]]\n        if self.data.get(\"error\"):\n            lines += [\"\", \"שגיאה: \" + self.data[\"error\"]]\n        (self.dir / \"summary.md\").write_text(\"\\n\".join(lines) + \"\\n\")\n\n    def step(self, name, status, detail=None, **extra):\n        self.data[\"steps\"].append(\n            {\"name\": name, \"status\": status, \"at\": time.time(),\n             **({\"detail\": detail} if detail else {}), **extra})\n        self.save()\n        print(name + \": \" + status + ((\" — \" + detail) if detail else \"\"), flush=True)\n\n\ndef command(args, report, name, timeout=1800):\n    destination = report.dir / (name + \".log\")\n    report.step(name, \"running\", argv=args)\n    with destination.open(\"wb\") as output:\n        try:\n            result = subprocess.run(args, cwd=ROOT, stdout=output,\n                                    stderr=subprocess.STDOUT, timeout=timeout)\n        except subprocess.TimeoutExpired as error:\n            report.step(name, \"unverified\", \"Timed out without assuming rollback\",\n                        log=str(destination))\n            raise Blocked(\"Timed out: \" + name) from error\n    if result.returncode:\n        report.step(name, \"fail\", \"See \" + str(destination),\n                    returncode=result.returncode)\n        raise RuntimeError(name + \" failed\")\n    report.step(name, \"pass\", log=str(destination))\n\n\ndef api(port, path, body=None, timeout=4):\n    url = \"http://127.0.0.1:\" + str(port) + path\n    data = json.dumps(body).encode() if body is not None else None\n    request = urllib.request.Request(\n        url, data=data,\n        headers={\"Content-Type\": \"application/json\"} if data is not None else {})\n    with urllib.request.urlopen(request, timeout=timeout) as response:\n        return json.load(response)\n\n\ndef find_service():\n    found = []\n    for port in range(8765, 8796):\n        try:\n            health = api(port, \"/health\", timeout=0.3)\n            if health.get(\"app\") == \"Mac Update Manager\" and health.get(\"pid\"):\n                found.append((port, health))\n        except (OSError, ValueError, urllib.error.URLError):\n            continue\n    if len(found) > 1:\n        raise Blocked(\"Multiple Mac Update Manager backends; cannot select one\")\n    return found[0] if found else None\n\n\ndef prerequisites(report):\n    if platform.system() != \"Darwin\" or platform.machine() != \"x86_64\":\n        raise Blocked(\"Native macOS Intel is required\")\n    if os.environ.get(\"SYSCTL_TRANSLATED\") == \"1\":\n        raise Blocked(\"Rosetta is not an Intel migration target\")\n    if sys.version_info[:2] != (3, 14):\n        raise Blocked(\"Run under verified Python 3.14\")\n    for program in (\"node\", \"git\", \"/usr/bin/ditto\", \"/usr/bin/open\", \"/usr/bin/osascript\"):\n        if not (shutil.which(program) if not program.startswith(\"/\") else Path(program).is_file()):\n            raise Blocked(\"Required existing executable missing: \" + program)\n    if not (ROOT / \"node_modules/.bin/electron-builder\").is_file():\n        raise Blocked(\"electron-builder is not installed; no dependencies were installed\")\n    report.step(\"prerequisites\", \"pass\", \"macOS Intel and existing local tooling\")\n\n\ndef matching_code_report(wanted):\n    directory = RECOVERY / \"runs\"\n    for path in sorted(directory.glob(\"*/summary.json\"), reverse=True):\n        try:\n            report = json.loads(path.read_text())\n            if (report.get(\"mode\") == \"isolated_code_checks\" and\n                    report.get(\"result\") == \"pass\" and\n                    report.get(\"code_sha256\") == wanted and\n                    all(step.get(\"status\") == \"pass\" for step in report.get(\"steps\", []))):\n                return path\n        except (OSError, ValueError):\n            continue\n    return None\n\n\ndef isolated_checks(report, *, reuse=True):\n    wanted = signature()\n    target = report.dir / \"code-manifest.json\"\n    target.write_text(json.dumps(wanted, indent=2) + \"\\n\")\n    matched = matching_code_report(wanted) if reuse else None\n    if matched is None:\n        command([sys.executable, str(ROOT / \"tools/verify-current-code.py\")],\n                report, \"isolated-code-suite\", timeout=1800)\n        matched = matching_code_report(wanted)\n        if matched is None:\n            raise Blocked(\"Code check results are missing or signed for different source files\")\n    report.data[\"code_checks\"] = \"pass\"\n    report.data[\"checks_report\"] = str(matched)\n    report.save()\n    return wanted\n\n\ndef metadata(app):\n    path = Path(app) / \"Contents/Info.plist\"\n    if not path.is_file():\n        raise Blocked(\"Application Info.plist is missing\")\n    with path.open(\"rb\") as stream:\n        info = plistlib.load(stream)\n    if info.get(\"CFBundleIdentifier\") != APP_ID:\n        raise Blocked(\"Unexpected application identifier\")\n    return info\n\n\ndef package_application(report, hashes):\n    command([str(ROOT / \"node_modules/.bin/electron-builder\"),\n             \"--dir\", \"--mac\", \"--x64\", \"--publish\", \"never\"],\n            report, \"intel-package\", timeout=1800)\n    info = metadata(BUILT)\n    if str(info.get(\"CFBundleShortVersionString\")) != VERSION:\n        raise Blocked(\"Packaged application version is not \" + VERSION)\n    backend = BUILT / \"Contents/Resources/app.asar.unpacked/backend\"\n    if not backend.is_dir():\n        raise Blocked(\"Packaged backend files are unavailable\")\n    for relative, expected in hashes.items():\n        if relative.startswith(\"backend/\"):\n            candidate = backend / relative.removeprefix(\"backend/\")\n            if not candidate.is_file() or sha(candidate) != expected:\n                raise Blocked(\"Packaged code differs: \" + relative)\n    product = {\"version\": VERSION,\n               \"backend_code_sha256\": backend_digest(backend),\n               \"packaged_path\": str(BUILT), \"application_id\": APP_ID,\n               \"build_id\": \"unified-intel-1.3.4\"}\n    (report.dir / \"build-manifest.json\").write_text(json.dumps(product, indent=2) + \"\\n\")\n    report.data[\"packaged_app\"] = \"pass\"\n    report.save()\n    return product\n\n\ndef check_idle(service):\n    if service is None:\n        return\n    port, health = service\n    if health.get(\"operation\", {}).get(\"running\"):\n        raise Blocked(\"App service has an active operation; replacement is deferred\")\n    progress = api(port, \"/api/progress\")\n    if progress.get(\"parallel_check\", {}).get(\"running\"):\n        raise Blocked(\"A parallel scan is active; replacement is deferred\")\n    if progress.get(\"progress\", {}).get(\"running\"):\n        raise Blocked(\"An update is still running\")\n    if health.get(\"capabilities\") is None:\n        raise Blocked(\"Running service identity could not be verified\")\n\n\ndef backup_user_state(report, service):\n    if service:\n        data = Path(service[1].get(\"data_dir\") or \"/nonexistent\")\n    else:\n        data = ROOT / \"data\" if (ROOT / \"data\").is_dir() else Path.home() / \"Library/Application Support/Homebrew Update Manager\"\n    paths = [data / name for name in (\"settings.json\", \"update-history.json\",\n                                      \"last-update-run.json\", \"state.json\")]\n    paths += [Path.home() / \".local/share/brew-update-manager/migrations/routes.json\",\n              Path.home() / \".local/share/brew-update-manager/installed.json\"]\n    snapshots = {}\n    for original in paths:\n        if original.is_file():\n            relative = original.relative_to(Path.home()) if original.is_relative_to(Path.home()) else Path(\"external\") / original.name\n            saved = report.dir / \"backup\" / relative\n            saved.parent.mkdir(parents=True, exist_ok=True)\n            shutil.copy2(original, saved)\n            snapshots[str(original)] = {\"path\": str(saved), \"sha256\": sha(saved)}\n    (report.dir / \"backed-up-state.json\").write_text(\n        json.dumps(snapshots, ensure_ascii=False, indent=2) + \"\\n\")\n    report.step(\"state-backup\", \"pass\", str(len(snapshots)) + \" existing files\")\n\n\ndef is_alive(pid):\n    try:\n        os.kill(int(pid), 0)\n        return True\n    except (ProcessLookupError, ValueError):\n        return False\n    except PermissionError:\n        return True\n\n\ndef install_packaged(report, service):\n    check_idle(service)\n    if APPLICATION.exists() and service is None:\n        check = subprocess.run([\"/usr/bin/osascript\", \"-e\",\n                                'application id \"' + APP_ID + '\" is running'],\n                               capture_output=True, text=True, timeout=15)\n        if check.returncode or check.stdout.strip().lower() != \"false\":\n            raise Blocked(\"Existing application status is unknown or it is still running\")\n    backup_user_state(report, service)\n    if APPLICATION.exists():\n        metadata(APPLICATION)\n        command([\"/usr/bin/ditto\", str(APPLICATION),\n                 str(report.dir / \"backup\" / \"Mac Update Manager.app\")],\n                report, \"application-backup\", timeout=180)\n    if service:\n        old_pid = service[1][\"pid\"]\n        command([\"/usr/bin/osascript\", \"-e\",\n                 'tell application id \"' + APP_ID + '\" to quit'],\n                report, \"close-owned-application\", timeout=45)\n        deadline = time.time() + 45\n        while time.time() < deadline and is_alive(old_pid):\n            time.sleep(1)\n        if is_alive(old_pid):\n            raise Blocked(\"Old backend is still running; no app swap\")\n    staging = APPLICATION.parent / (\".mac-manager-next-\" + uuid.uuid4().hex + \".app\")\n    retired = APPLICATION.parent / (\".mac-manager-previous-\" + uuid.uuid4().hex + \".app\")\n    command([\"/usr/bin/ditto\", str(BUILT), str(staging)], report,\n            \"stage-application\", timeout=180)\n    metadata(staging)\n    try:\n        if APPLICATION.exists():\n            os.replace(APPLICATION, retired)\n        os.replace(staging, APPLICATION)\n    except BaseException:\n        if not APPLICATION.exists() and retired.exists():\n            os.replace(retired, APPLICATION)\n        raise\n    report.data[\"old_app_retained_at\"] = str(retired) if retired.exists() else None\n    report.step(\"application-swap\", \"pass\", \"Local app replaced; package installations unchanged\")\n\n\ndef wait_for_health(report, product, previous_pid=None):\n    deadline = time.time() + 90\n    last = None\n    while time.time() < deadline:\n        try:\n            service = find_service()\n            if service is not None:\n                port, health = service\n                last = health\n                if (health.get(\"version\") == VERSION and\n                    health.get(\"backend_code_sha256\") == product[\"backend_code_sha256\"] and\n                    health.get(\"build_id\") == product[\"build_id\"] and\n                    health.get(\"pid\") != previous_pid):\n                    report.step(\"service-identity\", \"pass\", \"Live process matches packaged source\")\n                    return service\n        except Exception:\n            pass\n        time.sleep(1)\n    raise Blocked(\"Unable to identify a running packaged backend: \" + str(last))\n\n\ndef run_update_request(report, port, payload):\n    response = {}\n    error = []\n    done = threading.Event()\n    def worker():\n        try:\n            response.update(api(port, \"/api/update-selected\", payload, timeout=7200))\n        except BaseException as exc:\n            error.append(str(exc))\n        finally:\n            done.set()\n    thread = threading.Thread(target=worker, daemon=True)\n    thread.start()\n    while not done.wait(timeout=8):\n        try:\n            current = api(port, \"/api/progress\", timeout=5)\n            progress = current.get(\"progress\") or {}\n            print(\"עדכון:\", progress.get(\"phase\") or \"running\",\n                  progress.get(\"current_package\") or \"\", flush=True)\n        except Exception:\n            print(\"אין כרגע חיווי מהשירות; הבקשה לא נשלחת שוב.\", flush=True)\n    if error:\n        try:\n            journal = api(port, \"/api/update-requests/\" + payload[\"request_id\"])\n            report.data[\"request_state_after_disconnect\"] = journal\n            report.save()\n        except Exception:\n            pass\n        raise Blocked(\"Request status cannot be confirmed; do not retry mutation: \" + error[0])\n    return response\n\n\ndef chosen_actions(report, plan, pilot):\n    decisions = [d for d in plan.get(\"decisions\", [])\n                 if d.get(\"status\") == \"ready\"]\n    if pilot:\n        decisions = [d for d in decisions if d[\"logical_id\"] == pilot]\n    for idx, d in enumerate(decisions, 1):\n        print(f\"{idx}. {d['logical_id']}  {d['installed_version']} → \"\n              f\"{d['target_version']}  {d['current_provider']} → \"\n              f\"{d['target_provider']} ({d['action']})\")\n    iw = next((d for d in decisions\n               if d[\"logical_id\"] == \"include-what-you-use\" and\n               d[\"action\"] == \"migrate\"), None)\n    if not iw:\n        raise Blocked(\"IWYU migration is not ready; never pick a substitute pilot automatically\")\n    if pilot:\n        return [iw]\n    raw = input(\"מספרי הפעולות הרצויות, מופרדים בפסיק (ברירת מחדל: IWYU בלבד): \").strip()\n    if not raw:\n        return [iw]\n    try:\n        indices = {int(x.strip()) for x in raw.split(\",\")}\n    except ValueError as error:\n        raise Blocked(\"Invalid selection\") from error\n    if not indices or any(x < 1 or x > len(decisions) for x in indices):\n        raise Blocked(\"Invalid selection indices\")\n    return [d for index, d in enumerate(decisions, 1) if index in indices]\n\n\ndef verify_migration(report, service, decisions):\n    state = api(service[0], \"/api/state\")\n    report.data[\"after_inventory\"] = state\n    for decision in decisions:\n        if decision[\"action\"] != \"migrate\":\n            continue\n        source_id = decision[\"source_installation_id\"]\n        target_provider = decision[\"target_provider\"]\n        target_name = decision[\"selected_candidate\"][\"provider_names\"][0]\n        rows = state.get(\"packages\", [])\n        if any(x.get(\"installation_id\") == source_id and\n               not x.get(\"inventory_stale\") for x in rows):\n            raise Blocked(\"Source installation still appears in verified inventory\")\n        expected_id = \"macports:\" + target_name if target_provider == \"macports\" else \"pixi:\" + target_name\n        if not any(x.get(\"installation_id\") == expected_id and\n                   not x.get(\"inventory_stale\") for x in rows):\n            raise Blocked(\"Migrated provider installation is not verified\")\n    report.step(\"live-migration-state\", \"pass\", \"No synthetic old installation observed\")\n    return state\n\n\ndef perform_full(report, pilot):\n    prerequisites(report)\n    matched = isolated_checks(report)\n    product = package_application(report, matched)\n    previous = find_service()\n    check_idle(previous)\n    old_pid = previous[1][\"pid\"] if previous else None\n    install_packaged(report, previous)\n    command([\"/usr/bin/open\", str(APPLICATION)], report, \"open-new-application\", timeout=30)\n    live = wait_for_health(report, product, previous_pid=old_pid)\n    report.data[\"installed_service\"] = live[1]\n    report.save()\n    scanned = api(live[0], \"/api/check\", {}, timeout=1800)\n    report.data[\"before_inventory\"] = scanned.get(\"snapshot\", scanned)\n    plan_result = api(live[0], \"/api/update-plan\")\n    plan = plan_result.get(\"plan\")\n    if not isinstance(plan, dict):\n        raise Blocked(\"No immutable plan was produced by the installed application\")\n    report.data[\"displayed_plan\"] = plan\n    report.save()\n    selected = chosen_actions(report, plan, pilot)\n    approved = [{\"decision_id\": d[\"decision_id\"],\n                 \"material_fingerprint\": d[\"material_fingerprint\"]} for d in selected]\n    request = {\"request_id\": uuid.uuid4().hex, \"plan_id\": plan[\"id\"],\n               \"decisions\": approved}\n    report.data[\"request\"] = request\n    report.step(\"approval-required\", \"blocked\", \"No package will be changed before YES\")\n    chosen_names = \", \".join(d[\"logical_id\"] for d in selected)\n    if input(\"לאשר את הפעולות \" + chosen_names + \" עבור plan \" + plan[\"id\"] + \" ? הקלד YES: \").strip() != \"YES\":\n        raise Blocked(\"User did not approve the displayed operations\")\n    response = run_update_request(report, live[0], request)\n    report.data[\"mutation_response\"] = response\n    report.save()\n    if not response.get(\"ok\") or not all(x.get(\"ok\") for x in response.get(\"results\", [])):\n        raise RuntimeError(\"An approved update failed; examine its transaction journal\")\n    report.data[\"live_migration\"] = \"pass\"\n    report.save()\n    verify_migration(report, live, selected)\n    check_idle(find_service())\n    command([\"/usr/bin/osascript\", \"-e\",\n             'tell application id \"' + APP_ID + '\" to quit'], report,\n            \"restart-close-owned-app\", timeout=45)\n    deadline = time.time() + 45\n    while is_alive(live[1][\"pid\"]) and time.time() < deadline:\n        time.sleep(1)\n    if is_alive(live[1][\"pid\"]):\n        raise Blocked(\"Old app PID remains active; restart deferred\")\n    command([\"/usr/bin/open\", str(APPLICATION)], report, \"restart-open-app\", timeout=30)\n    restarted = wait_for_health(report, product, previous_pid=live[1][\"pid\"])\n    report.data[\"restarted_service\"] = restarted[1]\n    verify_migration(report, restarted, selected)\n    report.data[\"restart_verification\"] = \"pass\"\n    report.save()\n\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--checks\", action=\"store_true\")\n    parser.add_argument(\"--full\", action=\"store_true\")\n    parser.add_argument(\"--acceptance\", action=\"store_true\")\n    parser.add_argument(\"--pilot\", default=None)\n    args = parser.parse_args()\n    if not args.checks and not (args.full or args.acceptance):\n        parser.error(\"Use --checks or --full\")\n    if args.pilot and args.pilot != \"include-what-you-use\":\n        parser.error(\"Only the IWYU migration pilot is accepted automatically\")\n    report = Report(\"isolated_code_checks\" if args.checks else \"full_local_acceptance\")\n    code = 2\n    try:\n        if args.checks:\n            prerequisites(report)\n            isolated_checks(report, reuse=False)\n        else:\n            print(\"הפקודה עשויה להחליף את אפליקציית Mac Update Manager המקומית לפני אישור חבילות.\", flush=True)\n            perform_full(report, args.pilot)\n        code = 0\n        report.data[\"result\"] = \"pass\"\n    except Blocked as exc:\n        report.data.update(result=\"blocked\", error=str(exc))\n        code = 2\n    except (KeyboardInterrupt, Exception) as exc:\n        report.data.update(result=\"fail\", error=str(exc))\n        code = 1\n    finally:\n        report.data[\"finished_at\"] = time.time()\n        report.data[\"exit_code\"] = code\n        report.save()\n        print(\"דוח:\", report.dir, flush=True)\n    return code\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+    "package.json": "{\n  \"name\": \"brew-update-manager\",\n  \"version\": \"1.3.4\",\n  \"private\": true,\n  \"author\": \"Tzoharlary\",\n  \"license\": \"MIT\",\n  \"description\": \"macOS desktop app for Homebrew, MacPorts and managed tool updates\",\n  \"main\": \"electron/main.js\",\n  \"scripts\": {\n    \"start-app\": \"electron .\",\n    \"generate-icon\": \"/usr/local/bin/python3 tools/generate_app_icon.py\",\n    \"pack\": \"electron-builder --dir --publish never\",\n    \"build\": \"node tools/run-quick-build.js\",\n    \"build:release\": \"node tools/run-release-build.js\"\n  },\n  \"devDependencies\": {\n    \"electron\": \"35.1.5\",\n    \"electron-builder\": \"26.0.12\"\n  },\n  \"build\": {\n    \"appId\": \"com.tzoharlary.brewupdatemanager\",\n    \"productName\": \"Mac Update Manager\",\n    \"directories\": {\n      \"output\": \"dist\",\n      \"buildResources\": \"build\"\n    },\n    \"files\": [\n      \"electron/**/*\",\n      \"renderer/**/*\",\n      \"backend/**/*\",\n      \"tools/**/*\",\n      \"package.json\",\n      \"README.md\",\n      \"LICENSE\"\n    ],\n    \"asarUnpack\": [\n      \"backend/**\",\n      \"tools/**\"\n    ],\n    \"dmg\": {\n      \"writeUpdateInfo\": false\n    },\n    \"mac\": {\n      \"icon\": \"build/icon.icns\",\n      \"category\": \"public.app-category.utilities\",\n      \"target\": [\n        {\n          \"target\": \"dmg\",\n          \"arch\": [\n            \"x64\",\n            \"arm64\"\n          ]\n        }\n      ],\n      \"artifactName\": \"${productName}-${version}-${arch}.${ext}\",\n      \"hardenedRuntime\": false,\n      \"entitlements\": \"build/entitlements.mac.plist\",\n      \"entitlementsInherit\": \"build/entitlements.mac.plist\"\n    }\n  }\n}\n",
+    "package-lock.json": "{\n  \"name\": \"brew-update-manager\",\n  \"version\": \"1.3.4\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"name\": \"brew-update-manager\",\n      \"version\": \"1.3.4\",\n      \"devDependencies\": {\n        \"electron\": \"35.1.5\",\n        \"electron-builder\": \"26.0.12\"\n      }\n    },\n    \"node_modules/@develar/schema-utils\": {\n      \"version\": \"2.6.5\",\n      \"resolved\": \"https://registry.npmjs.org/@develar/schema-utils/-/schema-utils-2.6.5.tgz\",\n      \"integrity\": \"sha512-0cp4PsWQ/9avqTVMCtZ+GirikIA36ikvjtHweU4/j8yLtgObI0+JUPhYFScgwlteveGB1rt3Cm8UhN04XayDig==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ajv\": \"^6.12.0\",\n        \"ajv-keywords\": \"^3.4.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 8.9.0\"\n      },\n      \"funding\": {\n        \"type\": \"opencollective\",\n        \"url\": \"https://opencollective.com/webpack\"\n      }\n    },\n    \"node_modules/@electron/asar\": {\n      \"version\": \"3.2.18\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/asar/-/asar-3.2.18.tgz\",\n      \"integrity\": \"sha512-2XyvMe3N3Nrs8cV39IKELRHTYUWFKrmqqSY1U+GMlc0jvqjIVnoxhNd2H4JolWQncbJi1DCvb5TNxZuI2fEjWg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"commander\": \"^5.0.0\",\n        \"glob\": \"^7.1.6\",\n        \"minimatch\": \"^3.0.4\"\n      },\n      \"bin\": {\n        \"asar\": \"bin/asar.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10.12.0\"\n      }\n    },\n    \"node_modules/@electron/asar/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@electron/asar/node_modules/brace-expansion\": {\n      \"version\": \"1.1.13\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.13.tgz\",\n      \"integrity\": \"sha512-9ZLprWS6EENmhEOpjCYW2c8VkmOvckIJZfkr7rBW6dObmfgJ/L1GpSYW5Hpo9lDz4D1+n0Ckz8rU7FwHDQiG/w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\",\n        \"concat-map\": \"0.0.1\"\n      }\n    },\n    \"node_modules/@electron/asar/node_modules/minimatch\": {\n      \"version\": \"3.1.5\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz\",\n      \"integrity\": \"sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^1.1.7\"\n      },\n      \"engines\": {\n        \"node\": \"*\"\n      }\n    },\n    \"node_modules/@electron/fuses\": {\n      \"version\": \"1.8.0\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/fuses/-/fuses-1.8.0.tgz\",\n      \"integrity\": \"sha512-zx0EIq78WlY/lBb1uXlziZmDZI4ubcCXIMJ4uGjXzZW0nS19TjSPeXPAjzzTmKQlJUZm0SbmZhPKP7tuQ1SsEw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"chalk\": \"^4.1.1\",\n        \"fs-extra\": \"^9.0.1\",\n        \"minimist\": \"^1.2.5\"\n      },\n      \"bin\": {\n        \"electron-fuses\": \"dist/bin.js\"\n      }\n    },\n    \"node_modules/@electron/fuses/node_modules/fs-extra\": {\n      \"version\": \"9.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-9.1.0.tgz\",\n      \"integrity\": \"sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"at-least-node\": \"^1.0.0\",\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@electron/fuses/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/fuses/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/get\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/get/-/get-2.0.3.tgz\",\n      \"integrity\": \"sha512-Qkzpg2s9GnVV2I2BjRksUi43U5e6+zaQMcjoJy0C+C5oxaKl+fmckGDQFtRpZpZV0NQekuZZ+tGz7EA9TVnQtQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"^4.1.1\",\n        \"env-paths\": \"^2.2.0\",\n        \"fs-extra\": \"^8.1.0\",\n        \"got\": \"^11.8.5\",\n        \"progress\": \"^2.0.3\",\n        \"semver\": \"^6.2.0\",\n        \"sumchecker\": \"^3.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"optionalDependencies\": {\n        \"global-agent\": \"^3.0.0\"\n      }\n    },\n    \"node_modules/@electron/node-gyp\": {\n      \"version\": \"10.2.0-electron.1\",\n      \"resolved\": \"git+ssh://git@github.com/electron/node-gyp.git#06b29aafb7708acef8b3669835c8a7857ebc92d2\",\n      \"integrity\": \"sha512-lBSgDMQqt7QWMuIjS8zNAq5FI5o5RVBAcJUGWGI6GgoQITJt3msAkUrHp8YHj3RTVE+h70ndqMGqURjp3IfRyQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"env-paths\": \"^2.2.0\",\n        \"exponential-backoff\": \"^3.1.1\",\n        \"glob\": \"^8.1.0\",\n        \"graceful-fs\": \"^4.2.6\",\n        \"make-fetch-happen\": \"^10.2.1\",\n        \"nopt\": \"^6.0.0\",\n        \"proc-log\": \"^2.0.1\",\n        \"semver\": \"^7.3.5\",\n        \"tar\": \"^6.2.1\",\n        \"which\": \"^2.0.2\"\n      },\n      \"bin\": {\n        \"node-gyp\": \"bin/node-gyp.js\"\n      },\n      \"engines\": {\n        \"node\": \">=12.13.0\"\n      }\n    },\n    \"node_modules/@electron/node-gyp/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@electron/node-gyp/node_modules/brace-expansion\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.3.tgz\",\n      \"integrity\": \"sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/@electron/node-gyp/node_modules/glob\": {\n      \"version\": \"8.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/glob/-/glob-8.1.0.tgz\",\n      \"integrity\": \"sha512-r8hpEjiQEYlF2QU0df3dS+nxxSIreXQS1qRhMJM0Q5NDdR386C7jb7Hwwod8Fgiuex+k0GFjgft18yvxm5XoCQ==\",\n      \"deprecated\": \"Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"fs.realpath\": \"^1.0.0\",\n        \"inflight\": \"^1.0.4\",\n        \"inherits\": \"2\",\n        \"minimatch\": \"^5.0.1\",\n        \"once\": \"^1.3.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/@electron/node-gyp/node_modules/minimatch\": {\n      \"version\": \"5.1.9\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-5.1.9.tgz\",\n      \"integrity\": \"sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@electron/node-gyp/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@electron/notarize\": {\n      \"version\": \"2.5.0\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/notarize/-/notarize-2.5.0.tgz\",\n      \"integrity\": \"sha512-jNT8nwH1f9X5GEITXaQ8IF/KdskvIkOFfB2CvwumsveVidzpSc+mvhhTMdAGSYF3O+Nq49lJ7y+ssODRXu06+A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"^4.1.1\",\n        \"fs-extra\": \"^9.0.1\",\n        \"promise-retry\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/notarize/node_modules/fs-extra\": {\n      \"version\": \"9.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-9.1.0.tgz\",\n      \"integrity\": \"sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"at-least-node\": \"^1.0.0\",\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@electron/notarize/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/notarize/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/osx-sign\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/osx-sign/-/osx-sign-1.3.1.tgz\",\n      \"integrity\": \"sha512-BAfviURMHpmb1Yb50YbCxnOY0wfwaLXH5KJ4+80zS0gUkzDX3ec23naTlEqKsN+PwYn+a1cCzM7BJ4Wcd3sGzw==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"dependencies\": {\n        \"compare-version\": \"^0.1.2\",\n        \"debug\": \"^4.3.4\",\n        \"fs-extra\": \"^10.0.0\",\n        \"isbinaryfile\": \"^4.0.8\",\n        \"minimist\": \"^1.2.6\",\n        \"plist\": \"^3.0.5\"\n      },\n      \"bin\": {\n        \"electron-osx-flat\": \"bin/electron-osx-flat.js\",\n        \"electron-osx-sign\": \"bin/electron-osx-sign.js\"\n      },\n      \"engines\": {\n        \"node\": \">=12.0.0\"\n      }\n    },\n    \"node_modules/@electron/osx-sign/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/@electron/osx-sign/node_modules/isbinaryfile\": {\n      \"version\": \"4.0.10\",\n      \"resolved\": \"https://registry.npmjs.org/isbinaryfile/-/isbinaryfile-4.0.10.tgz\",\n      \"integrity\": \"sha512-iHrqe5shvBUcFbmZq9zOQHBoeOhZJu6RQGrDpBgenUm/Am+F3JM2MgQj+rK3Z601fzrL5gLZWtAPH2OBaSVcyw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 8.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/gjtorikian/\"\n      }\n    },\n    \"node_modules/@electron/osx-sign/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/osx-sign/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/rebuild\": {\n      \"version\": \"3.7.0\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/rebuild/-/rebuild-3.7.0.tgz\",\n      \"integrity\": \"sha512-VW++CNSlZwMYP7MyXEbrKjpzEwhB5kDNbzGtiPEjwYysqyTCF+YbNJ210Dj3AjWsGSV4iEEwNkmJN9yGZmVvmw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@electron/node-gyp\": \"git+https://github.com/electron/node-gyp.git#06b29aafb7708acef8b3669835c8a7857ebc92d2\",\n        \"@malept/cross-spawn-promise\": \"^2.0.0\",\n        \"chalk\": \"^4.0.0\",\n        \"debug\": \"^4.1.1\",\n        \"detect-libc\": \"^2.0.1\",\n        \"fs-extra\": \"^10.0.0\",\n        \"got\": \"^11.7.0\",\n        \"node-abi\": \"^3.45.0\",\n        \"node-api-version\": \"^0.2.0\",\n        \"ora\": \"^5.1.0\",\n        \"read-binary-file-arch\": \"^1.0.6\",\n        \"semver\": \"^7.3.5\",\n        \"tar\": \"^6.0.5\",\n        \"yargs\": \"^17.0.1\"\n      },\n      \"bin\": {\n        \"electron-rebuild\": \"lib/cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=12.13.0\"\n      }\n    },\n    \"node_modules/@electron/rebuild/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/@electron/rebuild/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/rebuild/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@electron/rebuild/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/universal\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/universal/-/universal-2.0.1.tgz\",\n      \"integrity\": \"sha512-fKpv9kg4SPmt+hY7SVBnIYULE9QJl8L3sCfcBsnqbJwwBwAeTLokJ9TRt9y7bK0JAzIW2y78TVVjvnQEms/yyA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@electron/asar\": \"^3.2.7\",\n        \"@malept/cross-spawn-promise\": \"^2.0.0\",\n        \"debug\": \"^4.3.1\",\n        \"dir-compare\": \"^4.2.0\",\n        \"fs-extra\": \"^11.1.1\",\n        \"minimatch\": \"^9.0.3\",\n        \"plist\": \"^3.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=16.4\"\n      }\n    },\n    \"node_modules/@electron/universal/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@electron/universal/node_modules/brace-expansion\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.3.tgz\",\n      \"integrity\": \"sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/@electron/universal/node_modules/fs-extra\": {\n      \"version\": \"11.3.4\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-11.3.4.tgz\",\n      \"integrity\": \"sha512-CTXd6rk/M3/ULNQj8FBqBWHYBVYybQ3VPBw0xGKFe3tuH7ytT6ACnvzpIQ3UZtB8yvUKC2cXn1a+x+5EVQLovA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=14.14\"\n      }\n    },\n    \"node_modules/@electron/universal/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/universal/node_modules/minimatch\": {\n      \"version\": \"9.0.9\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n      \"integrity\": \"sha512-OBwBN9AL4dqmETlpS2zasx+vTeWclWzkblfZk7KTA5j3jeOONz/tRCnZomUyvNg83wL5Zv9Ss6HMJXAgL8R2Yg==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^2.0.2\"\n      },\n      \"engines\": {\n        \"node\": \">=16 || 14 >=14.17\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/@electron/universal/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@electron/windows-sign\": {\n      \"version\": \"1.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/@electron/windows-sign/-/windows-sign-1.2.2.tgz\",\n      \"integrity\": \"sha512-dfZeox66AvdPtb2lD8OsIIQh12Tp0GNCRUDfBHIKGpbmopZto2/A8nSpYYLoedPIHpqkeblZ/k8OV0Gy7PYuyQ==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"optional\": true,\n      \"peer\": true,\n      \"dependencies\": {\n        \"cross-dirname\": \"^0.1.0\",\n        \"debug\": \"^4.3.4\",\n        \"fs-extra\": \"^11.1.1\",\n        \"minimist\": \"^1.2.8\",\n        \"postject\": \"^1.0.0-alpha.6\"\n      },\n      \"bin\": {\n        \"electron-windows-sign\": \"bin/electron-windows-sign.js\"\n      },\n      \"engines\": {\n        \"node\": \">=14.14\"\n      }\n    },\n    \"node_modules/@electron/windows-sign/node_modules/fs-extra\": {\n      \"version\": \"11.3.4\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-11.3.4.tgz\",\n      \"integrity\": \"sha512-CTXd6rk/M3/ULNQj8FBqBWHYBVYybQ3VPBw0xGKFe3tuH7ytT6ACnvzpIQ3UZtB8yvUKC2cXn1a+x+5EVQLovA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true,\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=14.14\"\n      }\n    },\n    \"node_modules/@electron/windows-sign/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true,\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@electron/windows-sign/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true,\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@gar/promisify\": {\n      \"version\": \"1.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/@gar/promisify/-/promisify-1.1.3.tgz\",\n      \"integrity\": \"sha512-k2Ty1JcVojjJFwrg/ThKi2ujJ7XNLYaFGNB/bWT9wGR+oSMJHMa5w+CUq6p/pVrKeNNgA7pCqEcjSnHVoqJQFw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@isaacs/cliui\": {\n      \"version\": \"8.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/@isaacs/cliui/-/cliui-8.0.2.tgz\",\n      \"integrity\": \"sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"string-width\": \"^5.1.2\",\n        \"string-width-cjs\": \"npm:string-width@^4.2.0\",\n        \"strip-ansi\": \"^7.0.1\",\n        \"strip-ansi-cjs\": \"npm:strip-ansi@^6.0.1\",\n        \"wrap-ansi\": \"^8.1.0\",\n        \"wrap-ansi-cjs\": \"npm:wrap-ansi@^7.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/@isaacs/cliui/node_modules/ansi-regex\": {\n      \"version\": \"6.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.2.2.tgz\",\n      \"integrity\": \"sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/ansi-regex?sponsor=1\"\n      }\n    },\n    \"node_modules/@isaacs/cliui/node_modules/ansi-styles\": {\n      \"version\": \"6.2.3\",\n      \"resolved\": \"https://registry.npmjs.org/ansi-styles/-/ansi-styles-6.2.3.tgz\",\n      \"integrity\": \"sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/ansi-styles?sponsor=1\"\n      }\n    },\n    \"node_modules/@isaacs/cliui/node_modules/emoji-regex\": {\n      \"version\": \"9.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/emoji-regex/-/emoji-regex-9.2.2.tgz\",\n      \"integrity\": \"sha512-L18DaJsXSUk2+42pv8mLs5jJT2hqFkFE4j21wOmgbUqsZ2hL72NsUU785g9RXgo3s0ZNgVl42TiHp3ZtOv/Vyg==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@isaacs/cliui/node_modules/string-width\": {\n      \"version\": \"5.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/string-width/-/string-width-5.1.2.tgz\",\n      \"integrity\": \"sha512-HnLOCR3vjcY8beoNLtcjZ5/nxn2afmME6lhrDrebokqMap+XbeW8n9TXpPDOqdGK5qcI3oT0GKTW6wC7EMiVqA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"eastasianwidth\": \"^0.2.0\",\n        \"emoji-regex\": \"^9.2.2\",\n        \"strip-ansi\": \"^7.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/@isaacs/cliui/node_modules/strip-ansi\": {\n      \"version\": \"7.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.2.0.tgz\",\n      \"integrity\": \"sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-regex\": \"^6.2.2\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/strip-ansi?sponsor=1\"\n      }\n    },\n    \"node_modules/@isaacs/cliui/node_modules/wrap-ansi\": {\n      \"version\": \"8.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-8.1.0.tgz\",\n      \"integrity\": \"sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-styles\": \"^6.1.0\",\n        \"string-width\": \"^5.0.1\",\n        \"strip-ansi\": \"^7.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/wrap-ansi?sponsor=1\"\n      }\n    },\n    \"node_modules/@malept/cross-spawn-promise\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/@malept/cross-spawn-promise/-/cross-spawn-promise-2.0.0.tgz\",\n      \"integrity\": \"sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"individual\",\n          \"url\": \"https://github.com/sponsors/malept\"\n        },\n        {\n          \"type\": \"tidelift\",\n          \"url\": \"https://tidelift.com/subscription/pkg/npm-.malept-cross-spawn-promise?utm_medium=referral&utm_source=npm_fund\"\n        }\n      ],\n      \"license\": \"Apache-2.0\",\n      \"dependencies\": {\n        \"cross-spawn\": \"^7.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 12.13.0\"\n      }\n    },\n    \"node_modules/@malept/flatpak-bundler\": {\n      \"version\": \"0.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/@malept/flatpak-bundler/-/flatpak-bundler-0.4.0.tgz\",\n      \"integrity\": \"sha512-9QOtNffcOF/c1seMCDnjckb3R9WHcG34tky+FHpNKKCW0wc/scYLwMtO+ptyGUfMW0/b/n4qRiALlaFHc9Oj7Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"^4.1.1\",\n        \"fs-extra\": \"^9.0.0\",\n        \"lodash\": \"^4.17.15\",\n        \"tmp-promise\": \"^3.0.2\"\n      },\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@malept/flatpak-bundler/node_modules/fs-extra\": {\n      \"version\": \"9.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-9.1.0.tgz\",\n      \"integrity\": \"sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"at-least-node\": \"^1.0.0\",\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@malept/flatpak-bundler/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/@malept/flatpak-bundler/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/@npmcli/fs\": {\n      \"version\": \"2.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/@npmcli/fs/-/fs-2.1.2.tgz\",\n      \"integrity\": \"sha512-yOJKRvohFOaLqipNtwYB9WugyZKhC/DZC4VYPmpaCzDBrA8YpK3qHZ8/HGscMnE4GqbkLNuVcCnxkeQEdGt6LQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"@gar/promisify\": \"^1.1.3\",\n        \"semver\": \"^7.3.5\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/@npmcli/fs/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@npmcli/move-file\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/@npmcli/move-file/-/move-file-2.0.1.tgz\",\n      \"integrity\": \"sha512-mJd2Z5TjYWq/ttPLLGqArdtnC74J6bOzg4rMDnN+p1xTacZ2yPRCk2y0oSWQtygLR9YVQXgOcONrwtnk3JupxQ==\",\n      \"deprecated\": \"This functionality has been moved to @npmcli/fs\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"mkdirp\": \"^1.0.4\",\n        \"rimraf\": \"^3.0.2\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/@pkgjs/parseargs\": {\n      \"version\": \"0.11.0\",\n      \"resolved\": \"https://registry.npmjs.org/@pkgjs/parseargs/-/parseargs-0.11.0.tgz\",\n      \"integrity\": \"sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">=14\"\n      }\n    },\n    \"node_modules/@sindresorhus/is\": {\n      \"version\": \"4.6.0\",\n      \"resolved\": \"https://registry.npmjs.org/@sindresorhus/is/-/is-4.6.0.tgz\",\n      \"integrity\": \"sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sindresorhus/is?sponsor=1\"\n      }\n    },\n    \"node_modules/@szmarczak/http-timer\": {\n      \"version\": \"4.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/@szmarczak/http-timer/-/http-timer-4.0.6.tgz\",\n      \"integrity\": \"sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"defer-to-connect\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/@tootallnate/once\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/@tootallnate/once/-/once-2.0.0.tgz\",\n      \"integrity\": \"sha512-XCuKFP5PS55gnMVu3dty8KPatLqUoy/ZYzDzAGCQ8JNFCkLXzmI7vNHCR+XpbZaMWQK/vQubr7PkYq8g470J/A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10\"\n      }\n    },\n    \"node_modules/@types/cacheable-request\": {\n      \"version\": \"6.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/@types/cacheable-request/-/cacheable-request-6.0.3.tgz\",\n      \"integrity\": \"sha512-IQ3EbTzGxIigb1I3qPZc1rWJnH0BmSKv5QYTalEwweFvyBDLSAe24zP0le/hyi7ecGfZVlIVAg4BZqb8WBwKqw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/http-cache-semantics\": \"*\",\n        \"@types/keyv\": \"^3.1.4\",\n        \"@types/node\": \"*\",\n        \"@types/responselike\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/@types/debug\": {\n      \"version\": \"4.1.13\",\n      \"resolved\": \"https://registry.npmjs.org/@types/debug/-/debug-4.1.13.tgz\",\n      \"integrity\": \"sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/ms\": \"*\"\n      }\n    },\n    \"node_modules/@types/fs-extra\": {\n      \"version\": \"9.0.13\",\n      \"resolved\": \"https://registry.npmjs.org/@types/fs-extra/-/fs-extra-9.0.13.tgz\",\n      \"integrity\": \"sha512-nEnwB++1u5lVDM2UI4c1+5R+FYaKfaAzS4OococimjVm3nQw3TuzH5UNsocrcTBbhnerblyHj4A49qXbIiZdpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/node\": \"*\"\n      }\n    },\n    \"node_modules/@types/http-cache-semantics\": {\n      \"version\": \"4.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/@types/http-cache-semantics/-/http-cache-semantics-4.2.0.tgz\",\n      \"integrity\": \"sha512-L3LgimLHXtGkWikKnsPg0/VFx9OGZaC+eN1u4r+OB1XRqH3meBIAVC2zr1WdMH+RHmnRkqliQAOHNJ/E0j/e0Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@types/keyv\": {\n      \"version\": \"3.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/@types/keyv/-/keyv-3.1.4.tgz\",\n      \"integrity\": \"sha512-BQ5aZNSCpj7D6K2ksrRCTmKRLEpnPvWDiLPfoGyhZ++8YtiK9d/3DBKPJgry359X/P1PfruyYwvnvwFjuEiEIg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/node\": \"*\"\n      }\n    },\n    \"node_modules/@types/ms\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz\",\n      \"integrity\": \"sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/@types/node\": {\n      \"version\": \"22.19.15\",\n      \"resolved\": \"https://registry.npmjs.org/@types/node/-/node-22.19.15.tgz\",\n      \"integrity\": \"sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"undici-types\": \"~6.21.0\"\n      }\n    },\n    \"node_modules/@types/plist\": {\n      \"version\": \"3.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/@types/plist/-/plist-3.0.5.tgz\",\n      \"integrity\": \"sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"@types/node\": \"*\",\n        \"xmlbuilder\": \">=11.0.1\"\n      }\n    },\n    \"node_modules/@types/responselike\": {\n      \"version\": \"1.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/@types/responselike/-/responselike-1.0.3.tgz\",\n      \"integrity\": \"sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/node\": \"*\"\n      }\n    },\n    \"node_modules/@types/verror\": {\n      \"version\": \"1.10.11\",\n      \"resolved\": \"https://registry.npmjs.org/@types/verror/-/verror-1.10.11.tgz\",\n      \"integrity\": \"sha512-RlDm9K7+o5stv0Co8i8ZRGxDbrTxhJtgjqjFyVh/tXQyl/rYtTKlnTvZ88oSTeYREWurwx20Js4kTuKCsFkUtg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/@types/yauzl\": {\n      \"version\": \"2.10.3\",\n      \"resolved\": \"https://registry.npmjs.org/@types/yauzl/-/yauzl-2.10.3.tgz\",\n      \"integrity\": \"sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"@types/node\": \"*\"\n      }\n    },\n    \"node_modules/@xmldom/xmldom\": {\n      \"version\": \"0.8.12\",\n      \"resolved\": \"https://registry.npmjs.org/@xmldom/xmldom/-/xmldom-0.8.12.tgz\",\n      \"integrity\": \"sha512-9k/gHF6n/pAi/9tqr3m3aqkuiNosYTurLLUtc7xQ9sxB/wm7WPygCv8GYa6mS0fLJEHhqMC1ATYhz++U/lRHqg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10.0.0\"\n      }\n    },\n    \"node_modules/7zip-bin\": {\n      \"version\": \"5.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/7zip-bin/-/7zip-bin-5.2.0.tgz\",\n      \"integrity\": \"sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/abbrev\": {\n      \"version\": \"1.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz\",\n      \"integrity\": \"sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/agent-base\": {\n      \"version\": \"7.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz\",\n      \"integrity\": \"sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/agentkeepalive\": {\n      \"version\": \"4.6.0\",\n      \"resolved\": \"https://registry.npmjs.org/agentkeepalive/-/agentkeepalive-4.6.0.tgz\",\n      \"integrity\": \"sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"humanize-ms\": \"^1.2.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 8.0.0\"\n      }\n    },\n    \"node_modules/aggregate-error\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/aggregate-error/-/aggregate-error-3.1.0.tgz\",\n      \"integrity\": \"sha512-4I7Td01quW/RpocfNayFdFVk1qSuoh0E7JrbRJ16nH01HhKFQ88INq9Sd+nd72zqRySlr9BmDA8xlEJ6vJMrYA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"clean-stack\": \"^2.0.0\",\n        \"indent-string\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/ajv\": {\n      \"version\": \"6.14.0\",\n      \"resolved\": \"https://registry.npmjs.org/ajv/-/ajv-6.14.0.tgz\",\n      \"integrity\": \"sha512-IWrosm/yrn43eiKqkfkHis7QioDleaXQHdDVPKg0FSwwd/DuvyX79TZnFOnYpB7dcsFAMmtFztZuXPDvSePkFw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"fast-deep-equal\": \"^3.1.1\",\n        \"fast-json-stable-stringify\": \"^2.0.0\",\n        \"json-schema-traverse\": \"^0.4.1\",\n        \"uri-js\": \"^4.2.2\"\n      },\n      \"funding\": {\n        \"type\": \"github\",\n        \"url\": \"https://github.com/sponsors/epoberezkin\"\n      }\n    },\n    \"node_modules/ajv-keywords\": {\n      \"version\": \"3.5.2\",\n      \"resolved\": \"https://registry.npmjs.org/ajv-keywords/-/ajv-keywords-3.5.2.tgz\",\n      \"integrity\": \"sha512-5p6WTN0DdTGVQk6VjcEju19IgaHudalcfabD7yhDGeA6bcQnmL+CpveLJq/3hvfwd1aof6L386Ougkx6RfyMIQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"peerDependencies\": {\n        \"ajv\": \"^6.9.1\"\n      }\n    },\n    \"node_modules/ansi-regex\": {\n      \"version\": \"5.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz\",\n      \"integrity\": \"sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/ansi-styles\": {\n      \"version\": \"4.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz\",\n      \"integrity\": \"sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"color-convert\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/ansi-styles?sponsor=1\"\n      }\n    },\n    \"node_modules/app-builder-bin\": {\n      \"version\": \"5.0.0-alpha.12\",\n      \"resolved\": \"https://registry.npmjs.org/app-builder-bin/-/app-builder-bin-5.0.0-alpha.12.tgz\",\n      \"integrity\": \"sha512-j87o0j6LqPL3QRr8yid6c+Tt5gC7xNfYo6uQIQkorAC6MpeayVMZrEDzKmJJ/Hlv7EnOQpaRm53k6ktDYZyB6w==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/app-builder-lib\": {\n      \"version\": \"26.0.12\",\n      \"resolved\": \"https://registry.npmjs.org/app-builder-lib/-/app-builder-lib-26.0.12.tgz\",\n      \"integrity\": \"sha512-+/CEPH1fVKf6HowBUs6LcAIoRcjeqgvAeoSE+cl7Y7LndyQ9ViGPYibNk7wmhMHzNgHIuIbw4nWADPO+4mjgWw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@develar/schema-utils\": \"~2.6.5\",\n        \"@electron/asar\": \"3.2.18\",\n        \"@electron/fuses\": \"^1.8.0\",\n        \"@electron/notarize\": \"2.5.0\",\n        \"@electron/osx-sign\": \"1.3.1\",\n        \"@electron/rebuild\": \"3.7.0\",\n        \"@electron/universal\": \"2.0.1\",\n        \"@malept/flatpak-bundler\": \"^0.4.0\",\n        \"@types/fs-extra\": \"9.0.13\",\n        \"async-exit-hook\": \"^2.0.1\",\n        \"builder-util\": \"26.0.11\",\n        \"builder-util-runtime\": \"9.3.1\",\n        \"chromium-pickle-js\": \"^0.2.0\",\n        \"config-file-ts\": \"0.2.8-rc1\",\n        \"debug\": \"^4.3.4\",\n        \"dotenv\": \"^16.4.5\",\n        \"dotenv-expand\": \"^11.0.6\",\n        \"ejs\": \"^3.1.8\",\n        \"electron-publish\": \"26.0.11\",\n        \"fs-extra\": \"^10.1.0\",\n        \"hosted-git-info\": \"^4.1.0\",\n        \"is-ci\": \"^3.0.0\",\n        \"isbinaryfile\": \"^5.0.0\",\n        \"js-yaml\": \"^4.1.0\",\n        \"json5\": \"^2.2.3\",\n        \"lazy-val\": \"^1.0.5\",\n        \"minimatch\": \"^10.0.0\",\n        \"plist\": \"3.1.0\",\n        \"resedit\": \"^1.7.0\",\n        \"semver\": \"^7.3.8\",\n        \"tar\": \"^6.1.12\",\n        \"temp-file\": \"^3.4.0\",\n        \"tiny-async-pool\": \"1.3.0\"\n      },\n      \"engines\": {\n        \"node\": \">=14.0.0\"\n      },\n      \"peerDependencies\": {\n        \"dmg-builder\": \"26.0.12\",\n        \"electron-builder-squirrel-windows\": \"26.0.12\"\n      }\n    },\n    \"node_modules/app-builder-lib/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/app-builder-lib/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/app-builder-lib/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/app-builder-lib/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/argparse\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz\",\n      \"integrity\": \"sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==\",\n      \"dev\": true,\n      \"license\": \"Python-2.0\"\n    },\n    \"node_modules/assert-plus\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/assert-plus/-/assert-plus-1.0.0.tgz\",\n      \"integrity\": \"sha512-NfJ4UzBCcQGLDlQq7nHxH+tv3kyZ0hHQqF5BO6J7tNJeP5do1llPr8dZ8zHonfhAu0PHAdMkSo+8o0wxg9lZWw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">=0.8\"\n      }\n    },\n    \"node_modules/astral-regex\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/astral-regex/-/astral-regex-2.0.0.tgz\",\n      \"integrity\": \"sha512-Z7tMw1ytTXt5jqMcOP+OQteU1VuNK9Y02uuJtKQ1Sv69jXQKKg5cibLwGJow8yzZP+eAc18EmLGPal0bp36rvQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/async\": {\n      \"version\": \"3.2.6\",\n      \"resolved\": \"https://registry.npmjs.org/async/-/async-3.2.6.tgz\",\n      \"integrity\": \"sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/async-exit-hook\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/async-exit-hook/-/async-exit-hook-2.0.1.tgz\",\n      \"integrity\": \"sha512-NW2cX8m1Q7KPA7a5M2ULQeZ2wR5qI5PAbw5L0UOMxdioVk9PMZ0h1TmyZEkPYrCvYjDlFICusOu1dlEKAAeXBw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.12.0\"\n      }\n    },\n    \"node_modules/asynckit\": {\n      \"version\": \"0.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz\",\n      \"integrity\": \"sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/at-least-node\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/at-least-node/-/at-least-node-1.0.0.tgz\",\n      \"integrity\": \"sha512-+q/t7Ekv1EDY2l6Gda6LLiX14rU9TV20Wa3ofeQmwPFZbOMo9DXrLbOjFaaclkXKWidIaopwAObQDqwWtGUjqg==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">= 4.0.0\"\n      }\n    },\n    \"node_modules/balanced-match\": {\n      \"version\": \"4.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz\",\n      \"integrity\": \"sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \"18 || 20 || >=22\"\n      }\n    },\n    \"node_modules/base64-js\": {\n      \"version\": \"1.5.1\",\n      \"resolved\": \"https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz\",\n      \"integrity\": \"sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"github\",\n          \"url\": \"https://github.com/sponsors/feross\"\n        },\n        {\n          \"type\": \"patreon\",\n          \"url\": \"https://www.patreon.com/feross\"\n        },\n        {\n          \"type\": \"consulting\",\n          \"url\": \"https://feross.org/support\"\n        }\n      ],\n      \"license\": \"MIT\"\n    },\n    \"node_modules/bl\": {\n      \"version\": \"4.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/bl/-/bl-4.1.0.tgz\",\n      \"integrity\": \"sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"buffer\": \"^5.5.0\",\n        \"inherits\": \"^2.0.4\",\n        \"readable-stream\": \"^3.4.0\"\n      }\n    },\n    \"node_modules/boolean\": {\n      \"version\": \"3.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/boolean/-/boolean-3.2.0.tgz\",\n      \"integrity\": \"sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==\",\n      \"deprecated\": \"Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/brace-expansion\": {\n      \"version\": \"5.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.5.tgz\",\n      \"integrity\": \"sha512-VZznLgtwhn+Mact9tfiwx64fA9erHH/MCXEUfB/0bX/6Fz6ny5EGTXYltMocqg4xFAQZtnO3DHWWXi8RiuN7cQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^4.0.2\"\n      },\n      \"engines\": {\n        \"node\": \"18 || 20 || >=22\"\n      }\n    },\n    \"node_modules/buffer\": {\n      \"version\": \"5.7.1\",\n      \"resolved\": \"https://registry.npmjs.org/buffer/-/buffer-5.7.1.tgz\",\n      \"integrity\": \"sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"github\",\n          \"url\": \"https://github.com/sponsors/feross\"\n        },\n        {\n          \"type\": \"patreon\",\n          \"url\": \"https://www.patreon.com/feross\"\n        },\n        {\n          \"type\": \"consulting\",\n          \"url\": \"https://feross.org/support\"\n        }\n      ],\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"base64-js\": \"^1.3.1\",\n        \"ieee754\": \"^1.1.13\"\n      }\n    },\n    \"node_modules/buffer-crc32\": {\n      \"version\": \"0.2.13\",\n      \"resolved\": \"https://registry.npmjs.org/buffer-crc32/-/buffer-crc32-0.2.13.tgz\",\n      \"integrity\": \"sha512-VO9Ht/+p3SN7SKWqcrgEzjGbRSJYTx+Q1pTQC0wrWqHx0vpJraQ6GtHx8tvcg1rlK1byhU5gccxgOgj7B0TDkQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \"*\"\n      }\n    },\n    \"node_modules/buffer-from\": {\n      \"version\": \"1.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz\",\n      \"integrity\": \"sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/builder-util\": {\n      \"version\": \"26.0.11\",\n      \"resolved\": \"https://registry.npmjs.org/builder-util/-/builder-util-26.0.11.tgz\",\n      \"integrity\": \"sha512-xNjXfsldUEe153h1DraD0XvDOpqGR0L5eKFkdReB7eFW5HqysDZFfly4rckda6y9dF39N3pkPlOblcfHKGw+uA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/debug\": \"^4.1.6\",\n        \"7zip-bin\": \"~5.2.0\",\n        \"app-builder-bin\": \"5.0.0-alpha.12\",\n        \"builder-util-runtime\": \"9.3.1\",\n        \"chalk\": \"^4.1.2\",\n        \"cross-spawn\": \"^7.0.6\",\n        \"debug\": \"^4.3.4\",\n        \"fs-extra\": \"^10.1.0\",\n        \"http-proxy-agent\": \"^7.0.0\",\n        \"https-proxy-agent\": \"^7.0.0\",\n        \"is-ci\": \"^3.0.0\",\n        \"js-yaml\": \"^4.1.0\",\n        \"sanitize-filename\": \"^1.6.3\",\n        \"source-map-support\": \"^0.5.19\",\n        \"stat-mode\": \"^1.0.0\",\n        \"temp-file\": \"^3.4.0\",\n        \"tiny-async-pool\": \"1.3.0\"\n      }\n    },\n    \"node_modules/builder-util-runtime\": {\n      \"version\": \"9.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/builder-util-runtime/-/builder-util-runtime-9.3.1.tgz\",\n      \"integrity\": \"sha512-2/egrNDDnRaxVwK3A+cJq6UOlqOdedGA7JPqCeJjN2Zjk1/QB/6QUi3b714ScIGS7HafFXTyzJEOr5b44I3kvQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"^4.3.4\",\n        \"sax\": \"^1.2.4\"\n      },\n      \"engines\": {\n        \"node\": \">=12.0.0\"\n      }\n    },\n    \"node_modules/builder-util/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/builder-util/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/builder-util/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/cacache\": {\n      \"version\": \"16.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/cacache/-/cacache-16.1.3.tgz\",\n      \"integrity\": \"sha512-/+Emcj9DAXxX4cwlLmRI9c166RuL3w30zp4R7Joiv2cQTtTtA+jeuCAjH3ZlGnYS3tKENSrKhAzVVP9GVyzeYQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"@npmcli/fs\": \"^2.1.0\",\n        \"@npmcli/move-file\": \"^2.0.0\",\n        \"chownr\": \"^2.0.0\",\n        \"fs-minipass\": \"^2.1.0\",\n        \"glob\": \"^8.0.1\",\n        \"infer-owner\": \"^1.0.4\",\n        \"lru-cache\": \"^7.7.1\",\n        \"minipass\": \"^3.1.6\",\n        \"minipass-collect\": \"^1.0.2\",\n        \"minipass-flush\": \"^1.0.5\",\n        \"minipass-pipeline\": \"^1.2.4\",\n        \"mkdirp\": \"^1.0.4\",\n        \"p-map\": \"^4.0.0\",\n        \"promise-inflight\": \"^1.0.1\",\n        \"rimraf\": \"^3.0.2\",\n        \"ssri\": \"^9.0.0\",\n        \"tar\": \"^6.1.11\",\n        \"unique-filename\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/cacache/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/cacache/node_modules/brace-expansion\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.3.tgz\",\n      \"integrity\": \"sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/cacache/node_modules/glob\": {\n      \"version\": \"8.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/glob/-/glob-8.1.0.tgz\",\n      \"integrity\": \"sha512-r8hpEjiQEYlF2QU0df3dS+nxxSIreXQS1qRhMJM0Q5NDdR386C7jb7Hwwod8Fgiuex+k0GFjgft18yvxm5XoCQ==\",\n      \"deprecated\": \"Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"fs.realpath\": \"^1.0.0\",\n        \"inflight\": \"^1.0.4\",\n        \"inherits\": \"2\",\n        \"minimatch\": \"^5.0.1\",\n        \"once\": \"^1.3.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/cacache/node_modules/lru-cache\": {\n      \"version\": \"7.18.3\",\n      \"resolved\": \"https://registry.npmjs.org/lru-cache/-/lru-cache-7.18.3.tgz\",\n      \"integrity\": \"sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/cacache/node_modules/minimatch\": {\n      \"version\": \"5.1.9\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-5.1.9.tgz\",\n      \"integrity\": \"sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/cacheable-lookup\": {\n      \"version\": \"5.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/cacheable-lookup/-/cacheable-lookup-5.0.4.tgz\",\n      \"integrity\": \"sha512-2/kNscPhpcxrOigMZzbiWF7dz8ilhb/nIHU3EyZiXWXpeq/au8qJ8VhdftMkty3n7Gj6HIGalQG8oiBNB3AJgA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10.6.0\"\n      }\n    },\n    \"node_modules/cacheable-request\": {\n      \"version\": \"7.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/cacheable-request/-/cacheable-request-7.0.4.tgz\",\n      \"integrity\": \"sha512-v+p6ongsrp0yTGbJXjgxPow2+DL93DASP4kXCDKb8/bwRtt9OEF3whggkkDkGNzgcWy2XaF4a8nZglC7uElscg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"clone-response\": \"^1.0.2\",\n        \"get-stream\": \"^5.1.0\",\n        \"http-cache-semantics\": \"^4.0.0\",\n        \"keyv\": \"^4.0.0\",\n        \"lowercase-keys\": \"^2.0.0\",\n        \"normalize-url\": \"^6.0.1\",\n        \"responselike\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/call-bind-apply-helpers\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz\",\n      \"integrity\": \"sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"es-errors\": \"^1.3.0\",\n        \"function-bind\": \"^1.1.2\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/chalk\": {\n      \"version\": \"4.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz\",\n      \"integrity\": \"sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-styles\": \"^4.1.0\",\n        \"supports-color\": \"^7.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/chalk?sponsor=1\"\n      }\n    },\n    \"node_modules/chownr\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/chownr/-/chownr-2.0.0.tgz\",\n      \"integrity\": \"sha512-bIomtDF5KGpdogkLd9VspvFzk9KfpyyGlS8YFVZl7TGPBHL5snIOnxeshwVgPteQ9b4Eydl+pVbIyE1DcvCWgQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/chromium-pickle-js\": {\n      \"version\": \"0.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/chromium-pickle-js/-/chromium-pickle-js-0.2.0.tgz\",\n      \"integrity\": \"sha512-1R5Fho+jBq0DDydt+/vHWj5KJNJCKdARKOCwZUen84I5BreWoLqRLANH1U87eJy1tiASPtMnGqJJq0ZsLoRPOw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/ci-info\": {\n      \"version\": \"3.9.0\",\n      \"resolved\": \"https://registry.npmjs.org/ci-info/-/ci-info-3.9.0.tgz\",\n      \"integrity\": \"sha512-NIxF55hv4nSqQswkAeiOi1r83xy8JldOFDTWiug55KBu9Jnblncd2U6ViHmYgHf01TPZS77NJBhBMKdWj9HQMQ==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"github\",\n          \"url\": \"https://github.com/sponsors/sibiraj-s\"\n        }\n      ],\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/clean-stack\": {\n      \"version\": \"2.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/clean-stack/-/clean-stack-2.2.0.tgz\",\n      \"integrity\": \"sha512-4diC9HaTE+KRAMWhDhrGOECgWZxoevMc5TlkObMqNSsVU62PYzXZ/SMTjzyGAFF1YusgxGcSWTEXBhp0CPwQ1A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/cli-cursor\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/cli-cursor/-/cli-cursor-3.1.0.tgz\",\n      \"integrity\": \"sha512-I/zHAwsKf9FqGoXM4WWRACob9+SNukZTd94DWF57E4toouRulbCxcUh6RKUEOQlYTHJnzkPMySvPNaaSLNfLZw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"restore-cursor\": \"^3.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/cli-spinners\": {\n      \"version\": \"2.9.2\",\n      \"resolved\": \"https://registry.npmjs.org/cli-spinners/-/cli-spinners-2.9.2.tgz\",\n      \"integrity\": \"sha512-ywqV+5MmyL4E7ybXgKys4DugZbX0FC6LnwrhjuykIjnK9k8OQacQ7axGKnjDXWNhns0xot3bZI5h55H8yo9cJg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/cli-truncate\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/cli-truncate/-/cli-truncate-2.1.0.tgz\",\n      \"integrity\": \"sha512-n8fOixwDD6b/ObinzTrp1ZKFzbgvKZvuz/TvejnLn1aQfC6r52XEx85FmuC+3HI+JM7coBRXUvNqEU2PHVrHpg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"slice-ansi\": \"^3.0.0\",\n        \"string-width\": \"^4.2.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/cliui\": {\n      \"version\": \"8.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/cliui/-/cliui-8.0.1.tgz\",\n      \"integrity\": \"sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"string-width\": \"^4.2.0\",\n        \"strip-ansi\": \"^6.0.1\",\n        \"wrap-ansi\": \"^7.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/clone\": {\n      \"version\": \"1.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/clone/-/clone-1.0.4.tgz\",\n      \"integrity\": \"sha512-JQHZ2QMW6l3aH/j6xCqQThY/9OH4D/9ls34cgkUBiEeocRTU04tHfKPBsUK1PqZCUQM7GiA0IIXJSuXHI64Kbg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.8\"\n      }\n    },\n    \"node_modules/clone-response\": {\n      \"version\": \"1.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/clone-response/-/clone-response-1.0.3.tgz\",\n      \"integrity\": \"sha512-ROoL94jJH2dUVML2Y/5PEDNaSHgeOdSDicUyS7izcF63G6sTc/FTjLub4b8Il9S8S0beOfYt0TaA5qvFK+w0wA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"mimic-response\": \"^1.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/color-convert\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz\",\n      \"integrity\": \"sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"color-name\": \"~1.1.4\"\n      },\n      \"engines\": {\n        \"node\": \">=7.0.0\"\n      }\n    },\n    \"node_modules/color-name\": {\n      \"version\": \"1.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz\",\n      \"integrity\": \"sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/combined-stream\": {\n      \"version\": \"1.0.8\",\n      \"resolved\": \"https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz\",\n      \"integrity\": \"sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"delayed-stream\": \"~1.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.8\"\n      }\n    },\n    \"node_modules/commander\": {\n      \"version\": \"5.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/commander/-/commander-5.1.0.tgz\",\n      \"integrity\": \"sha512-P0CysNDQ7rtVw4QIQtm+MRxV66vKFSvlsQvGYXZWR3qFU0jlMKHZZZgw8e+8DSah4UDKMqnknRDQz+xuQXQ/Zg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/compare-version\": {\n      \"version\": \"0.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/compare-version/-/compare-version-0.1.2.tgz\",\n      \"integrity\": \"sha512-pJDh5/4wrEnXX/VWRZvruAGHkzKdr46z11OlTPN+VrATlWWhSKewNCJ1futCO5C7eJB3nPMFZA1LeYtcFboZ2A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/concat-map\": {\n      \"version\": \"0.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz\",\n      \"integrity\": \"sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/config-file-ts\": {\n      \"version\": \"0.2.8-rc1\",\n      \"resolved\": \"https://registry.npmjs.org/config-file-ts/-/config-file-ts-0.2.8-rc1.tgz\",\n      \"integrity\": \"sha512-GtNECbVI82bT4RiDIzBSVuTKoSHufnU7Ce7/42bkWZJZFLjmDF2WBpVsvRkhKCfKBnTBb3qZrBwPpFBU/Myvhg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"glob\": \"^10.3.12\",\n        \"typescript\": \"^5.4.3\"\n      }\n    },\n    \"node_modules/config-file-ts/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/config-file-ts/node_modules/brace-expansion\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.3.tgz\",\n      \"integrity\": \"sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/config-file-ts/node_modules/glob\": {\n      \"version\": \"10.5.0\",\n      \"resolved\": \"https://registry.npmjs.org/glob/-/glob-10.5.0.tgz\",\n      \"integrity\": \"sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg==\",\n      \"deprecated\": \"Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"foreground-child\": \"^3.1.0\",\n        \"jackspeak\": \"^3.1.2\",\n        \"minimatch\": \"^9.0.4\",\n        \"minipass\": \"^7.1.2\",\n        \"package-json-from-dist\": \"^1.0.0\",\n        \"path-scurry\": \"^1.11.1\"\n      },\n      \"bin\": {\n        \"glob\": \"dist/esm/bin.mjs\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/config-file-ts/node_modules/minimatch\": {\n      \"version\": \"9.0.9\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.9.tgz\",\n      \"integrity\": \"sha512-OBwBN9AL4dqmETlpS2zasx+vTeWclWzkblfZk7KTA5j3jeOONz/tRCnZomUyvNg83wL5Zv9Ss6HMJXAgL8R2Yg==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^2.0.2\"\n      },\n      \"engines\": {\n        \"node\": \">=16 || 14 >=14.17\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/config-file-ts/node_modules/minipass\": {\n      \"version\": \"7.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz\",\n      \"integrity\": \"sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"engines\": {\n        \"node\": \">=16 || 14 >=14.17\"\n      }\n    },\n    \"node_modules/core-util-is\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.2.tgz\",\n      \"integrity\": \"sha512-3lqz5YjWTYnW6dlDa5TLaTCcShfar1e40rmcJVwCBJC6mWlFuj0eCHIElmG1g5kyuJ/GD+8Wn4FFCcz4gJPfaQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/crc\": {\n      \"version\": \"3.8.0\",\n      \"resolved\": \"https://registry.npmjs.org/crc/-/crc-3.8.0.tgz\",\n      \"integrity\": \"sha512-iX3mfgcTMIq3ZKLIsVFAbv7+Mc10kxabAGQb8HvjA1o3T1PIYprbakQ65d3I+2HGHt6nSKkM9PYjgoJO2KcFBQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"buffer\": \"^5.1.0\"\n      }\n    },\n    \"node_modules/cross-dirname\": {\n      \"version\": \"0.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/cross-dirname/-/cross-dirname-0.1.0.tgz\",\n      \"integrity\": \"sha512-+R08/oI0nl3vfPcqftZRpytksBXDzOUveBq/NBVx0sUp1axwzPQrKinNx5yd5sxPu8j1wIy8AfnVQ+5eFdha6Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true\n    },\n    \"node_modules/cross-spawn\": {\n      \"version\": \"7.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz\",\n      \"integrity\": \"sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"path-key\": \"^3.1.0\",\n        \"shebang-command\": \"^2.0.0\",\n        \"which\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/debug\": {\n      \"version\": \"4.4.3\",\n      \"resolved\": \"https://registry.npmjs.org/debug/-/debug-4.4.3.tgz\",\n      \"integrity\": \"sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ms\": \"^2.1.3\"\n      },\n      \"engines\": {\n        \"node\": \">=6.0\"\n      },\n      \"peerDependenciesMeta\": {\n        \"supports-color\": {\n          \"optional\": true\n        }\n      }\n    },\n    \"node_modules/decompress-response\": {\n      \"version\": \"6.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/decompress-response/-/decompress-response-6.0.0.tgz\",\n      \"integrity\": \"sha512-aW35yZM6Bb/4oJlZncMH2LCoZtJXTRxES17vE3hoRiowU2kWHaJKFkSBDnDR+cm9J+9QhXmREyIfv0pji9ejCQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"mimic-response\": \"^3.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/decompress-response/node_modules/mimic-response\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/mimic-response/-/mimic-response-3.1.0.tgz\",\n      \"integrity\": \"sha512-z0yWI+4FDrrweS8Zmt4Ej5HdJmky15+L2e6Wgn3+iK5fWzb6T3fhNFq2+MeTRb064c6Wr4N/wv0DzQTjNzHNGQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/defaults\": {\n      \"version\": \"1.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/defaults/-/defaults-1.0.4.tgz\",\n      \"integrity\": \"sha512-eFuaLoy/Rxalv2kr+lqMlUnrDWV+3j4pljOIJgLIhI058IQfWJ7vXhyEIHu+HtC738klGALYxOKDO0bQP3tg8A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"clone\": \"^1.0.2\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/defer-to-connect\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/defer-to-connect/-/defer-to-connect-2.0.1.tgz\",\n      \"integrity\": \"sha512-4tvttepXG1VaYGrRibk5EwJd1t4udunSOVMdLSAL6mId1ix438oPwPZMALY41FCijukO1L0twNcGsdzS7dHgDg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/define-data-property\": {\n      \"version\": \"1.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/define-data-property/-/define-data-property-1.1.4.tgz\",\n      \"integrity\": \"sha512-rBMvIzlpA8v6E+SJZoo++HAYqsLrkg7MSfIinMPFhmkorw7X+dOXVJQs+QT69zGkzMyfDnIMN2Wid1+NbL3T+A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"es-define-property\": \"^1.0.0\",\n        \"es-errors\": \"^1.3.0\",\n        \"gopd\": \"^1.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/define-properties\": {\n      \"version\": \"1.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/define-properties/-/define-properties-1.2.1.tgz\",\n      \"integrity\": \"sha512-8QmQKqEASLd5nx0U1B1okLElbUuuttJ/AnYmRXbbbGDWh6uS208EjD4Xqq/I9wK7u0v6O08XhTWnt5XtEbR6Dg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"define-data-property\": \"^1.0.1\",\n        \"has-property-descriptors\": \"^1.0.0\",\n        \"object-keys\": \"^1.1.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/delayed-stream\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz\",\n      \"integrity\": \"sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.4.0\"\n      }\n    },\n    \"node_modules/detect-libc\": {\n      \"version\": \"2.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz\",\n      \"integrity\": \"sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/detect-node\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/detect-node/-/detect-node-2.1.0.tgz\",\n      \"integrity\": \"sha512-T0NIuQpnTvFDATNuHN5roPwSBG83rFsuO+MXXH9/3N1eFbn4wcPjttvjMLEPWJ0RGUYgQE7cGgS3tNxbqCGM7g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/dir-compare\": {\n      \"version\": \"4.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/dir-compare/-/dir-compare-4.2.0.tgz\",\n      \"integrity\": \"sha512-2xMCmOoMrdQIPHdsTawECdNPwlVFB9zGcz3kuhmBO6U3oU+UQjsue0i8ayLKpgBcm+hcXPMVSGUN9d+pvJ6+VQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"minimatch\": \"^3.0.5\",\n        \"p-limit\": \"^3.1.0 \"\n      }\n    },\n    \"node_modules/dir-compare/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/dir-compare/node_modules/brace-expansion\": {\n      \"version\": \"1.1.13\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.13.tgz\",\n      \"integrity\": \"sha512-9ZLprWS6EENmhEOpjCYW2c8VkmOvckIJZfkr7rBW6dObmfgJ/L1GpSYW5Hpo9lDz4D1+n0Ckz8rU7FwHDQiG/w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\",\n        \"concat-map\": \"0.0.1\"\n      }\n    },\n    \"node_modules/dir-compare/node_modules/minimatch\": {\n      \"version\": \"3.1.5\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz\",\n      \"integrity\": \"sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^1.1.7\"\n      },\n      \"engines\": {\n        \"node\": \"*\"\n      }\n    },\n    \"node_modules/dmg-builder\": {\n      \"version\": \"26.0.12\",\n      \"resolved\": \"https://registry.npmjs.org/dmg-builder/-/dmg-builder-26.0.12.tgz\",\n      \"integrity\": \"sha512-59CAAjAhTaIMCN8y9kD573vDkxbs1uhDcrFLHSgutYdPcGOU35Rf95725snvzEOy4BFB7+eLJ8djCNPmGwG67w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"app-builder-lib\": \"26.0.12\",\n        \"builder-util\": \"26.0.11\",\n        \"builder-util-runtime\": \"9.3.1\",\n        \"fs-extra\": \"^10.1.0\",\n        \"iconv-lite\": \"^0.6.2\",\n        \"js-yaml\": \"^4.1.0\"\n      },\n      \"optionalDependencies\": {\n        \"dmg-license\": \"^1.0.11\"\n      }\n    },\n    \"node_modules/dmg-builder/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/dmg-builder/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/dmg-builder/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/dmg-license\": {\n      \"version\": \"1.0.11\",\n      \"resolved\": \"https://registry.npmjs.org/dmg-license/-/dmg-license-1.0.11.tgz\",\n      \"integrity\": \"sha512-ZdzmqwKmECOWJpqefloC5OJy1+WZBBse5+MR88z9g9Zn4VY+WYUkAyojmhzJckH5YbbZGcYIuGAkY5/Ys5OM2Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"os\": [\n        \"darwin\"\n      ],\n      \"dependencies\": {\n        \"@types/plist\": \"^3.0.1\",\n        \"@types/verror\": \"^1.10.3\",\n        \"ajv\": \"^6.10.0\",\n        \"crc\": \"^3.8.0\",\n        \"iconv-corefoundation\": \"^1.1.7\",\n        \"plist\": \"^3.0.4\",\n        \"smart-buffer\": \"^4.0.2\",\n        \"verror\": \"^1.10.0\"\n      },\n      \"bin\": {\n        \"dmg-license\": \"bin/dmg-license.js\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/dotenv\": {\n      \"version\": \"16.6.1\",\n      \"resolved\": \"https://registry.npmjs.org/dotenv/-/dotenv-16.6.1.tgz\",\n      \"integrity\": \"sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://dotenvx.com\"\n      }\n    },\n    \"node_modules/dotenv-expand\": {\n      \"version\": \"11.0.7\",\n      \"resolved\": \"https://registry.npmjs.org/dotenv-expand/-/dotenv-expand-11.0.7.tgz\",\n      \"integrity\": \"sha512-zIHwmZPRshsCdpMDyVsqGmgyP0yT8GAgXUnkdAoJisxvf33k7yO6OuoKmcTGuXPWSsm8Oh88nZicRLA9Y0rUeA==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"dependencies\": {\n        \"dotenv\": \"^16.4.5\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://dotenvx.com\"\n      }\n    },\n    \"node_modules/dunder-proto\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz\",\n      \"integrity\": \"sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"call-bind-apply-helpers\": \"^1.0.1\",\n        \"es-errors\": \"^1.3.0\",\n        \"gopd\": \"^1.2.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/eastasianwidth\": {\n      \"version\": \"0.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/eastasianwidth/-/eastasianwidth-0.2.0.tgz\",\n      \"integrity\": \"sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/ejs\": {\n      \"version\": \"3.1.10\",\n      \"resolved\": \"https://registry.npmjs.org/ejs/-/ejs-3.1.10.tgz\",\n      \"integrity\": \"sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"dependencies\": {\n        \"jake\": \"^10.8.5\"\n      },\n      \"bin\": {\n        \"ejs\": \"bin/cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/electron\": {\n      \"version\": \"35.1.5\",\n      \"resolved\": \"https://registry.npmjs.org/electron/-/electron-35.1.5.tgz\",\n      \"integrity\": \"sha512-LolvbKKQUSCGvEwbEQNt1cxD1t+YYClDNwBIjn4d28KM8FSqUn9zJuf6AbqNA7tVs9OFl/EQpmg/m4lZV1hH8g==\",\n      \"dev\": true,\n      \"hasInstallScript\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@electron/get\": \"^2.0.0\",\n        \"@types/node\": \"^22.7.7\",\n        \"extract-zip\": \"^2.0.1\"\n      },\n      \"bin\": {\n        \"electron\": \"cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">= 12.20.55\"\n      }\n    },\n    \"node_modules/electron-builder\": {\n      \"version\": \"26.0.12\",\n      \"resolved\": \"https://registry.npmjs.org/electron-builder/-/electron-builder-26.0.12.tgz\",\n      \"integrity\": \"sha512-cD1kz5g2sgPTMFHjLxfMjUK5JABq3//J4jPswi93tOPFz6btzXYtK5NrDt717NRbukCUDOrrvmYVOWERlqoiXA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"app-builder-lib\": \"26.0.12\",\n        \"builder-util\": \"26.0.11\",\n        \"builder-util-runtime\": \"9.3.1\",\n        \"chalk\": \"^4.1.2\",\n        \"dmg-builder\": \"26.0.12\",\n        \"fs-extra\": \"^10.1.0\",\n        \"is-ci\": \"^3.0.0\",\n        \"lazy-val\": \"^1.0.5\",\n        \"simple-update-notifier\": \"2.0.0\",\n        \"yargs\": \"^17.6.2\"\n      },\n      \"bin\": {\n        \"electron-builder\": \"cli.js\",\n        \"install-app-deps\": \"install-app-deps.js\"\n      },\n      \"engines\": {\n        \"node\": \">=14.0.0\"\n      }\n    },\n    \"node_modules/electron-builder-squirrel-windows\": {\n      \"version\": \"26.0.12\",\n      \"resolved\": \"https://registry.npmjs.org/electron-builder-squirrel-windows/-/electron-builder-squirrel-windows-26.0.12.tgz\",\n      \"integrity\": \"sha512-kpwXM7c/ayRUbYVErQbsZ0nQZX4aLHQrPEG9C4h9vuJCXylwFH8a7Jgi2VpKIObzCXO7LKHiCw4KdioFLFOgqA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"app-builder-lib\": \"26.0.12\",\n        \"builder-util\": \"26.0.11\",\n        \"electron-winstaller\": \"5.4.0\"\n      }\n    },\n    \"node_modules/electron-builder/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/electron-builder/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/electron-builder/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/electron-publish\": {\n      \"version\": \"26.0.11\",\n      \"resolved\": \"https://registry.npmjs.org/electron-publish/-/electron-publish-26.0.11.tgz\",\n      \"integrity\": \"sha512-a8QRH0rAPIWH9WyyS5LbNvW9Ark6qe63/LqDB7vu2JXYpi0Gma5Q60Dh4tmTqhOBQt0xsrzD8qE7C+D7j+B24A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@types/fs-extra\": \"^9.0.11\",\n        \"builder-util\": \"26.0.11\",\n        \"builder-util-runtime\": \"9.3.1\",\n        \"chalk\": \"^4.1.2\",\n        \"form-data\": \"^4.0.0\",\n        \"fs-extra\": \"^10.1.0\",\n        \"lazy-val\": \"^1.0.5\",\n        \"mime\": \"^2.5.2\"\n      }\n    },\n    \"node_modules/electron-publish/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/electron-publish/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/electron-publish/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/electron-winstaller\": {\n      \"version\": \"5.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/electron-winstaller/-/electron-winstaller-5.4.0.tgz\",\n      \"integrity\": \"sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==\",\n      \"dev\": true,\n      \"hasInstallScript\": true,\n      \"license\": \"MIT\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"@electron/asar\": \"^3.2.1\",\n        \"debug\": \"^4.1.1\",\n        \"fs-extra\": \"^7.0.1\",\n        \"lodash\": \"^4.17.21\",\n        \"temp\": \"^0.9.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"@electron/windows-sign\": \"^1.1.2\"\n      }\n    },\n    \"node_modules/electron-winstaller/node_modules/fs-extra\": {\n      \"version\": \"7.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-7.0.1.tgz\",\n      \"integrity\": \"sha512-YJDaCJZEnBmcbw13fvdAM9AwNOJwOzrE4pqMqBq5nFiEqXUqHwlK4B+3pUw6JNvfSPtX05xFHtYy/1ni01eGCw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.1.2\",\n        \"jsonfile\": \"^4.0.0\",\n        \"universalify\": \"^0.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=6 <7 || >=8\"\n      }\n    },\n    \"node_modules/emoji-regex\": {\n      \"version\": \"8.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz\",\n      \"integrity\": \"sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/encoding\": {\n      \"version\": \"0.1.13\",\n      \"resolved\": \"https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz\",\n      \"integrity\": \"sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"iconv-lite\": \"^0.6.2\"\n      }\n    },\n    \"node_modules/end-of-stream\": {\n      \"version\": \"1.4.5\",\n      \"resolved\": \"https://registry.npmjs.org/end-of-stream/-/end-of-stream-1.4.5.tgz\",\n      \"integrity\": \"sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"once\": \"^1.4.0\"\n      }\n    },\n    \"node_modules/env-paths\": {\n      \"version\": \"2.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/env-paths/-/env-paths-2.2.1.tgz\",\n      \"integrity\": \"sha512-+h1lkLKhZMTYjog1VEpJNG7NZJWcuc2DDk/qsqSTRRCOXiLjeQ1d1/udrUGhqMxUgAlwKNZ0cf2uqan5GLuS2A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/err-code\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/err-code/-/err-code-2.0.3.tgz\",\n      \"integrity\": \"sha512-2bmlRpNKBxT/CRmPOlyISQpNj+qSeYvcym/uT0Jx2bMOlKLtSy1ZmLuVxSEKKyor/N5yhvp/ZiG1oE3DEYMSFA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/es-define-property\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz\",\n      \"integrity\": \"sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/es-errors\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz\",\n      \"integrity\": \"sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/es-object-atoms\": {\n      \"version\": \"1.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz\",\n      \"integrity\": \"sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"es-errors\": \"^1.3.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/es-set-tostringtag\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz\",\n      \"integrity\": \"sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"es-errors\": \"^1.3.0\",\n        \"get-intrinsic\": \"^1.2.6\",\n        \"has-tostringtag\": \"^1.0.2\",\n        \"hasown\": \"^2.0.2\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/es6-error\": {\n      \"version\": \"4.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/es6-error/-/es6-error-4.1.1.tgz\",\n      \"integrity\": \"sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/escalade\": {\n      \"version\": \"3.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz\",\n      \"integrity\": \"sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/escape-string-regexp\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz\",\n      \"integrity\": \"sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/exponential-backoff\": {\n      \"version\": \"3.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/exponential-backoff/-/exponential-backoff-3.1.3.tgz\",\n      \"integrity\": \"sha512-ZgEeZXj30q+I0EN+CbSSpIyPaJ5HVQD18Z1m+u1FXbAeT94mr1zw50q4q6jiiC447Nl/YTcIYSAftiGqetwXCA==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\"\n    },\n    \"node_modules/extract-zip\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/extract-zip/-/extract-zip-2.0.1.tgz\",\n      \"integrity\": \"sha512-GDhU9ntwuKyGXdZBUgTIe+vXnWj0fppUEtMDL0+idd5Sta8TGpHssn/eusA9mrPr9qNDym6SxAYZjNvCn/9RBg==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"dependencies\": {\n        \"debug\": \"^4.1.1\",\n        \"get-stream\": \"^5.1.0\",\n        \"yauzl\": \"^2.10.0\"\n      },\n      \"bin\": {\n        \"extract-zip\": \"cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">= 10.17.0\"\n      },\n      \"optionalDependencies\": {\n        \"@types/yauzl\": \"^2.9.1\"\n      }\n    },\n    \"node_modules/extsprintf\": {\n      \"version\": \"1.4.1\",\n      \"resolved\": \"https://registry.npmjs.org/extsprintf/-/extsprintf-1.4.1.tgz\",\n      \"integrity\": \"sha512-Wrk35e8ydCKDj/ArClo1VrPVmN8zph5V4AtHwIuHhvMXsKf73UT3BOD+azBIW+3wOJ4FhEH7zyaJCFvChjYvMA==\",\n      \"dev\": true,\n      \"engines\": [\n        \"node >=0.6.0\"\n      ],\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/fast-deep-equal\": {\n      \"version\": \"3.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz\",\n      \"integrity\": \"sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/fast-json-stable-stringify\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz\",\n      \"integrity\": \"sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/fd-slicer\": {\n      \"version\": \"1.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fd-slicer/-/fd-slicer-1.1.0.tgz\",\n      \"integrity\": \"sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"pend\": \"~1.2.0\"\n      }\n    },\n    \"node_modules/filelist\": {\n      \"version\": \"1.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/filelist/-/filelist-1.0.6.tgz\",\n      \"integrity\": \"sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"dependencies\": {\n        \"minimatch\": \"^5.0.1\"\n      }\n    },\n    \"node_modules/filelist/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/filelist/node_modules/brace-expansion\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.3.tgz\",\n      \"integrity\": \"sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/filelist/node_modules/minimatch\": {\n      \"version\": \"5.1.9\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-5.1.9.tgz\",\n      \"integrity\": \"sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^2.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/foreground-child\": {\n      \"version\": \"3.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/foreground-child/-/foreground-child-3.3.1.tgz\",\n      \"integrity\": \"sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"cross-spawn\": \"^7.0.6\",\n        \"signal-exit\": \"^4.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=14\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/foreground-child/node_modules/signal-exit\": {\n      \"version\": \"4.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz\",\n      \"integrity\": \"sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=14\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/form-data\": {\n      \"version\": \"4.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz\",\n      \"integrity\": \"sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"asynckit\": \"^0.4.0\",\n        \"combined-stream\": \"^1.0.8\",\n        \"es-set-tostringtag\": \"^2.1.0\",\n        \"hasown\": \"^2.0.2\",\n        \"mime-types\": \"^2.1.12\"\n      },\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/fs-extra\": {\n      \"version\": \"8.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-8.1.0.tgz\",\n      \"integrity\": \"sha512-yhlQgA6mnOJUKOsRUFsgJdQCvkKhcz8tlZG5HBQfReYZy46OwLcY+Zia0mtdHsOo9y/hP+CxMN0TU9QxoOtG4g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^4.0.0\",\n        \"universalify\": \"^0.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=6 <7 || >=8\"\n      }\n    },\n    \"node_modules/fs-minipass\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-minipass/-/fs-minipass-2.1.0.tgz\",\n      \"integrity\": \"sha512-V/JgOLFCS+R6Vcq0slCuaeWEdNC3ouDlJMNIsacH2VtALiu9mV4LPrHc5cDl8k5aw6J8jwgWWpiTo5RYhmIzvg==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/fs.realpath\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs.realpath/-/fs.realpath-1.0.0.tgz\",\n      \"integrity\": \"sha512-OO0pH2lK6a0hZnAdau5ItzHPI6pUlvI7jMVnxUQRtw4owF2wk8lOSabtGDCTP4Ggrg2MbGnWO9X8K1t4+fGMDw==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/function-bind\": {\n      \"version\": \"1.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz\",\n      \"integrity\": \"sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/get-caller-file\": {\n      \"version\": \"2.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/get-caller-file/-/get-caller-file-2.0.5.tgz\",\n      \"integrity\": \"sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \"6.* || 8.* || >= 10.*\"\n      }\n    },\n    \"node_modules/get-intrinsic\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz\",\n      \"integrity\": \"sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"call-bind-apply-helpers\": \"^1.0.2\",\n        \"es-define-property\": \"^1.0.1\",\n        \"es-errors\": \"^1.3.0\",\n        \"es-object-atoms\": \"^1.1.1\",\n        \"function-bind\": \"^1.1.2\",\n        \"get-proto\": \"^1.0.1\",\n        \"gopd\": \"^1.2.0\",\n        \"has-symbols\": \"^1.1.0\",\n        \"hasown\": \"^2.0.2\",\n        \"math-intrinsics\": \"^1.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/get-proto\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz\",\n      \"integrity\": \"sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"dunder-proto\": \"^1.0.1\",\n        \"es-object-atoms\": \"^1.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/get-stream\": {\n      \"version\": \"5.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/get-stream/-/get-stream-5.2.0.tgz\",\n      \"integrity\": \"sha512-nBF+F1rAZVCu/p7rjzgA+Yb4lfYXrpl7a6VmJrU8wF9I1CKvP/QwPNZHnOlwbTkY6dvtFIzFMSyQXbLoTQPRpA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"pump\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/glob\": {\n      \"version\": \"7.2.3\",\n      \"resolved\": \"https://registry.npmjs.org/glob/-/glob-7.2.3.tgz\",\n      \"integrity\": \"sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==\",\n      \"deprecated\": \"Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"fs.realpath\": \"^1.0.0\",\n        \"inflight\": \"^1.0.4\",\n        \"inherits\": \"2\",\n        \"minimatch\": \"^3.1.1\",\n        \"once\": \"^1.3.0\",\n        \"path-is-absolute\": \"^1.0.0\"\n      },\n      \"engines\": {\n        \"node\": \"*\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/glob/node_modules/balanced-match\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\",\n      \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/glob/node_modules/brace-expansion\": {\n      \"version\": \"1.1.13\",\n      \"resolved\": \"https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.13.tgz\",\n      \"integrity\": \"sha512-9ZLprWS6EENmhEOpjCYW2c8VkmOvckIJZfkr7rBW6dObmfgJ/L1GpSYW5Hpo9lDz4D1+n0Ckz8rU7FwHDQiG/w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"balanced-match\": \"^1.0.0\",\n        \"concat-map\": \"0.0.1\"\n      }\n    },\n    \"node_modules/glob/node_modules/minimatch\": {\n      \"version\": \"3.1.5\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz\",\n      \"integrity\": \"sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^1.1.7\"\n      },\n      \"engines\": {\n        \"node\": \"*\"\n      }\n    },\n    \"node_modules/global-agent\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/global-agent/-/global-agent-3.0.0.tgz\",\n      \"integrity\": \"sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==\",\n      \"dev\": true,\n      \"license\": \"BSD-3-Clause\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"boolean\": \"^3.0.1\",\n        \"es6-error\": \"^4.1.1\",\n        \"matcher\": \"^3.0.0\",\n        \"roarr\": \"^2.15.3\",\n        \"semver\": \"^7.3.2\",\n        \"serialize-error\": \"^7.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10.0\"\n      }\n    },\n    \"node_modules/global-agent/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"optional\": true,\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/globalthis\": {\n      \"version\": \"1.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/globalthis/-/globalthis-1.0.4.tgz\",\n      \"integrity\": \"sha512-DpLKbNU4WylpxJykQujfCcwYWiV/Jhm50Goo0wrVILAv5jOr9d+H+UR3PhSCD2rCCEIg0uc+G+muBTwD54JhDQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"define-properties\": \"^1.2.1\",\n        \"gopd\": \"^1.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/gopd\": {\n      \"version\": \"1.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz\",\n      \"integrity\": \"sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/got\": {\n      \"version\": \"11.8.6\",\n      \"resolved\": \"https://registry.npmjs.org/got/-/got-11.8.6.tgz\",\n      \"integrity\": \"sha512-6tfZ91bOr7bOXnK7PRDCGBLa1H4U080YHNaAQ2KsMGlLEzRbk44nsZF2E1IeRc3vtJHPVbKCYgdFbaGO2ljd8g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@sindresorhus/is\": \"^4.0.0\",\n        \"@szmarczak/http-timer\": \"^4.0.5\",\n        \"@types/cacheable-request\": \"^6.0.1\",\n        \"@types/responselike\": \"^1.0.0\",\n        \"cacheable-lookup\": \"^5.0.3\",\n        \"cacheable-request\": \"^7.0.2\",\n        \"decompress-response\": \"^6.0.0\",\n        \"http2-wrapper\": \"^1.0.0-beta.5.2\",\n        \"lowercase-keys\": \"^2.0.0\",\n        \"p-cancelable\": \"^2.0.0\",\n        \"responselike\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10.19.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sindresorhus/got?sponsor=1\"\n      }\n    },\n    \"node_modules/graceful-fs\": {\n      \"version\": \"4.2.11\",\n      \"resolved\": \"https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz\",\n      \"integrity\": \"sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/has-flag\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz\",\n      \"integrity\": \"sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/has-property-descriptors\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/has-property-descriptors/-/has-property-descriptors-1.0.2.tgz\",\n      \"integrity\": \"sha512-55JNKuIW+vq4Ke1BjOTjM2YctQIvCT7GFzHwmfZPGo5wnrgkid0YQtnAleFSqumZm4az3n2BS+erby5ipJdgrg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"es-define-property\": \"^1.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/has-symbols\": {\n      \"version\": \"1.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz\",\n      \"integrity\": \"sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/has-tostringtag\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz\",\n      \"integrity\": \"sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"has-symbols\": \"^1.0.3\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/hasown\": {\n      \"version\": \"2.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz\",\n      \"integrity\": \"sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"function-bind\": \"^1.1.2\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/hosted-git-info\": {\n      \"version\": \"4.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/hosted-git-info/-/hosted-git-info-4.1.0.tgz\",\n      \"integrity\": \"sha512-kyCuEOWjJqZuDbRHzL8V93NzQhwIB71oFWSyzVo+KPZI+pnQPPxucdkrOZvkLRnrf5URsQM+IJ09Dw29cRALIA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"lru-cache\": \"^6.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/http-cache-semantics\": {\n      \"version\": \"4.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/http-cache-semantics/-/http-cache-semantics-4.2.0.tgz\",\n      \"integrity\": \"sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\"\n    },\n    \"node_modules/http-proxy-agent\": {\n      \"version\": \"7.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz\",\n      \"integrity\": \"sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"agent-base\": \"^7.1.0\",\n        \"debug\": \"^4.3.4\"\n      },\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/http2-wrapper\": {\n      \"version\": \"1.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/http2-wrapper/-/http2-wrapper-1.0.3.tgz\",\n      \"integrity\": \"sha512-V+23sDMr12Wnz7iTcDeJr3O6AIxlnvT/bmaAAAP/Xda35C90p9599p0F1eHR/N1KILWSoWVAiOMFjBBXaXSMxg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"quick-lru\": \"^5.1.1\",\n        \"resolve-alpn\": \"^1.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10.19.0\"\n      }\n    },\n    \"node_modules/https-proxy-agent\": {\n      \"version\": \"7.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz\",\n      \"integrity\": \"sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"agent-base\": \"^7.1.2\",\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/humanize-ms\": {\n      \"version\": \"1.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/humanize-ms/-/humanize-ms-1.2.1.tgz\",\n      \"integrity\": \"sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ms\": \"^2.0.0\"\n      }\n    },\n    \"node_modules/iconv-corefoundation\": {\n      \"version\": \"1.1.7\",\n      \"resolved\": \"https://registry.npmjs.org/iconv-corefoundation/-/iconv-corefoundation-1.1.7.tgz\",\n      \"integrity\": \"sha512-T10qvkw0zz4wnm560lOEg0PovVqUXuOFhhHAkixw8/sycy7TJt7v/RrkEKEQnAw2viPSJu6iAkErxnzR0g8PpQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"os\": [\n        \"darwin\"\n      ],\n      \"dependencies\": {\n        \"cli-truncate\": \"^2.1.0\",\n        \"node-addon-api\": \"^1.6.3\"\n      },\n      \"engines\": {\n        \"node\": \"^8.11.2 || >=10\"\n      }\n    },\n    \"node_modules/iconv-lite\": {\n      \"version\": \"0.6.3\",\n      \"resolved\": \"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\",\n      \"integrity\": \"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"safer-buffer\": \">= 2.1.2 < 3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/ieee754\": {\n      \"version\": \"1.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz\",\n      \"integrity\": \"sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"github\",\n          \"url\": \"https://github.com/sponsors/feross\"\n        },\n        {\n          \"type\": \"patreon\",\n          \"url\": \"https://www.patreon.com/feross\"\n        },\n        {\n          \"type\": \"consulting\",\n          \"url\": \"https://feross.org/support\"\n        }\n      ],\n      \"license\": \"BSD-3-Clause\"\n    },\n    \"node_modules/imurmurhash\": {\n      \"version\": \"0.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz\",\n      \"integrity\": \"sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.8.19\"\n      }\n    },\n    \"node_modules/indent-string\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/indent-string/-/indent-string-4.0.0.tgz\",\n      \"integrity\": \"sha512-EdDDZu4A2OyIK7Lr/2zG+w5jmbuk1DVBnEwREQvBzspBJkCEbRa8GxU1lghYcaGJCnRWibjDXlq779X1/y5xwg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/infer-owner\": {\n      \"version\": \"1.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/infer-owner/-/infer-owner-1.0.4.tgz\",\n      \"integrity\": \"sha512-IClj+Xz94+d7irH5qRyfJonOdfTzuDaifE6ZPWfx0N0+/ATZCbuTPq2prFl526urkQd90WyUKIh1DfBQ2hMz9A==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/inflight\": {\n      \"version\": \"1.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/inflight/-/inflight-1.0.6.tgz\",\n      \"integrity\": \"sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==\",\n      \"deprecated\": \"This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"once\": \"^1.3.0\",\n        \"wrappy\": \"1\"\n      }\n    },\n    \"node_modules/inherits\": {\n      \"version\": \"2.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz\",\n      \"integrity\": \"sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/ip-address\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/ip-address/-/ip-address-10.1.0.tgz\",\n      \"integrity\": \"sha512-XXADHxXmvT9+CRxhXg56LJovE+bmWnEWB78LB83VZTprKTmaC5QfruXocxzTZ2Kl0DNwKuBdlIhjL8LeY8Sf8Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 12\"\n      }\n    },\n    \"node_modules/is-ci\": {\n      \"version\": \"3.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/is-ci/-/is-ci-3.0.1.tgz\",\n      \"integrity\": \"sha512-ZYvCgrefwqoQ6yTyYUbQu64HsITZ3NfKX1lzaEYdkTDcfKzzCI/wthRRYKkdjHKFVgNiXKAKm65Zo1pk2as/QQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ci-info\": \"^3.2.0\"\n      },\n      \"bin\": {\n        \"is-ci\": \"bin.js\"\n      }\n    },\n    \"node_modules/is-fullwidth-code-point\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz\",\n      \"integrity\": \"sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/is-interactive\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-interactive/-/is-interactive-1.0.0.tgz\",\n      \"integrity\": \"sha512-2HvIEKRoqS62guEC+qBjpvRubdX910WCMuJTZ+I9yvqKU2/12eSL549HMwtabb4oupdj2sMP50k+XJfB/8JE6w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/is-lambda\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/is-lambda/-/is-lambda-1.0.1.tgz\",\n      \"integrity\": \"sha512-z7CMFGNrENq5iFB9Bqo64Xk6Y9sg+epq1myIcdHaGnbMTYOxvzsEtdYqQUylB7LxfkvgrrjP32T6Ywciio9UIQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/is-unicode-supported\": {\n      \"version\": \"0.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-unicode-supported/-/is-unicode-supported-0.1.0.tgz\",\n      \"integrity\": \"sha512-knxG2q4UC3u8stRGyAVJCOdxFmv5DZiRcdlIaAQXAbSfJya+OhopNotLQrstBhququ4ZpuKbDc/8S6mgXgPFPw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/isbinaryfile\": {\n      \"version\": \"5.0.7\",\n      \"resolved\": \"https://registry.npmjs.org/isbinaryfile/-/isbinaryfile-5.0.7.tgz\",\n      \"integrity\": \"sha512-gnWD14Jh3FzS3CPhF0AxNOJ8CxqeblPTADzI38r0wt8ZyQl5edpy75myt08EG2oKvpyiqSqsx+Wkz9vtkbTqYQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 18.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/gjtorikian/\"\n      }\n    },\n    \"node_modules/isexe\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz\",\n      \"integrity\": \"sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/jackspeak\": {\n      \"version\": \"3.4.3\",\n      \"resolved\": \"https://registry.npmjs.org/jackspeak/-/jackspeak-3.4.3.tgz\",\n      \"integrity\": \"sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"dependencies\": {\n        \"@isaacs/cliui\": \"^8.0.2\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      },\n      \"optionalDependencies\": {\n        \"@pkgjs/parseargs\": \"^0.11.0\"\n      }\n    },\n    \"node_modules/jake\": {\n      \"version\": \"10.9.4\",\n      \"resolved\": \"https://registry.npmjs.org/jake/-/jake-10.9.4.tgz\",\n      \"integrity\": \"sha512-wpHYzhxiVQL+IV05BLE2Xn34zW1S223hvjtqk0+gsPrwd/8JNLXJgZZM/iPFsYc1xyphF+6M6EvdE5E9MBGkDA==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"dependencies\": {\n        \"async\": \"^3.2.6\",\n        \"filelist\": \"^1.0.4\",\n        \"picocolors\": \"^1.1.1\"\n      },\n      \"bin\": {\n        \"jake\": \"bin/cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/js-yaml\": {\n      \"version\": \"4.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.1.tgz\",\n      \"integrity\": \"sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"argparse\": \"^2.0.1\"\n      },\n      \"bin\": {\n        \"js-yaml\": \"bin/js-yaml.js\"\n      }\n    },\n    \"node_modules/json-buffer\": {\n      \"version\": \"3.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz\",\n      \"integrity\": \"sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/json-schema-traverse\": {\n      \"version\": \"0.4.1\",\n      \"resolved\": \"https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz\",\n      \"integrity\": \"sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/json-stringify-safe\": {\n      \"version\": \"5.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/json-stringify-safe/-/json-stringify-safe-5.0.1.tgz\",\n      \"integrity\": \"sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"optional\": true\n    },\n    \"node_modules/json5\": {\n      \"version\": \"2.2.3\",\n      \"resolved\": \"https://registry.npmjs.org/json5/-/json5-2.2.3.tgz\",\n      \"integrity\": \"sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"bin\": {\n        \"json5\": \"lib/cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/jsonfile\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-4.0.0.tgz\",\n      \"integrity\": \"sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/keyv\": {\n      \"version\": \"4.5.4\",\n      \"resolved\": \"https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz\",\n      \"integrity\": \"sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"json-buffer\": \"3.0.1\"\n      }\n    },\n    \"node_modules/lazy-val\": {\n      \"version\": \"1.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/lazy-val/-/lazy-val-1.0.5.tgz\",\n      \"integrity\": \"sha512-0/BnGCCfyUMkBpeDgWihanIAF9JmZhHBgUhEqzvf+adhNGLoP6TaiI5oF8oyb3I45P+PcnrqihSf01M0l0G5+Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/lodash\": {\n      \"version\": \"4.18.1\",\n      \"resolved\": \"https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz\",\n      \"integrity\": \"sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/log-symbols\": {\n      \"version\": \"4.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/log-symbols/-/log-symbols-4.1.0.tgz\",\n      \"integrity\": \"sha512-8XPvpAA8uyhfteu8pIvQxpJZ7SYYdpUivZpGy6sFsBuKRY/7rQGavedeB8aK+Zkyq6upMFVL/9AW6vOYzfRyLg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"chalk\": \"^4.1.0\",\n        \"is-unicode-supported\": \"^0.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/lowercase-keys\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/lowercase-keys/-/lowercase-keys-2.0.0.tgz\",\n      \"integrity\": \"sha512-tqNXrS78oMOE73NMxK4EMLQsQowWf8jKooH9g7xPavRT706R6bkQJ6DY2Te7QukaZsulxa30wQ7bk0pm4XiHmA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/lru-cache\": {\n      \"version\": \"6.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz\",\n      \"integrity\": \"sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"yallist\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/make-fetch-happen\": {\n      \"version\": \"10.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/make-fetch-happen/-/make-fetch-happen-10.2.1.tgz\",\n      \"integrity\": \"sha512-NgOPbRiaQM10DYXvN3/hhGVI2M5MtITFryzBGxHM5p4wnFxsVCbxkrBrDsk+EZ5OB4jEOT7AjDxtdF+KVEFT7w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"agentkeepalive\": \"^4.2.1\",\n        \"cacache\": \"^16.1.0\",\n        \"http-cache-semantics\": \"^4.1.0\",\n        \"http-proxy-agent\": \"^5.0.0\",\n        \"https-proxy-agent\": \"^5.0.0\",\n        \"is-lambda\": \"^1.0.1\",\n        \"lru-cache\": \"^7.7.1\",\n        \"minipass\": \"^3.1.6\",\n        \"minipass-collect\": \"^1.0.2\",\n        \"minipass-fetch\": \"^2.0.3\",\n        \"minipass-flush\": \"^1.0.5\",\n        \"minipass-pipeline\": \"^1.2.4\",\n        \"negotiator\": \"^0.6.3\",\n        \"promise-retry\": \"^2.0.1\",\n        \"socks-proxy-agent\": \"^7.0.0\",\n        \"ssri\": \"^9.0.0\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/make-fetch-happen/node_modules/agent-base\": {\n      \"version\": \"6.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz\",\n      \"integrity\": \"sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 6.0.0\"\n      }\n    },\n    \"node_modules/make-fetch-happen/node_modules/http-proxy-agent\": {\n      \"version\": \"5.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-5.0.0.tgz\",\n      \"integrity\": \"sha512-n2hY8YdoRE1i7r6M0w9DIw5GgZN0G25P8zLCRQ8rjXtTU3vsNFBI/vWK/UIeE6g5MUUz6avwAPXmL6Fy9D/90w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@tootallnate/once\": \"2\",\n        \"agent-base\": \"6\",\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/make-fetch-happen/node_modules/https-proxy-agent\": {\n      \"version\": \"5.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz\",\n      \"integrity\": \"sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"agent-base\": \"6\",\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/make-fetch-happen/node_modules/lru-cache\": {\n      \"version\": \"7.18.3\",\n      \"resolved\": \"https://registry.npmjs.org/lru-cache/-/lru-cache-7.18.3.tgz\",\n      \"integrity\": \"sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/matcher\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/matcher/-/matcher-3.0.0.tgz\",\n      \"integrity\": \"sha512-OkeDaAZ/bQCxeFAozM55PKcKU0yJMPGifLwV4Qgjitu+5MoAfSQN4lsLJeXZ1b8w0x+/Emda6MZgXS1jvsapng==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"escape-string-regexp\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/math-intrinsics\": {\n      \"version\": \"1.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz\",\n      \"integrity\": \"sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/mime\": {\n      \"version\": \"2.6.0\",\n      \"resolved\": \"https://registry.npmjs.org/mime/-/mime-2.6.0.tgz\",\n      \"integrity\": \"sha512-USPkMeET31rOMiarsBNIHZKLGgvKc/LrjofAnBlOttf5ajRvqiRA8QsenbcooctK6d6Ts6aqZXBA+XbkKthiQg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"bin\": {\n        \"mime\": \"cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=4.0.0\"\n      }\n    },\n    \"node_modules/mime-db\": {\n      \"version\": \"1.52.0\",\n      \"resolved\": \"https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz\",\n      \"integrity\": \"sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.6\"\n      }\n    },\n    \"node_modules/mime-types\": {\n      \"version\": \"2.1.35\",\n      \"resolved\": \"https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz\",\n      \"integrity\": \"sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"mime-db\": \"1.52.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 0.6\"\n      }\n    },\n    \"node_modules/mimic-fn\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/mimic-fn/-/mimic-fn-2.1.0.tgz\",\n      \"integrity\": \"sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/mimic-response\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/mimic-response/-/mimic-response-1.0.1.tgz\",\n      \"integrity\": \"sha512-j5EctnkH7amfV/q5Hgmoal1g2QHFJRraOtmx0JpIqkxhBhI/lJSl1nMpQ45hVarwNETOoWEimndZ4QK0RHxuxQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=4\"\n      }\n    },\n    \"node_modules/minimatch\": {\n      \"version\": \"10.2.5\",\n      \"resolved\": \"https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz\",\n      \"integrity\": \"sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"dependencies\": {\n        \"brace-expansion\": \"^5.0.5\"\n      },\n      \"engines\": {\n        \"node\": \"18 || 20 || >=22\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/minimist\": {\n      \"version\": \"1.2.8\",\n      \"resolved\": \"https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz\",\n      \"integrity\": \"sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/ljharb\"\n      }\n    },\n    \"node_modules/minipass\": {\n      \"version\": \"3.3.6\",\n      \"resolved\": \"https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz\",\n      \"integrity\": \"sha512-DxiNidxSEK+tHG6zOIklvNOwm3hvCrbUrdtzY74U6HKTJxvIDfOUL5W5P2Ghd3DTkhhKPYGqeNUIh5qcM4YBfw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"yallist\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/minipass-collect\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/minipass-collect/-/minipass-collect-1.0.2.tgz\",\n      \"integrity\": \"sha512-6T6lH0H8OG9kITm/Jm6tdooIbogG9e0tLgpY6mphXSm/A9u8Nq1ryBG+Qspiub9LjWlBPsPS3tWQ/Botq4FdxA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/minipass-fetch\": {\n      \"version\": \"2.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/minipass-fetch/-/minipass-fetch-2.1.2.tgz\",\n      \"integrity\": \"sha512-LT49Zi2/WMROHYoqGgdlQIZh8mLPZmOrN2NdJjMXxYe4nkN6FUyuPuOAOedNJDrx0IRGg9+4guZewtp8hE6TxA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"minipass\": \"^3.1.6\",\n        \"minipass-sized\": \"^1.0.3\",\n        \"minizlib\": \"^2.1.2\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"encoding\": \"^0.1.13\"\n      }\n    },\n    \"node_modules/minipass-flush\": {\n      \"version\": \"1.0.7\",\n      \"resolved\": \"https://registry.npmjs.org/minipass-flush/-/minipass-flush-1.0.7.tgz\",\n      \"integrity\": \"sha512-TbqTz9cUwWyHS2Dy89P3ocAGUGxKjjLuR9z8w4WUTGAVgEj17/4nhgo2Du56i0Fm3Pm30g4iA8Lcqctc76jCzA==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/minipass-pipeline\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/minipass-pipeline/-/minipass-pipeline-1.2.4.tgz\",\n      \"integrity\": \"sha512-xuIq7cIOt09RPRJ19gdi4b+RiNvDFYe5JH+ggNvBqGqpQXcru3PcRmOZuHBKWK1Txf9+cQ+HMVN4d6z46LZP7A==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/minipass-sized\": {\n      \"version\": \"1.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/minipass-sized/-/minipass-sized-1.0.3.tgz\",\n      \"integrity\": \"sha512-MbkQQ2CTiBMlA2Dm/5cY+9SWFEN8pzzOXi6rlM5Xxq0Yqbda5ZQy9sU75a673FE9ZK0Zsbr6Y5iP6u9nktfg2g==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/minizlib\": {\n      \"version\": \"2.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/minizlib/-/minizlib-2.1.2.tgz\",\n      \"integrity\": \"sha512-bAxsR8BVfj60DWXHE3u30oHzfl4G7khkSuPW+qvpd7jFRHm7dLxOjUk1EHACJ/hxLY8phGJ0YhYHZo7jil7Qdg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"minipass\": \"^3.0.0\",\n        \"yallist\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/mkdirp\": {\n      \"version\": \"1.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/mkdirp/-/mkdirp-1.0.4.tgz\",\n      \"integrity\": \"sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"bin\": {\n        \"mkdirp\": \"bin/cmd.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/ms\": {\n      \"version\": \"2.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz\",\n      \"integrity\": \"sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/negotiator\": {\n      \"version\": \"0.6.4\",\n      \"resolved\": \"https://registry.npmjs.org/negotiator/-/negotiator-0.6.4.tgz\",\n      \"integrity\": \"sha512-myRT3DiWPHqho5PrJaIRyaMv2kgYf0mUVgBNOYMuCH5Ki1yEiQaf/ZJuQ62nvpc44wL5WDbTX7yGJi1Neevw8w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 0.6\"\n      }\n    },\n    \"node_modules/node-abi\": {\n      \"version\": \"3.89.0\",\n      \"resolved\": \"https://registry.npmjs.org/node-abi/-/node-abi-3.89.0.tgz\",\n      \"integrity\": \"sha512-6u9UwL0HlAl21+agMN3YAMXcKByMqwGx+pq+P76vii5f7hTPtKDp08/H9py6DY+cfDw7kQNTGEj/rly3IgbNQA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"semver\": \"^7.3.5\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/node-abi/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/node-addon-api\": {\n      \"version\": \"1.7.2\",\n      \"resolved\": \"https://registry.npmjs.org/node-addon-api/-/node-addon-api-1.7.2.tgz\",\n      \"integrity\": \"sha512-ibPK3iA+vaY1eEjESkQkM0BbCqFOaZMiXRTtdB0u7b4djtY6JnsjvPdUHVMg6xQt3B8fpTTWHI9A+ADjM9frzg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/node-api-version\": {\n      \"version\": \"0.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/node-api-version/-/node-api-version-0.2.1.tgz\",\n      \"integrity\": \"sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"semver\": \"^7.3.5\"\n      }\n    },\n    \"node_modules/node-api-version/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/nopt\": {\n      \"version\": \"6.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/nopt/-/nopt-6.0.0.tgz\",\n      \"integrity\": \"sha512-ZwLpbTgdhuZUnZzjd7nb1ZV+4DoiC6/sfiVKok72ym/4Tlf+DFdlHYmT2JPmcNNWV6Pi3SDf1kT+A4r9RTuT9g==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"abbrev\": \"^1.0.0\"\n      },\n      \"bin\": {\n        \"nopt\": \"bin/nopt.js\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/normalize-url\": {\n      \"version\": \"6.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/normalize-url/-/normalize-url-6.1.0.tgz\",\n      \"integrity\": \"sha512-DlL+XwOy3NxAQ8xuC0okPgK46iuVNAK01YN7RueYBqqFeGsBjV9XmCAzAdgt+667bCl5kPh9EqKKDwnaPG1I7A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/object-keys\": {\n      \"version\": \"1.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/object-keys/-/object-keys-1.1.1.tgz\",\n      \"integrity\": \"sha512-NuAESUOUMrlIXOfHKzD6bpPu3tYt3xvjNdRIQ+FeT0lNb4K8WR70CaDxhuNguS2XG+GjkyMwOzsN5ZktImfhLA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">= 0.4\"\n      }\n    },\n    \"node_modules/once\": {\n      \"version\": \"1.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/once/-/once-1.4.0.tgz\",\n      \"integrity\": \"sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"wrappy\": \"1\"\n      }\n    },\n    \"node_modules/onetime\": {\n      \"version\": \"5.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/onetime/-/onetime-5.1.2.tgz\",\n      \"integrity\": \"sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"mimic-fn\": \"^2.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=6\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/ora\": {\n      \"version\": \"5.4.1\",\n      \"resolved\": \"https://registry.npmjs.org/ora/-/ora-5.4.1.tgz\",\n      \"integrity\": \"sha512-5b6Y85tPxZZ7QytO+BQzysW31HJku27cRIlkbAXaNx+BdcVi+LlRFmVXzeF6a7JCwJpyw5c4b+YSVImQIrBpuQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"bl\": \"^4.1.0\",\n        \"chalk\": \"^4.1.0\",\n        \"cli-cursor\": \"^3.1.0\",\n        \"cli-spinners\": \"^2.5.0\",\n        \"is-interactive\": \"^1.0.0\",\n        \"is-unicode-supported\": \"^0.1.0\",\n        \"log-symbols\": \"^4.1.0\",\n        \"strip-ansi\": \"^6.0.0\",\n        \"wcwidth\": \"^1.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/p-cancelable\": {\n      \"version\": \"2.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/p-cancelable/-/p-cancelable-2.1.1.tgz\",\n      \"integrity\": \"sha512-BZOr3nRQHOntUjTrH8+Lh54smKHoHyur8We1V8DSMVrl5A2malOOwuJRnKRDjSnkoeBh4at6BwEnb5I7Jl31wg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/p-limit\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz\",\n      \"integrity\": \"sha512-TYOanM3wGwNGsZN2cVTYPArw454xnXj5qmWF1bEoAc4+cU/ol7GVh7odevjp1FNHduHc3KZMcFduxU5Xc6uJRQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"yocto-queue\": \"^0.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/p-map\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/p-map/-/p-map-4.0.0.tgz\",\n      \"integrity\": \"sha512-/bjOqmgETBYB5BoEeGVea8dmvHb2m9GLy1E9W43yeyfP6QQCZGFNa+XRceJEuDB6zqr+gKpIAmlLebMpykw/MQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"aggregate-error\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/package-json-from-dist\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/package-json-from-dist/-/package-json-from-dist-1.0.1.tgz\",\n      \"integrity\": \"sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\"\n    },\n    \"node_modules/path-is-absolute\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/path-is-absolute/-/path-is-absolute-1.0.1.tgz\",\n      \"integrity\": \"sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/path-key\": {\n      \"version\": \"3.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz\",\n      \"integrity\": \"sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/path-scurry\": {\n      \"version\": \"1.11.1\",\n      \"resolved\": \"https://registry.npmjs.org/path-scurry/-/path-scurry-1.11.1.tgz\",\n      \"integrity\": \"sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"dependencies\": {\n        \"lru-cache\": \"^10.2.0\",\n        \"minipass\": \"^5.0.0 || ^6.0.2 || ^7.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=16 || 14 >=14.18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/path-scurry/node_modules/lru-cache\": {\n      \"version\": \"10.4.3\",\n      \"resolved\": \"https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz\",\n      \"integrity\": \"sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/path-scurry/node_modules/minipass\": {\n      \"version\": \"7.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz\",\n      \"integrity\": \"sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"engines\": {\n        \"node\": \">=16 || 14 >=14.17\"\n      }\n    },\n    \"node_modules/pe-library\": {\n      \"version\": \"0.4.1\",\n      \"resolved\": \"https://registry.npmjs.org/pe-library/-/pe-library-0.4.1.tgz\",\n      \"integrity\": \"sha512-eRWB5LBz7PpDu4PUlwT0PhnQfTQJlDDdPa35urV4Osrm0t0AqQFGn+UIkU3klZvwJ8KPO3VbBFsXquA6p6kqZw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=12\",\n        \"npm\": \">=6\"\n      },\n      \"funding\": {\n        \"type\": \"github\",\n        \"url\": \"https://github.com/sponsors/jet2jet\"\n      }\n    },\n    \"node_modules/pend\": {\n      \"version\": \"1.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/pend/-/pend-1.2.0.tgz\",\n      \"integrity\": \"sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/picocolors\": {\n      \"version\": \"1.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz\",\n      \"integrity\": \"sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/plist\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/plist/-/plist-3.1.0.tgz\",\n      \"integrity\": \"sha512-uysumyrvkUX0rX/dEVqt8gC3sTBzd4zoWfLeS29nb53imdaXVvLINYXTI2GNqzaMuvacNx4uJQ8+b3zXR0pkgQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"@xmldom/xmldom\": \"^0.8.8\",\n        \"base64-js\": \"^1.5.1\",\n        \"xmlbuilder\": \"^15.1.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10.4.0\"\n      }\n    },\n    \"node_modules/postject\": {\n      \"version\": \"1.0.0-alpha.6\",\n      \"resolved\": \"https://registry.npmjs.org/postject/-/postject-1.0.0-alpha.6.tgz\",\n      \"integrity\": \"sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true,\n      \"dependencies\": {\n        \"commander\": \"^9.4.0\"\n      },\n      \"bin\": {\n        \"postject\": \"dist/cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=14.0.0\"\n      }\n    },\n    \"node_modules/postject/node_modules/commander\": {\n      \"version\": \"9.5.0\",\n      \"resolved\": \"https://registry.npmjs.org/commander/-/commander-9.5.0.tgz\",\n      \"integrity\": \"sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"peer\": true,\n      \"engines\": {\n        \"node\": \"^12.20.0 || >=14\"\n      }\n    },\n    \"node_modules/proc-log\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/proc-log/-/proc-log-2.0.1.tgz\",\n      \"integrity\": \"sha512-Kcmo2FhfDTXdcbfDH76N7uBYHINxc/8GW7UAVuVP9I+Va3uHSerrnKV6dLooga/gh7GlgzuCCr/eoldnL1muGw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/progress\": {\n      \"version\": \"2.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/progress/-/progress-2.0.3.tgz\",\n      \"integrity\": \"sha512-7PiHtLll5LdnKIMw100I+8xJXR5gW2QwWYkT6iJva0bXitZKa/XMrSbdmg3r2Xnaidz9Qumd0VPaMrZlF9V9sA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.4.0\"\n      }\n    },\n    \"node_modules/promise-inflight\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/promise-inflight/-/promise-inflight-1.0.1.tgz\",\n      \"integrity\": \"sha512-6zWPyEOFaQBJYcGMHBKTKJ3u6TBsnMFOIZSa6ce1e/ZrrsOlnHRHbabMjLiBYKp+n44X9eUI6VUPaukCXHuG4g==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/promise-retry\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/promise-retry/-/promise-retry-2.0.1.tgz\",\n      \"integrity\": \"sha512-y+WKFlBR8BGXnsNlIHFGPZmyDf3DFMoLhaflAnyZgV6rG6xu+JwesTo2Q9R6XwYmtmwAFCkAk3e35jEdoeh/3g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"err-code\": \"^2.0.2\",\n        \"retry\": \"^0.12.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/pump\": {\n      \"version\": \"3.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/pump/-/pump-3.0.4.tgz\",\n      \"integrity\": \"sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"end-of-stream\": \"^1.1.0\",\n        \"once\": \"^1.3.1\"\n      }\n    },\n    \"node_modules/punycode\": {\n      \"version\": \"2.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz\",\n      \"integrity\": \"sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=6\"\n      }\n    },\n    \"node_modules/quick-lru\": {\n      \"version\": \"5.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/quick-lru/-/quick-lru-5.1.1.tgz\",\n      \"integrity\": \"sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/read-binary-file-arch\": {\n      \"version\": \"1.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/read-binary-file-arch/-/read-binary-file-arch-1.0.6.tgz\",\n      \"integrity\": \"sha512-BNg9EN3DD3GsDXX7Aa8O4p92sryjkmzYYgmgTAc6CA4uGLEDzFfxOxugu21akOxpcXHiEgsYkC6nPsQvLLLmEg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"^4.3.4\"\n      },\n      \"bin\": {\n        \"read-binary-file-arch\": \"cli.js\"\n      }\n    },\n    \"node_modules/readable-stream\": {\n      \"version\": \"3.6.2\",\n      \"resolved\": \"https://registry.npmjs.org/readable-stream/-/readable-stream-3.6.2.tgz\",\n      \"integrity\": \"sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"inherits\": \"^2.0.3\",\n        \"string_decoder\": \"^1.1.1\",\n        \"util-deprecate\": \"^1.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/require-directory\": {\n      \"version\": \"2.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/require-directory/-/require-directory-2.1.1.tgz\",\n      \"integrity\": \"sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/resedit\": {\n      \"version\": \"1.7.2\",\n      \"resolved\": \"https://registry.npmjs.org/resedit/-/resedit-1.7.2.tgz\",\n      \"integrity\": \"sha512-vHjcY2MlAITJhC0eRD/Vv8Vlgmu9Sd3LX9zZvtGzU5ZImdTN3+d6e/4mnTyV8vEbyf1sgNIrWxhWlrys52OkEA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"pe-library\": \"^0.4.1\"\n      },\n      \"engines\": {\n        \"node\": \">=12\",\n        \"npm\": \">=6\"\n      },\n      \"funding\": {\n        \"type\": \"github\",\n        \"url\": \"https://github.com/sponsors/jet2jet\"\n      }\n    },\n    \"node_modules/resolve-alpn\": {\n      \"version\": \"1.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/resolve-alpn/-/resolve-alpn-1.2.1.tgz\",\n      \"integrity\": \"sha512-0a1F4l73/ZFZOakJnQ3FvkJ2+gSTQWz/r2KE5OdDY0TxPm5h4GkqkWWfM47T7HsbnOtcJVEF4epCVy6u7Q3K+g==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/responselike\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/responselike/-/responselike-2.0.1.tgz\",\n      \"integrity\": \"sha512-4gl03wn3hj1HP3yzgdI7d3lCkF95F21Pz4BPGvKHinyQzALR5CapwC8yIi0Rh58DEMQ/SguC03wFj2k0M/mHhw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"lowercase-keys\": \"^2.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/restore-cursor\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/restore-cursor/-/restore-cursor-3.1.0.tgz\",\n      \"integrity\": \"sha512-l+sSefzHpj5qimhFSE5a8nufZYAM3sBSVMAPtYkmC+4EH2anSGaEMXSD0izRQbu9nfyQ9y5JrVmp7E8oZrUjvA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"onetime\": \"^5.1.0\",\n        \"signal-exit\": \"^3.0.2\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/retry\": {\n      \"version\": \"0.12.0\",\n      \"resolved\": \"https://registry.npmjs.org/retry/-/retry-0.12.0.tgz\",\n      \"integrity\": \"sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 4\"\n      }\n    },\n    \"node_modules/rimraf\": {\n      \"version\": \"3.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/rimraf/-/rimraf-3.0.2.tgz\",\n      \"integrity\": \"sha512-JZkJMZkAGFFPP2YqXZXPbMlMBgsxzE8ILs4lMIX/2o0L9UBw9O/Y3o6wFw/i9YLapcUJWwqbi3kdxIPdC62TIA==\",\n      \"deprecated\": \"Rimraf versions prior to v4 are no longer supported\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"glob\": \"^7.1.3\"\n      },\n      \"bin\": {\n        \"rimraf\": \"bin.js\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/roarr\": {\n      \"version\": \"2.15.4\",\n      \"resolved\": \"https://registry.npmjs.org/roarr/-/roarr-2.15.4.tgz\",\n      \"integrity\": \"sha512-CHhPh+UNHD2GTXNYhPWLnU8ONHdI+5DI+4EYIAOaiD63rHeYlZvyh8P+in5999TTSFgUYuKUAjzRI4mdh/p+2A==\",\n      \"dev\": true,\n      \"license\": \"BSD-3-Clause\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"boolean\": \"^3.0.1\",\n        \"detect-node\": \"^2.0.4\",\n        \"globalthis\": \"^1.0.1\",\n        \"json-stringify-safe\": \"^5.0.1\",\n        \"semver-compare\": \"^1.0.0\",\n        \"sprintf-js\": \"^1.1.2\"\n      },\n      \"engines\": {\n        \"node\": \">=8.0\"\n      }\n    },\n    \"node_modules/safe-buffer\": {\n      \"version\": \"5.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz\",\n      \"integrity\": \"sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==\",\n      \"dev\": true,\n      \"funding\": [\n        {\n          \"type\": \"github\",\n          \"url\": \"https://github.com/sponsors/feross\"\n        },\n        {\n          \"type\": \"patreon\",\n          \"url\": \"https://www.patreon.com/feross\"\n        },\n        {\n          \"type\": \"consulting\",\n          \"url\": \"https://feross.org/support\"\n        }\n      ],\n      \"license\": \"MIT\"\n    },\n    \"node_modules/safer-buffer\": {\n      \"version\": \"2.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\",\n      \"integrity\": \"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/sanitize-filename\": {\n      \"version\": \"1.6.4\",\n      \"resolved\": \"https://registry.npmjs.org/sanitize-filename/-/sanitize-filename-1.6.4.tgz\",\n      \"integrity\": \"sha512-9ZyI08PsvdQl2r/bBIGubpVdR3RR9sY6RDiWFPreA21C/EFlQhmgo20UZlNjZMMZNubusLhAQozkA0Od5J21Eg==\",\n      \"dev\": true,\n      \"license\": \"WTFPL OR ISC\",\n      \"dependencies\": {\n        \"truncate-utf8-bytes\": \"^1.0.0\"\n      }\n    },\n    \"node_modules/sax\": {\n      \"version\": \"1.6.0\",\n      \"resolved\": \"https://registry.npmjs.org/sax/-/sax-1.6.0.tgz\",\n      \"integrity\": \"sha512-6R3J5M4AcbtLUdZmRv2SygeVaM7IhrLXu9BmnOGmmACak8fiUtOsYNWUS4uK7upbmHIBbLBeFeI//477BKLBzA==\",\n      \"dev\": true,\n      \"license\": \"BlueOak-1.0.0\",\n      \"engines\": {\n        \"node\": \">=11.0.0\"\n      }\n    },\n    \"node_modules/semver\": {\n      \"version\": \"6.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\",\n      \"integrity\": \"sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      }\n    },\n    \"node_modules/semver-compare\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/semver-compare/-/semver-compare-1.0.0.tgz\",\n      \"integrity\": \"sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true\n    },\n    \"node_modules/serialize-error\": {\n      \"version\": \"7.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/serialize-error/-/serialize-error-7.0.1.tgz\",\n      \"integrity\": \"sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"type-fest\": \"^0.13.1\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/shebang-command\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz\",\n      \"integrity\": \"sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"shebang-regex\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/shebang-regex\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz\",\n      \"integrity\": \"sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/signal-exit\": {\n      \"version\": \"3.0.7\",\n      \"resolved\": \"https://registry.npmjs.org/signal-exit/-/signal-exit-3.0.7.tgz\",\n      \"integrity\": \"sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/simple-update-notifier\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/simple-update-notifier/-/simple-update-notifier-2.0.0.tgz\",\n      \"integrity\": \"sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"semver\": \"^7.5.3\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/simple-update-notifier/node_modules/semver\": {\n      \"version\": \"7.7.4\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.7.4.tgz\",\n      \"integrity\": \"sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/slice-ansi\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/slice-ansi/-/slice-ansi-3.0.0.tgz\",\n      \"integrity\": \"sha512-pSyv7bSTC7ig9Dcgbw9AuRNUb5k5V6oDudjZoMBSr13qpLBG7tB+zgCkARjq7xIUgdz5P1Qe8u+rSGdouOOIyQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"ansi-styles\": \"^4.0.0\",\n        \"astral-regex\": \"^2.0.0\",\n        \"is-fullwidth-code-point\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/smart-buffer\": {\n      \"version\": \"4.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/smart-buffer/-/smart-buffer-4.2.0.tgz\",\n      \"integrity\": \"sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 6.0.0\",\n        \"npm\": \">= 3.0.0\"\n      }\n    },\n    \"node_modules/socks\": {\n      \"version\": \"2.8.7\",\n      \"resolved\": \"https://registry.npmjs.org/socks/-/socks-2.8.7.tgz\",\n      \"integrity\": \"sha512-HLpt+uLy/pxB+bum/9DzAgiKS8CX1EvbWxI4zlmgGCExImLdiad2iCwXT5Z4c9c3Eq8rP2318mPW2c+QbtjK8A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ip-address\": \"^10.0.1\",\n        \"smart-buffer\": \"^4.2.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 10.0.0\",\n        \"npm\": \">= 3.0.0\"\n      }\n    },\n    \"node_modules/socks-proxy-agent\": {\n      \"version\": \"7.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/socks-proxy-agent/-/socks-proxy-agent-7.0.0.tgz\",\n      \"integrity\": \"sha512-Fgl0YPZ902wEsAyiQ+idGd1A7rSFx/ayC1CQVMw5P+EQx2V0SgpGtf6OKFhVjPflPUl9YMmEOnmfjCdMUsygww==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"agent-base\": \"^6.0.2\",\n        \"debug\": \"^4.3.3\",\n        \"socks\": \"^2.6.2\"\n      },\n      \"engines\": {\n        \"node\": \">= 10\"\n      }\n    },\n    \"node_modules/socks-proxy-agent/node_modules/agent-base\": {\n      \"version\": \"6.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz\",\n      \"integrity\": \"sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 6.0.0\"\n      }\n    },\n    \"node_modules/source-map\": {\n      \"version\": \"0.6.1\",\n      \"resolved\": \"https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz\",\n      \"integrity\": \"sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==\",\n      \"dev\": true,\n      \"license\": \"BSD-3-Clause\",\n      \"engines\": {\n        \"node\": \">=0.10.0\"\n      }\n    },\n    \"node_modules/source-map-support\": {\n      \"version\": \"0.5.21\",\n      \"resolved\": \"https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz\",\n      \"integrity\": \"sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"buffer-from\": \"^1.0.0\",\n        \"source-map\": \"^0.6.0\"\n      }\n    },\n    \"node_modules/sprintf-js\": {\n      \"version\": \"1.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/sprintf-js/-/sprintf-js-1.1.3.tgz\",\n      \"integrity\": \"sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA==\",\n      \"dev\": true,\n      \"license\": \"BSD-3-Clause\",\n      \"optional\": true\n    },\n    \"node_modules/ssri\": {\n      \"version\": \"9.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/ssri/-/ssri-9.0.1.tgz\",\n      \"integrity\": \"sha512-o57Wcn66jMQvfHG1FlYbWeZWW/dHZhJXjpIcTfXldXEk5nz5lStPo3mK0OJQfGR3RbZUlbISexbljkJzuEj/8Q==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"minipass\": \"^3.1.1\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/stat-mode\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/stat-mode/-/stat-mode-1.0.0.tgz\",\n      \"integrity\": \"sha512-jH9EhtKIjuXZ2cWxmXS8ZP80XyC3iasQxMDV8jzhNJpfDb7VbQLVW4Wvsxz9QZvzV+G4YoSfBUVKDOyxLzi/sg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 6\"\n      }\n    },\n    \"node_modules/string_decoder\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz\",\n      \"integrity\": \"sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"safe-buffer\": \"~5.2.0\"\n      }\n    },\n    \"node_modules/string-width\": {\n      \"version\": \"4.2.3\",\n      \"resolved\": \"https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz\",\n      \"integrity\": \"sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"emoji-regex\": \"^8.0.0\",\n        \"is-fullwidth-code-point\": \"^3.0.0\",\n        \"strip-ansi\": \"^6.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/string-width-cjs\": {\n      \"name\": \"string-width\",\n      \"version\": \"4.2.3\",\n      \"resolved\": \"https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz\",\n      \"integrity\": \"sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"emoji-regex\": \"^8.0.0\",\n        \"is-fullwidth-code-point\": \"^3.0.0\",\n        \"strip-ansi\": \"^6.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/strip-ansi\": {\n      \"version\": \"6.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz\",\n      \"integrity\": \"sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-regex\": \"^5.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/strip-ansi-cjs\": {\n      \"name\": \"strip-ansi\",\n      \"version\": \"6.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz\",\n      \"integrity\": \"sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-regex\": \"^5.0.1\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/sumchecker\": {\n      \"version\": \"3.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/sumchecker/-/sumchecker-3.0.1.tgz\",\n      \"integrity\": \"sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"dependencies\": {\n        \"debug\": \"^4.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">= 8.0\"\n      }\n    },\n    \"node_modules/supports-color\": {\n      \"version\": \"7.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz\",\n      \"integrity\": \"sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"has-flag\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/tar\": {\n      \"version\": \"6.2.1\",\n      \"resolved\": \"https://registry.npmjs.org/tar/-/tar-6.2.1.tgz\",\n      \"integrity\": \"sha512-DZ4yORTwrbTj/7MZYq2w+/ZFdI6OZ/f9SFHR+71gIVUZhOQPHzVCLpvRnPgyaMpfWxxk/4ONva3GQSyNIKRv6A==\",\n      \"deprecated\": \"Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"chownr\": \"^2.0.0\",\n        \"fs-minipass\": \"^2.0.0\",\n        \"minipass\": \"^5.0.0\",\n        \"minizlib\": \"^2.1.1\",\n        \"mkdirp\": \"^1.0.3\",\n        \"yallist\": \"^4.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/tar/node_modules/minipass\": {\n      \"version\": \"5.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/minipass/-/minipass-5.0.0.tgz\",\n      \"integrity\": \"sha512-3FnjYuehv9k6ovOEbyOswadCDPX1piCfhV8ncmYtHOjuPwylVWsghTLo7rabjC3Rx5xD4HDx8Wm1xnMF7S5qFQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=8\"\n      }\n    },\n    \"node_modules/temp\": {\n      \"version\": \"0.9.4\",\n      \"resolved\": \"https://registry.npmjs.org/temp/-/temp-0.9.4.tgz\",\n      \"integrity\": \"sha512-yYrrsWnrXMcdsnu/7YMYAofM1ktpL5By7vZhf15CrXijWWrEYZks5AXBudalfSWJLlnen/QUJUB5aoB0kqZUGA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"mkdirp\": \"^0.5.1\",\n        \"rimraf\": \"~2.6.2\"\n      },\n      \"engines\": {\n        \"node\": \">=6.0.0\"\n      }\n    },\n    \"node_modules/temp-file\": {\n      \"version\": \"3.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/temp-file/-/temp-file-3.4.0.tgz\",\n      \"integrity\": \"sha512-C5tjlC/HCtVUOi3KWVokd4vHVViOmGjtLwIh4MuzPo/nMYTV/p1urt3RnMz2IWXDdKEGJH3k5+KPxtqRsUYGtg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"async-exit-hook\": \"^2.0.1\",\n        \"fs-extra\": \"^10.0.0\"\n      }\n    },\n    \"node_modules/temp-file/node_modules/fs-extra\": {\n      \"version\": \"10.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/fs-extra/-/fs-extra-10.1.0.tgz\",\n      \"integrity\": \"sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"graceful-fs\": \"^4.2.0\",\n        \"jsonfile\": \"^6.0.1\",\n        \"universalify\": \"^2.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/temp-file/node_modules/jsonfile\": {\n      \"version\": \"6.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.0.tgz\",\n      \"integrity\": \"sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"universalify\": \"^2.0.0\"\n      },\n      \"optionalDependencies\": {\n        \"graceful-fs\": \"^4.1.6\"\n      }\n    },\n    \"node_modules/temp-file/node_modules/universalify\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz\",\n      \"integrity\": \"sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 10.0.0\"\n      }\n    },\n    \"node_modules/temp/node_modules/mkdirp\": {\n      \"version\": \"0.5.6\",\n      \"resolved\": \"https://registry.npmjs.org/mkdirp/-/mkdirp-0.5.6.tgz\",\n      \"integrity\": \"sha512-FP+p8RB8OWpF3YZBCrP5gtADmtXApB5AMLn+vdyA+PyxCjrCs00mjyUozssO33cwDeT3wNGdLxJ5M//YqtHAJw==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"minimist\": \"^1.2.6\"\n      },\n      \"bin\": {\n        \"mkdirp\": \"bin/cmd.js\"\n      }\n    },\n    \"node_modules/temp/node_modules/rimraf\": {\n      \"version\": \"2.6.3\",\n      \"resolved\": \"https://registry.npmjs.org/rimraf/-/rimraf-2.6.3.tgz\",\n      \"integrity\": \"sha512-mwqeW5XsA2qAejG46gYdENaxXjx9onRNCfn7L0duuP4hCuTIi/QO7PDK07KJfp1d+izWPrzEJDcSqBa0OZQriA==\",\n      \"deprecated\": \"Rimraf versions prior to v4 are no longer supported\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"peer\": true,\n      \"dependencies\": {\n        \"glob\": \"^7.1.3\"\n      },\n      \"bin\": {\n        \"rimraf\": \"bin.js\"\n      }\n    },\n    \"node_modules/tiny-async-pool\": {\n      \"version\": \"1.3.1\",\n      \"resolved\": \"https://registry.npmjs.org/tiny-async-pool/-/tiny-async-pool-1.3.0.tgz\",\n      \"integrity\": \"sha512-01EAw5EDrcVrdgyCLgoSPvqznC0sVxDSVeiOz09FUpjh71G79VCqneOr+xvt7T1r76CF6ZZfPjHorN2+d+3mqA==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"semver\": \"^5.5.0\"\n      }\n    },\n    \"node_modules/tiny-async-pool/node_modules/semver\": {\n      \"version\": \"5.7.2\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-5.7.2.tgz\",\n      \"integrity\": \"sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"bin\": {\n        \"semver\": \"bin/semver\"\n      }\n    },\n    \"node_modules/tmp\": {\n      \"version\": \"0.2.5\",\n      \"resolved\": \"https://registry.npmjs.org/tmp/-/tmp-0.2.5.tgz\",\n      \"integrity\": \"sha512-voyz6MApa1rQGUxT3E+BK7/ROe8itEx7vD8/HEvt4xwXucvQ5G5oeEiHkmHZJuBO21RpOf+YYm9MOivj709jow==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=14.14\"\n      }\n    },\n    \"node_modules/tmp-promise\": {\n      \"version\": \"3.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/tmp-promise/-/tmp-promise-3.0.3.tgz\",\n      \"integrity\": \"sha512-RwM7MoPojPxsOBYnyd2hy0bxtIlVrihNs9pj5SUvY8Zz1sQcQG2tG1hSr8PDxfgEB8RNKDhqbIlroIarSNDNsQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"tmp\": \"^0.2.0\"\n      }\n    },\n    \"node_modules/truncate-utf8-bytes\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/truncate-utf8-bytes/-/truncate-utf8-bytes-1.0.2.tgz\",\n      \"integrity\": \"sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==\",\n      \"dev\": true,\n      \"license\": \"WTFPL\",\n      \"dependencies\": {\n        \"utf8-byte-length\": \"^1.0.1\"\n      }\n    },\n    \"node_modules/type-fest\": {\n      \"version\": \"0.13.1\",\n      \"resolved\": \"https://registry.npmjs.org/type-fest/-/type-fest-0.13.1.tgz\",\n      \"integrity\": \"sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==\",\n      \"dev\": true,\n      \"license\": \"(MIT OR CC0-1.0)\",\n      \"optional\": true,\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/typescript\": {\n      \"version\": \"5.9.3\",\n      \"resolved\": \"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz\",\n      \"integrity\": \"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==\",\n      \"dev\": true,\n      \"license\": \"Apache-2.0\",\n      \"bin\": {\n        \"tsc\": \"bin/tsc\",\n        \"tsserver\": \"bin/tsserver\"\n      },\n      \"engines\": {\n        \"node\": \">=14.17\"\n      }\n    },\n    \"node_modules/undici-types\": {\n      \"version\": \"6.21.0\",\n      \"resolved\": \"https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz\",\n      \"integrity\": \"sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/unique-filename\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/unique-filename/-/unique-filename-2.0.1.tgz\",\n      \"integrity\": \"sha512-ODWHtkkdx3IAR+veKxFV+VBkUMcN+FaqzUUd7IZzt+0zhDZFPFxhlqwPF3YQvMHx1TD0tdgYl+kuPnJ8E6ql7A==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"unique-slug\": \"^3.0.0\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/unique-slug\": {\n      \"version\": \"3.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/unique-slug/-/unique-slug-3.0.0.tgz\",\n      \"integrity\": \"sha512-8EyMynh679x/0gqE9fT9oilG+qEt+ibFyqjuVTsZn1+CMxH+XLlpvr2UZx4nVcCwTpx81nICr2JQFkM+HPLq4w==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"imurmurhash\": \"^0.1.4\"\n      },\n      \"engines\": {\n        \"node\": \"^12.13.0 || ^14.15.0 || >=16.0.0\"\n      }\n    },\n    \"node_modules/universalify\": {\n      \"version\": \"0.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/universalify/-/universalify-0.1.2.tgz\",\n      \"integrity\": \"sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">= 4.0.0\"\n      }\n    },\n    \"node_modules/uri-js\": {\n      \"version\": \"4.4.1\",\n      \"resolved\": \"https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz\",\n      \"integrity\": \"sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==\",\n      \"dev\": true,\n      \"license\": \"BSD-2-Clause\",\n      \"dependencies\": {\n        \"punycode\": \"^2.1.0\"\n      }\n    },\n    \"node_modules/utf8-byte-length\": {\n      \"version\": \"1.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/utf8-byte-length/-/utf8-byte-length-1.0.5.tgz\",\n      \"integrity\": \"sha512-Xn0w3MtiQ6zoz2vFyUVruaCL53O/DwUvkEeOvj+uulMm0BkUGYWmBYVyElqZaSLhY6ZD0ulfU3aBra2aVT4xfA==\",\n      \"dev\": true,\n      \"license\": \"(WTFPL OR MIT)\"\n    },\n    \"node_modules/util-deprecate\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz\",\n      \"integrity\": \"sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==\",\n      \"dev\": true,\n      \"license\": \"MIT\"\n    },\n    \"node_modules/verror\": {\n      \"version\": \"1.10.1\",\n      \"resolved\": \"https://registry.npmjs.org/verror/-/verror-1.10.1.tgz\",\n      \"integrity\": \"sha512-veufcmxri4e3XSrT0xwfUR7kguIkaxBeosDg00yDWhk49wdwkSUrvvsm7nc75e1PUyvIeZj6nS8VQRYz2/S4Xg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"optional\": true,\n      \"dependencies\": {\n        \"assert-plus\": \"^1.0.0\",\n        \"core-util-is\": \"1.0.2\",\n        \"extsprintf\": \"^1.2.0\"\n      },\n      \"engines\": {\n        \"node\": \">=0.6.0\"\n      }\n    },\n    \"node_modules/wcwidth\": {\n      \"version\": \"1.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/wcwidth/-/wcwidth-1.0.1.tgz\",\n      \"integrity\": \"sha512-XHPEwS0q6TaxcvG85+8EYkbiCux2XtWG2mkc47Ng2A77BQu9+DqIOJldST4HgPkuea7dvKSj5VgX3P1d4rW8Tg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"defaults\": \"^1.0.3\"\n      }\n    },\n    \"node_modules/which\": {\n      \"version\": \"2.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/which/-/which-2.0.2.tgz\",\n      \"integrity\": \"sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"dependencies\": {\n        \"isexe\": \"^2.0.0\"\n      },\n      \"bin\": {\n        \"node-which\": \"bin/node-which\"\n      },\n      \"engines\": {\n        \"node\": \">= 8\"\n      }\n    },\n    \"node_modules/wrap-ansi\": {\n      \"version\": \"7.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz\",\n      \"integrity\": \"sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-styles\": \"^4.0.0\",\n        \"string-width\": \"^4.1.0\",\n        \"strip-ansi\": \"^6.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/wrap-ansi?sponsor=1\"\n      }\n    },\n    \"node_modules/wrap-ansi-cjs\": {\n      \"name\": \"wrap-ansi\",\n      \"version\": \"7.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz\",\n      \"integrity\": \"sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"ansi-styles\": \"^4.0.0\",\n        \"string-width\": \"^4.1.0\",\n        \"strip-ansi\": \"^6.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/wrap-ansi?sponsor=1\"\n      }\n    },\n    \"node_modules/wrappy\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz\",\n      \"integrity\": \"sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/xmlbuilder\": {\n      \"version\": \"15.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/xmlbuilder/-/xmlbuilder-15.1.1.tgz\",\n      \"integrity\": \"sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=8.0\"\n      }\n    },\n    \"node_modules/y18n\": {\n      \"version\": \"5.0.8\",\n      \"resolved\": \"https://registry.npmjs.org/y18n/-/y18n-5.0.8.tgz\",\n      \"integrity\": \"sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/yallist\": {\n      \"version\": \"4.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz\",\n      \"integrity\": \"sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==\",\n      \"dev\": true,\n      \"license\": \"ISC\"\n    },\n    \"node_modules/yargs\": {\n      \"version\": \"17.7.2\",\n      \"resolved\": \"https://registry.npmjs.org/yargs/-/yargs-17.7.2.tgz\",\n      \"integrity\": \"sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"cliui\": \"^8.0.1\",\n        \"escalade\": \"^3.1.1\",\n        \"get-caller-file\": \"^2.0.5\",\n        \"require-directory\": \"^2.1.1\",\n        \"string-width\": \"^4.2.3\",\n        \"y18n\": \"^5.0.5\",\n        \"yargs-parser\": \"^21.1.1\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/yargs-parser\": {\n      \"version\": \"21.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/yargs-parser/-/yargs-parser-21.1.1.tgz\",\n      \"integrity\": \"sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==\",\n      \"dev\": true,\n      \"license\": \"ISC\",\n      \"engines\": {\n        \"node\": \">=12\"\n      }\n    },\n    \"node_modules/yauzl\": {\n      \"version\": \"2.10.0\",\n      \"resolved\": \"https://registry.npmjs.org/yauzl/-/yauzl-2.10.0.tgz\",\n      \"integrity\": \"sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"dependencies\": {\n        \"buffer-crc32\": \"~0.2.3\",\n        \"fd-slicer\": \"~1.1.0\"\n      }\n    },\n    \"node_modules/yocto-queue\": {\n      \"version\": \"0.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz\",\n      \"integrity\": \"sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==\",\n      \"dev\": true,\n      \"license\": \"MIT\",\n      \"engines\": {\n        \"node\": \">=10\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    }\n  }\n}\n",
+    "backend/macports_provider.py": "\"\"\"MacPorts provider: exact archive preflight; no implicit cross-provider migration.\"\"\"\nfrom __future__ import annotations\nimport concurrent.futures\nimport csv\nimport hashlib\nimport importlib.util\nimport json\nimport os\nfrom pathlib import Path\nimport re\nimport shlex\nimport tempfile\nimport time\n\nPORT = '/opt/local/bin/port'\nTCL = '/opt/local/libexec/macports/bin/tclsh8.6'\nNAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.+-]*\\Z')\nROOT = Path(__file__).resolve().parents[1]\n\ndef valid(name):\n    if not isinstance(name, str) or not NAME.fullmatch(name):\n        raise ValueError('Invalid MacPorts package identity')\n    return name\n\ndef checked(s, args, **kwargs):\n    result = s.run_cmd(args, **kwargs)\n    if result.code:\n        raise RuntimeError(result.stderr or result.stdout or f'Command failed: {args[0]}')\n    return result.stdout\n\ndef version_parts(value):\n    \"\"\"Separate MacPorts package revision from upstream for provider comparison.\"\"\"\n    match = re.fullmatch(r\"(.+?)_(\\d+)\", str(value))\n    if not match:\n        return str(value), 0\n    return match.group(1), int(match.group(2))\n\n\ndef inventory(s):\n    if not Path(PORT).is_file():\n        raise RuntimeError('MacPorts is not installed at /opt/local/bin/port')\n    raw = checked(s, [PORT, '-q', 'installed', 'active'], timeout=90)\n    outdated = checked(s, [PORT, '-q', 'outdated'], timeout=90)\n    if raw.strip() and not re.search(r'@\\S+\\s+\\(active\\)',raw):\n        raise RuntimeError('Unrecognized MacPorts installed inventory')\n    if outdated.strip() and not re.search(r'\\s<\\s',outdated):\n        raise RuntimeError('Unrecognized MacPorts outdated inventory')\n    old = {m[0]: m[1] for m in re.findall(r'^\\s*(\\S+)\\s+\\S+\\s+<\\s+(\\S+)', outdated, re.M)}\n    packages = []\n    for name, version, variants in re.findall(r'^\\s*(\\S+)\\s+@([^\\s+]+)((?:\\+[^\\s]+)?)\\s+\\(active\\)', raw, re.M):\n        valid(name)\n        upstream, revision = version_parts(version)\n        latest_upstream, latest_revision = version_parts(old.get(name, version))\n        packages.append(dict(name=name, kind='port', provider='macports', provider_name=name,\n            installation_id=f'macports:{name}', display_name=name, description='MacPorts',\n            description_he='', installed_version=version, latest_version=old.get(name, version),\n            installed_upstream_version=upstream, installed_revision=revision,\n            latest_upstream_version=latest_upstream, latest_revision=latest_revision,\n            installed_variants=variants, outdated=name in old, excluded=False,\n            route_reason='installed_owner', homepage='', current_release_date=None,\n            latest_release_date=None, days_since_outdated=None))\n    return packages\n\ndef load_probe():\n    spec = importlib.util.spec_from_file_location('mac_archive_probe', ROOT / 'tools/check-macports-archives.py')\n    mod = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(mod)\n    return mod\n\ndef preflight(s, names, installed=None):\n    names = [valid(n) for n in names]\n    if not names:\n        raise ValueError('No verified MacPorts mapping')\n    if any(n == 'ngrok' for n in names):\n        raise ValueError('ngrok is excluded')\n    probe = load_probe()\n    with tempfile.TemporaryDirectory(prefix='mac-manager-resolve-') as directory:\n        checked(s, [TCL, str(ROOT / 'tools/macports-resolve.tcl'), directory, *names],\n                timeout=300, cancellable=True)\n        def rows(file):\n            with (Path(directory) / file).open() as stream:\n                return list(csv.DictReader(stream, delimiter='\\t'))\n        results = rows('root-results.tsv')\n        if len(results) != len(names) or any(r['status'] != '0' for r in results):\n            raise RuntimeError('MacPorts dependency resolution failed: ' + json.dumps(results))\n        nodes = rows('nodes.tsv')\n        if not nodes or not set(names).issubset({r['name'] for r in nodes}):\n            raise RuntimeError('Incomplete MacPorts dependency graph')\n        by_name = {r['name']: r for r in nodes}\n        for row in nodes:\n            valid(row['name'])\n            if row['name'] == 'ngrok' or s.is_excluded(row['name'], 'port'):\n                raise RuntimeError('Excluded MacPorts dependency: ' + row['name'])\n            if not re.fullmatch(r'[A-Za-z0-9_.+-]+', row['archive']):\n                raise RuntimeError('Invalid archive identity')\n            missing = set(filter(None, row['requires'].split(','))) - by_name.keys()\n            if missing:\n                raise RuntimeError('Incomplete runtime closure: ' + str(missing))\n        # The metadata resolver evaluates default variants. Never install a different\n        # installed variant set on the strength of those observations.\n        for pkg in installed or inventory(s):\n            if pkg['name'] in by_name and pkg.get('installed_variants', '') != by_name[pkg['name']]['variants']:\n                raise RuntimeError('Installed variants require a separate migration: ' + pkg['name'])\n        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:\n            checked_nodes = list(pool.map(probe.check_node, nodes))\n        s.raise_if_cancel_requested()\n        missing = [r['archive'] for r in checked_nodes if r['archive_status'] != 'available']\n        if missing:\n            raise RuntimeError('Ready archives unavailable: ' + ', '.join(missing))\n        return dict(names=names, nodes=nodes, checked_at=s.now_iso(),\n                    signatures_verified=False, archive_count=len(nodes))\n\ndef applescript(s, command):\n    # Fixed executable and validated argv only. No user-provided shell programs.\n    source = 'do shell script ' + json.dumps(command) + ' with administrator privileges'\n    return checked(s, ['/usr/bin/osascript', '-e', source], timeout=None)\n\ndef privileged(s, action, names=(), activity=None):\n    if action not in {'install', 'upgrade', 'sync'}:\n        raise ValueError('Unsupported privileged operation')\n    names = [valid(n) for n in names]\n    if 'ngrok' in names or (action != 'sync' and not names):\n        raise ValueError('Excluded or empty privileged operation')\n    if s.is_cancel_requested():\n        raise s.OperationCancelledError('Canceled before authorization')\n    s.set_check_progress(phase='updating_packages', message='Waiting for macOS administrator authorization', eta_seconds=None)\n    argv = [PORT, '-N', '-b', action, *names]\n    # mktemp is executed AS ROOT. All redirected files live in the resulting\n    # root-owned directory; never redirect privileged output into user files.\n    worker = ('umask 022; ' + shlex.join(argv) + ' > \"$1/output\" 2>&1 & child=$!; '\n              'echo \"$child\" > \"$1/pid\"; wait \"$child\"; code=$?; '\n              'echo \"$code\" > \"$1/status\"')\n    # Keep the authorized shell alive until port finishes. Detached processes\n    # launched by Authorization Services may disappear when that shell exits.\n    directory = Path(applescript(s, 'd=$(/usr/bin/mktemp -d /private/tmp/mac-manager.XXXXXXXX); '\n                                '/bin/chmod 755 \"$d\"; echo \"$d\"').strip())\n    if not re.fullmatch(r'/private/tmp/mac-manager\\.[A-Za-z0-9]{8}', str(directory)):\n        raise RuntimeError('Invalid privileged operation receipt')\n    s.append_service_log(f'MacPorts authorized receipt: {directory}')\n    s.raise_if_cancel_requested()\n    foreground = '/bin/sh -c ' + shlex.quote(worker) + ' worker ' + shlex.quote(str(directory))\n    offset, canceled, started = 0, False, False\n    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:\n      command = executor.submit(applescript, s, foreground)\n      while not command.done():\n        if (directory / 'pid').exists() and not started:\n            started = True\n            s.set_check_progress(message='Refreshing MacPorts catalog' if action=='sync' else 'MacPorts is installing verified ready packages', eta_seconds=None)\n        if s.is_cancel_requested() and not canceled and (directory / 'pid').exists() and not (directory / 'status').exists():\n            # The receipt directory and PID were created by root, not supplied\n            # by the renderer. Kill descendants before the root port process.\n            cancel = ('[ -f ' + shlex.quote(str(directory / 'status')) + ' ] && exit 0; '\n                      'p=$(/bin/cat ' + shlex.quote(str(directory / 'pid')) + '); '\n                      'case \"$(/bin/ps -p \"$p\" -o command=)\" in *\"/opt/local/bin/port\"*) ;; *) exit 0;; esac; '\n                      'tree=\"$p\"; frontier=\"$p\"; '\n                      'while [ -n \"$frontier\" ]; do next=\"\"; for parent in $frontier; do '\n                      'children=$(/bin/ps -axo pid=,ppid= | /usr/bin/awk -v p=\"$parent\" \\'$2==p {print $1}\\'); '\n                      'next=\"$next $children\"; done; [ -z \"$(echo \"$next\" | /usr/bin/tr -d \" \")\" ] && break; '\n                      'tree=\"$next $tree\"; frontier=\"$next\"; done; /bin/kill -TERM $tree 2>/dev/null || true')\n            applescript(s, cancel)\n            canceled = True\n        output = (directory / 'output').read_text(errors='replace') if (directory / 'output').exists() else ''\n        if activity and len(output) > offset:\n            latest=output[offset:]\n            for marker,stage in [('Fetching archive','downloading'),('Fetching distfiles','downloading'),\n                                  ('Verifying','verifying'),('Installing','installing'),\n                                  ('Activating','installing'),('Cleaning','finishing')]:\n                if marker in latest: activity.state['stage']=stage\n            activity.observe(output[offset:], 'macports')\n        offset = len(output)\n        time.sleep(.25)\n      command.result()  # Authorization/launch errors must never become a polling loop.\n    if not (directory / 'status').is_file():\n        raise RuntimeError(f'MacPorts worker ended without a completion receipt: {directory}')\n    output = (directory / 'output').read_text(errors='replace')\n    code = int((directory / 'status').read_text().strip())\n    s.append_service_log(f'MacPorts {action}: receipt={directory} exit={code}')\n    if canceled:\n        raise s.OperationCancelledError('MacPorts operation canceled')\n    return s.CommandResult(code, output, '' if code == 0 else output)\n\ndef plan(s, pkg):\n    item = {**pkg, 'provider': 'macports', 'version': pkg['latest_version'], 'ready': False}\n    if pkg.get('inventory_stale') or s.is_excluded(pkg['name'], 'port') or pkg['name'] == 'ngrok':\n        return {**item, 'reason': 'excluded_or_unverified'}\n    try:\n        current = inventory(s)\n        row = next((p for p in current if p['name'] == pkg['name']), None)\n        if not row:\n            raise RuntimeError('Package is not installed in MacPorts; use migration approval')\n        item.update(version=row['latest_version'], preflight=preflight(s, [pkg['name']], current), ready=True)\n    except s.OperationCancelledError:\n        raise\n    except Exception as error:\n        item.update(reason='binary_route_unavailable', detail=str(error))\n    return item\n\ndef upgrade(s, item):\n    activity = s.UpgradeActivity(item['name'])\n    activity.state.update(provider='macports', stage='downloading')\n    activity.observe('Checking ready archives before MacPorts update', 'macports')\n    fresh = plan(s, item)\n    if not fresh['ready']:\n        return dict(name=item['name'], kind='port', provider='macports', ok=False, code=78,\n                    stdout='', stderr=fresh.get('detail', fresh.get('reason', 'Blocked')))\n    result = privileged(s, 'upgrade', [item['name']], activity)\n    after = next((p for p in inventory(s) if p['name'] == item['name']), None)\n    graph = fresh['preflight'].get('nodes', [])\n    root = next((n for n in graph if n.get('name') == item['name']), None)\n    expected = None if root is None else str(root['version']) + (\n        '_' + str(root['revision']) if root.get('revision') not in ('', '0', None) else '')\n    exact = (after is not None and root is not None\n             and after.get('installed_version') == expected\n             and after.get('installed_variants', '') == root.get('variants', ''))\n    ok = result.code == 0 and exact\n    smoke_error = None\n    if ok:\n        import provider_ownership\n        import migration_profiles\n        registry = provider_ownership.load_routes(s.TOOLS_ROOT)\n        if registry.get('error'):\n            ok = False\n            smoke_error = 'Ownership registry could not be verified'\n        else:\n            owner = next((r for r in registry.get('routes', [])\n                          if r.get('target_installation_id') == f\"macports:{item['name']}\"\n                          and r.get('status') == 'committed'), None)\n            if owner:\n                profile = migration_profiles.get(owner.get('profile_id'))\n                if not profile or owner.get('profile_version') != profile.version:\n                    ok = False\n                    smoke_error = 'Managed profile missing or changed'\n                else:\n                    try:\n                        migration_profiles.smoke(s, profile, root['version'])\n                    except Exception as error:\n                        ok = False\n                        smoke_error = 'Updated package failed usage verification: ' + str(error)\n    return dict(name=item['name'], kind='port', provider='macports', ok=ok,\n                installed_version=after.get('installed_version') if after else None,\n                code=result.code if result.code else (0 if ok else 1), stdout=result.stdout,\n                stderr=smoke_error or (result.stderr if result.code else\n                       '' if ok else 'Exact binary version or variants verification failed'))\n",
+    "backend/mac_manager.py": "\"\"\"Combined inventory and explicit one-time migration transactions.\"\"\"\nfrom __future__ import annotations\nimport hashlib\nimport json\nimport re\nfrom pathlib import Path\nimport shutil\nimport tempfile\nimport time\nimport threading\n\nSCAN_CONTEXT = threading.local()\nimport macports_provider as mp\nimport update_routes as routes\nimport catalog_refresh\nimport automatic_alternatives\nimport installation_evidence\nimport unified_updates\n\ndef mapping():\n    return json.loads((Path(__file__).with_name('macports-map.json')).read_text())\n\ndef combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):\n    if track_progress:\n        s.reset_check_progress_for_run()\n        s.set_check_progress(operation_name='check', phase='collecting_installed',\n                             message='Checking Homebrew inventory', current_package='Homebrew',\n                             done=0, total=3, eta_seconds=None)\n    prior = getattr(SCAN_CONTEXT, 'active', False)\n    SCAN_CONTEXT.active = prior or track_progress\n    try:\n        return _combined(s, brew_scan, refresh, track_progress, enrich_details)\n    except Exception as error:\n        if track_progress:\n            canceled = isinstance(error, s.OperationCancelledError)\n            s.set_check_progress(running=False, phase='canceled' if canceled else 'error',\n                message='Check canceled' if canceled else 'Check failed: ' + str(error),\n                canceled=canceled, error=None if canceled else str(error),\n                current_package=None, eta_seconds=None, completed_at=s.now_iso())\n        raise\n    finally:\n        SCAN_CONTEXT.active = prior\n\n\ndef _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):\n    installation_evidence.reset()\n    previous = s.read_json(s.STATE_FILE) or {}\n    status, errors = {}, []\n    try:\n        state = brew_scan(refresh, track_progress=track_progress, enrich_details=enrich_details, complete_progress=False)\n        packages = state['packages']\n        errors.extend(state.get('errors', []))\n        status['homebrew'] = {'ok': not bool(state.get('errors')), 'checked_at': s.now_iso(),\n                              'error': '; '.join(state.get('errors', []))}\n    except s.OperationCancelledError:\n        raise\n    except Exception as error:\n        errors.append('Homebrew: ' + str(error))\n        packages = [dict(p, inventory_stale=True, update_block_reason='inventory_unavailable')\n                    for p in previous.get('packages', []) if p.get('provider') != 'macports']\n        status['homebrew'] = {'ok': False, 'error': str(error),\n            'checked_at': previous.get('providers', {}).get('homebrew', {}).get('checked_at')}\n    # Existing independently managed tools and their Brew copies are separate\n    # installations. Keep legacy formula requests tied to the Brew copy.\n    extras=[]\n    for pkg in packages:\n        if pkg.get('provider','homebrew') not in {'homebrew','macports'}:\n            if pkg['kind'] != 'tool' and pkg.get('brew_installation_present') is not False and pkg.get('brew_installed_version'):\n                copy=dict(pkg,provider='homebrew',installed_version=pkg['brew_installed_version'],\n                          outdated=routes.version_key(pkg['brew_installed_version']) < routes.version_key(pkg['latest_version']))\n                extras.append(copy)\n            pkg['kind']='tool'\n    packages.extend(extras)\n    # Even without Brew, retain registered tools, but block updates until their\n    # target metadata can be verified. Never call an unknown target current.\n    present={p['name'] for p in packages if p.get('kind')=='tool'}\n    for name,record in routes.read_records(s.TOOLS_ROOT).items():\n        if name not in present:\n            packages.append(dict(name=name,kind='tool',provider=record['provider'],\n                installed_version=record['version'],latest_version='unknown',outdated=False,\n                inventory_stale=True,update_block_reason='inventory_unavailable',description='Managed tool'))\n    if track_progress:\n        s.raise_if_cancel_requested()\n        s.set_check_progress(phase='collecting_macports', message='Checking MacPorts inventory',\n                             current_package='MacPorts', done=1, total=3, eta_seconds=None)\n    interactive = track_progress and s.read_current_operation().get('name') == 'check_now'\n    catalog_state = catalog_refresh.ensure(s, refresh=refresh, interactive=interactive)\n    if track_progress:\n        s.set_check_progress(phase='collecting_macports', message='Checking MacPorts inventory',\n                             current_package='MacPorts', eta_seconds=None)\n    try:\n        ports = mp.inventory(s)\n        if not catalog_state['fresh']:\n            ports = [dict(p, inventory_stale=True, update_block_reason='inventory_unavailable') for p in ports]\n        packages.extend(ports)\n        status['macports'] = {'ok': True, 'checked_at': s.now_iso(),\n                             'catalog': catalog_state, 'catalog_note': catalog_state['status']}\n    except s.OperationCancelledError:\n        raise\n    except Exception as error:\n        errors.append('MacPorts: ' + str(error))\n        packages.extend(dict(p, inventory_stale=True, update_block_reason='inventory_unavailable')\n                        for p in previous.get('packages', []) if p.get('provider') == 'macports')\n        status['macports'] = {'ok': False, 'error': str(error), 'catalog': catalog_state,\n            'checked_at': previous.get('providers', {}).get('macports', {}).get('checked_at')}\n    for pkg in packages:\n        provider = pkg.get('provider', 'homebrew')\n        pkg.update(provider=provider, provider_name=pkg['name'], installation_id=(\n            f\"homebrew:{pkg['kind']}:{pkg['name']}\" if provider=='homebrew' else\n            f\"macports:{pkg['name']}\" if provider=='macports' else\n            f\"pixi:{pkg['name']}\" if provider=='pixi' else\n            f\"{provider}:{pkg['kind']}:{pkg['name']}\"))\n        if provider == 'macports':\n            pkg['excluded'] = pkg['name'] == 'ngrok' or s.is_excluded(pkg['name'], 'port')\n            if pkg['excluded']: pkg['outdated'] = False\n    links = mapping()\n    for pkg in packages:\n        if pkg['provider'] != 'macports':\n            pkg['parallel_installations'] = [p['installation_id'] for p in packages\n                if p['provider'] == 'macports' and p['name'] in links.get(pkg['name'], [])]\n    if track_progress:\n        s.raise_if_cancel_requested()\n        s.set_check_progress(phase='preflight', message='Checking binary routes and migration proposals',\n                             current_package=None, done=2, total=3, eta_seconds=None)\n    offers = []\n    try:\n        from update_engine import Engine\n        engine = Engine(s)\n        catalog, installed = engine.catalog(), engine.installed()\n        for p in packages:\n            if p['provider'] == 'homebrew' and p['kind'] == 'formula' and p['name'] in links and not p.get('excluded'):\n                blockers = routes.bottle_blockers(p['name'], catalog, installed, s.load_settings()['excluded_packages'])\n                if blockers:\n                    if s.load_settings()['binary_only']:\n                        p['update_block_reason'] = 'source_required'\n                    offers.append(dict(name=p['name'], ports=links.get(p['name'], []),\n                        status='requires_live_check' if links.get(p['name']) else 'mapping_unverified',\n                        executable=p['name'] in {'terminal-notifier','include-what-you-use'}, source_blockers=blockers))\n    except s.OperationCancelledError:\n        raise\n    except Exception as error:\n        errors.append('Migration recommendations: ' + str(error))\n    if refresh:\n        try:\n            offers = automatic_alternatives.check(s, offers, packages, catalog_state['fresh'], report=track_progress)\n        except s.OperationCancelledError:\n            raise\n        except Exception as error:\n            errors.append('Alternative checks: ' + str(error))\n            for offer in offers:\n                offer.update(status='check_failed', detail=str(error), checked_at=s.now_iso())\n    else:\n        previous_offers = {o['name']: o for o in previous.get('migrations', [])}\n        for offer in offers:\n            pkg = next(p for p in packages if p['name']==offer['name'] and p['kind']=='formula')\n            prior = previous_offers.get(offer['name'], {})\n            offer['homebrew_target'] = pkg.get('latest_version')\n            if (catalog_state['fresh'] and prior.get('homebrew_target') == pkg.get('latest_version')\n                    and prior.get('version_policy') == automatic_alternatives.VERSION_POLICY\n                    and prior.get('installed_version') == pkg.get('installed_version')\n                    and prior.get('status') not in {'requires_live_check','checking_pending'}\n                    and catalog_refresh.recent(prior.get('checked_at'), 6*3600)):\n                offer.update(prior)\n            else:\n                offer.update(status='checking_pending' if offer['ports'] else 'mapping_unverified')\n            pkg.update(alternative_status=offer['status'], alternative_detail=offer.get('detail',''),\n                       alternative_target=offer.get('target'), alternative_below_homebrew=offer.get('below_homebrew_target', False))\n    # T02 classifies mapped Homebrew CLI tools even when Brew has a bottle.\n    # Supplemental records are not advertised as MacPorts migration offers.\n    mapped = set(links) | set(routes.PIXI_TOOLS)\n    existing = {offer['name'] for offer in offers}\n    supplemental = [dict(name=p['name'], status='classification_only',\n                         ports=[], executable=False)\n                    for p in packages if p.get('provider') == 'homebrew'\n                    and p.get('kind') == 'formula' and p.get('name') in mapped\n                    and p.get('name') not in existing\n                    and not p.get('excluded') and not p.get('inventory_stale')]\n    augmented = installation_evidence.annotate(\n        s, offers + supplemental, packages, refresh, report=track_progress)\n    classifications = {offer['name']: offer['classification'] for offer in augmented\n                       if offer.get('classification')}\n    for package in packages:\n        if package.get('provider') == 'homebrew' and package.get('kind') == 'formula':\n            if package.get('name') in classifications:\n                package['classification'] = classifications[package['name']]\n    offers = augmented[:len(offers)]\n    journal = s.read_json(s.DATA_DIR / 'migration-journal.json')\n    state = dict(app=s.APP_NAME, updated_at=s.now_iso(), packages=packages,\n                 counts=s.summarize_counts(packages), errors=errors, providers=status,\n                 partial=bool(errors) or not all(p['ok'] for p in status.values()), migrations=offers,\n                 migration_journal=journal)\n    if track_progress:\n        s.raise_if_cancel_requested()\n    if refresh:\n        try:\n            unified_updates.generate_plan(s, state)\n        except s.OperationCancelledError:\n            raise\n        except Exception as error:\n            errors.append('Unified plan: ' + str(error))\n            state['partial'] = True\n    else:\n        unified_updates.attach_cached(s, state)\n    s.atomic_write_json(s.STATE_FILE, state)\n    if track_progress:\n        failed = not any(provider['ok'] for provider in status.values())\n        s.set_check_progress(running=False, phase='error' if failed else 'completed',\n            message='All inventory checks failed' if failed else\n                    ('Inventory checked with warnings' if state['partial'] else 'Package inventories checked'),\n            done=3, total=3, current_package=None, error='; '.join(errors) if errors else None,\n            completed_at=s.now_iso(), eta_seconds=None if failed else 0)\n    return state\n\ndef migration_plan(s, name):\n    if name == 'ngrok' or s.is_excluded(name, 'formula'):\n        raise ValueError('Package is excluded')\n    roots = mapping().get(name, [])\n    if not roots:\n        raise ValueError('No verified package mapping')\n    current = s.fetch_installed_inventory(s.fetch_outdated_index())\n    pkg = next((p for p in current if p['name'] == name and p['kind'] == 'formula'), None)\n    if pkg and (pkg.get('inventory_stale') or pkg.get('inventory_verification', {}).get('status', 'verified') != 'verified'):\n        raise ValueError('Installation evidence is unverified; scan and resolve the reported inventory gap')\n    if not pkg or pkg.get('brew_installation_present') is False:\n        raise ValueError('The Homebrew installation is not present')\n    from update_engine import Engine\n    engine = Engine(s)\n    blockers = routes.bottle_blockers(name, engine.catalog(), engine.installed(), s.load_settings()['excluded_packages'])\n    if not blockers:\n        raise ValueError('Homebrew has a binary route; migration is unnecessary')\n    graph = mp.preflight(s, roots)\n    target = next(n['version'] for n in graph['nodes'] if n['name'] == roots[0])\n    probe = mp.load_probe()\n    # Cross-manager comparison is strictly upstream only, never revisions.\n    candidates = {root: next(n['version'] for n in graph['nodes'] if n['name'] == root) for root in roots}\n    comparison = automatic_alternatives.compare_versions(probe, pkg['installed_version'], pkg['latest_version'], candidates)\n    if comparison['status'] != 'version_eligible':\n        raise ValueError(comparison['detail'])\n    consumers = mp.checked(s, [s.brew_bin(), 'uses', '--installed', name], timeout=90).splitlines()\n    plan = dict(name=name, roots=roots, installed_version=pkg['installed_version'], target=target,\n        version_policy=automatic_alternatives.VERSION_POLICY,\n        homebrew_target=pkg['latest_version'], below_homebrew_target=comparison['below_homebrew_target'],\n        graph=graph, consumers=consumers, executable=name=='terminal-notifier',\n        paths=['/opt/local', '/usr/local'], remove_brew=not consumers,\n        requires='Notification integration test' if name=='terminal-notifier' else 'Consumer/project/data migration plan',\n        created_at=time.time())\n    plan['id'] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()\n    s.atomic_write_json(s.DATA_DIR / 'migration-plan.json', plan)\n    return plan\n\ndef approve(s, plan_id):\n    old = s.read_json(s.DATA_DIR / 'migration-plan.json') or {}\n    if old.get('id') != plan_id or time.time()-old.get('created_at', 0)>900:\n        raise ValueError('Migration plan expired; request a fresh plan')\n    if not old.get('executable') or old.get('name') != 'terminal-notifier':\n        raise ValueError('This package requires its own consumer migration plan')\n    s.raise_if_cancel_requested()\n    fresh = migration_plan(s, old['name'])\n    for key in ('installed_version', 'target', 'consumers', 'remove_brew', 'version_policy'):\n        if old.get(key) != fresh.get(key):\n            raise ValueError('Migration changed; review a new plan')\n    if old['graph']['nodes'] != fresh['graph']['nodes']:\n        raise ValueError('Dependency graph changed; review a new plan')\n    journal = dict(plan=fresh, status='running', stage='backup', started_at=s.now_iso())\n    dest = s.DATA_DIR / 'migration-journal.json'\n    def stage(value):\n        journal['stage']=value\n        s.atomic_write_json(dest, journal)\n    stage('backup')\n    try:\n        # Preserve the whole original keg, its symlinks and metadata before uninstall.\n        prefix = Path(mp.checked(s, [s.brew_bin(), '--prefix', 'terminal-notifier'], timeout=30).strip()).resolve()\n        cellar = Path(mp.checked(s, [s.brew_bin(), '--cellar'], timeout=30).strip()).resolve()\n        if not prefix.is_relative_to(cellar / 'terminal-notifier') or not prefix.is_dir():\n            raise RuntimeError('Unexpected terminal-notifier keg path')\n        backup = s.TOOLS_ROOT / 'recovery' / ('notifier-' + str(time.time_ns()))\n        backup.mkdir(parents=True)\n        shutil.copytree(prefix, backup / prefix.name, symlinks=True)\n        for path in prefix.rglob('*'):\n            relative = path.relative_to(prefix)\n            copy = backup / prefix.name / relative\n            if path.is_symlink():\n                if path.readlink() != copy.readlink(): raise RuntimeError('Backup link mismatch')\n            elif path.is_file() and hashlib.sha256(path.read_bytes()).digest()!=hashlib.sha256(copy.read_bytes()).digest():\n                raise RuntimeError('Backup content mismatch')\n        journal['backup']=str(backup)\n        stage('install')\n        activity = s.UpgradeActivity('terminal-notifier')\n        activity.state['provider']='macports'\n        current = next((p for p in mp.inventory(s) if p['name']=='terminal-notifier'), None)\n        root = next(n for n in fresh['graph']['nodes'] if n['name']=='terminal-notifier')\n        expected = root['version'] + '_' + root['revision']\n        if not current or current['installed_version'] != expected or current['outdated']:\n            result = mp.privileged(s, 'install', ['terminal-notifier'], activity)\n            if result.code: raise RuntimeError(result.stderr)\n        else:\n            journal['installation_reused'] = True\n        s.raise_if_cancel_requested()\n        stage('verify')\n        installed = next((p for p in mp.inventory(s) if p['name']=='terminal-notifier'), None)\n        if not installed or installed['outdated']:\n            raise RuntimeError('MacPorts installation verification failed')\n        binary = notifier_path()\n        if not binary: raise RuntimeError('MacPorts notification executable is absent')\n        version = mp.checked(s, [str(binary), '-version'], timeout=30)\n        if not re.search(r'(?<![0-9])'+re.escape(fresh['target'])+r'(?![0-9])',version):\n            raise RuntimeError('Notifier version mismatch')\n        # The CLI package and the application's notification delivery identity\n        # are separate. Preserve the existing app helper and its user permission.\n        # Running MacPorts' default bundle ID would change that identity.\n        helper = app_notification_path()\n        s.send_notification({'packages': [], 'notification_test': True}, notifier_override=str(helper))\n        stage('activate')\n        s.atomic_write_json(s.DATA_DIR / 'notifier-route.json', {'provider':'application_helper',\n            'path':str(helper), 'cli_provider':'macports', 'cli_path':str(binary)})\n        s.raise_if_cancel_requested()\n        stage('cleanup')\n        consumers = mp.checked(s, [s.brew_bin(), 'uses', '--installed', 'terminal-notifier'], timeout=60).splitlines()\n        if not consumers:\n            journal['brew_uninstall_output'] = mp.checked(s, [s.brew_bin(), 'uninstall', '--formula', 'terminal-notifier'],\n                timeout=120, env_override={'HOMEBREW_NO_AUTOREMOVE':'1',\n                    'HOMEBREW_NO_INSTALL_CLEANUP':'1', 'HOMEBREW_NO_AUTO_UPDATE':'1'})\n        journal.update(status='completed', completed_at=s.now_iso(), preserved_for_consumers=consumers)\n        stage('completed')\n        return journal\n    except Exception as error:\n        journal.update(status='needs_attention', error=str(error), completed_at=s.now_iso())\n        s.atomic_write_json(dest, journal)\n        raise\n\ndef app_notification_path():\n    helper = Path.home() / 'Applications/Homebrew Update Notifications.app/Contents/MacOS/terminal-notifier'\n    if not helper.is_file():\n        raise RuntimeError('The application notification helper is absent; configure its notification identity before migrating')\n    return helper\n\ndef notifier_path():\n    candidates = [Path('/opt/local/bin/terminal-notifier'),\n        Path('/opt/local/Applications/terminal-notifier.app/Contents/MacOS/terminal-notifier'),\n        Path('/Applications/MacPorts/terminal-notifier.app/Contents/MacOS/terminal-notifier')]\n    return next((p for p in candidates if p.is_file()), None)\n\n# Bundle 003 keeps the verified notifier pilot intact and delegates new profiles.\n_legacy_migration_plan=migration_plan\n_legacy_approve=approve\nimport migration_engine as _migration_engine\ndef migration_plan(s,name): return _legacy_migration_plan(s,name) if name=='terminal-notifier' else _migration_engine.plan(s,name)\ndef approve(s,plan_id):\n old=s.read_json(s.DATA_DIR/'migration-plan.json') or {}\n return _legacy_approve(s,plan_id) if old.get('name')=='terminal-notifier' and not old.get('schema_version') else _migration_engine.approve(s,plan_id)\ndef migration_recovery_plan(s, transaction_id, action): return _migration_engine.recovery_plan(s, transaction_id, action)\n",
+    "electron/main.js": "const { app, BrowserWindow, ipcMain, dialog } = require('electron');\nconst fs = require('node:fs');\nconst os = require('node:os');\nconst net = require('node:net');\nconst http = require('node:http');\nconst path = require('node:path');\nconst { spawn, spawnSync } = require('node:child_process');\nconst { createAppUpdater } = require('./app-updater');\n\napp.setPath('userData', path.join(os.homedir(), 'Library', 'Application Support', 'Homebrew Update Manager'));\n\nconst DEV_APP_ROOT = path.join(__dirname, '..');\nconst PACKAGED_ASAR_ROOT = path.join(process.resourcesPath, 'app.asar');\nconst PACKAGED_UNPACKED_ROOT = path.join(process.resourcesPath, 'app.asar.unpacked');\n\nfunction appRoot({ unpacked = false } = {}) {\n  if (!app.isPackaged) {\n    return DEV_APP_ROOT;\n  }\n\n  return unpacked ? PACKAGED_UNPACKED_ROOT : PACKAGED_ASAR_ROOT;\n}\n\nfunction resolveServiceScriptCandidates() {\n  return [\n    path.join(appRoot({ unpacked: true }), 'backend', 'brew-updates-service.py'),\n    path.join(appRoot({ unpacked: false }), 'backend', 'brew-updates-service.py'),\n    path.join(process.resourcesPath, 'backend', 'brew-updates-service.py'),\n  ];\n}\n\nfunction resolveServiceScriptPath() {\n  const candidates = resolveServiceScriptCandidates();\n  const resolved = candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];\n  return {\n    resolved,\n    candidates,\n  };\n}\n\nconst SERVICE_SCRIPT_INFO = resolveServiceScriptPath();\nconst SERVICE_SCRIPT = SERVICE_SCRIPT_INFO.resolved;\nconst SERVICE_HOST = '127.0.0.1';\nconst SERVICE_PORT_MIN = 8765;\nconst SERVICE_PORT_MAX = 8795;\nlet activeServicePort = SERVICE_PORT_MIN;\nconst REQUIRED_PYTHON = '3.14';\nconst FIXED_UPDATE_REPO = 'tzoharlary/brew-update-manager';\n\nlet resolvedPythonBin = null;\n\nlet mainWindow = null;\nlet appUpdater = null;\nlet ownedServiceChild = null;\n\nfunction broadcastAppUpdateProgress(payload) {\n  for (const win of BrowserWindow.getAllWindows()) {\n    if (!win.isDestroyed()) {\n      win.webContents.send('app-update:progress', payload);\n    }\n  }\n}\n\nfunction executableExists(filePath) {\n  if (!filePath) return false;\n  try {\n    fs.accessSync(filePath, fs.constants.X_OK);\n    return true;\n  } catch {\n    return false;\n  }\n}\n\nfunction isPython314(pythonBin) {\n  const probe = spawnSync(\n    pythonBin,\n    ['-c', 'import sys; raise SystemExit(0 if (sys.version_info.major, sys.version_info.minor)==(3,14) else 1)'],\n    { stdio: 'ignore' },\n  );\n  return probe.status === 0;\n}\n\nfunction resolvePythonBin() {\n  const fromEnv = process.env.PYTHON_BIN ? [process.env.PYTHON_BIN] : [];\n  const candidates = [\n    ...fromEnv,\n    path.join(os.homedir(), 'Library', 'Application Support', 'Homebrew Update Manager',\n      'runtime', 'python', 'current', 'bin', 'python3.14'),\n    '/opt/homebrew/bin/python3.14',\n    '/opt/homebrew/bin/python3',\n    '/usr/local/bin/python3.14',\n    '/usr/local/bin/python3',\n    'python3.14',\n    'python3',\n  ];\n\n  for (const candidate of candidates) {\n    if (candidate.includes('/') && !executableExists(candidate)) {\n      continue;\n    }\n    if (isPython314(candidate)) {\n      return candidate;\n    }\n  }\n\n  throw new Error(\n    `Python ${REQUIRED_PYTHON} not found. Please install Python ${REQUIRED_PYTHON} and make sure it is available in PATH.`,\n  );\n}\n\nfunction getPythonBin() {\n  if (!resolvedPythonBin) {\n    resolvedPythonBin = resolvePythonBin();\n  }\n  return resolvedPythonBin;\n}\n\nfunction delay(ms) {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n\nfunction serviceBase() {\n  return `http://${SERVICE_HOST}:${activeServicePort}`;\n}\n\nfunction serviceUrl(pathname) {\n  return `${serviceBase()}${pathname}`;\n}\n\nasync function fetchJson(url, options = {}) {\n  // Upgrade responses may legitimately take hours. Keep their connection open\n  // without fetch's response-header deadline; progress uses separate requests.\n  return new Promise((resolve, reject) => {\n    const headers = { ...(options.headers || {}) };\n    if (options.body) headers['Content-Length'] = Buffer.byteLength(options.body);\n    const request = http.request(url, { method: options.method || 'GET', headers, timeout: 0 }, (response) => {\n      let body = '';\n      response.setEncoding('utf8');\n      response.on('data', chunk => { body += chunk; });\n      response.on('error', reject);\n      response.on('end', () => {\n        let payload;\n        try { payload = JSON.parse(body); } catch { reject(new Error('Invalid backend response')); return; }\n        if (response.statusCode < 200 || response.statusCode >= 300) {\n          reject(new Error(payload.detail || payload.error || `HTTP ${response.statusCode}`));\n        } else resolve(payload);\n      });\n    });\n    request.on('error', reject);\n    if (options.body) request.write(options.body);\n    request.end();\n  });\n}\n\nasync function serviceHealthyOnPort(port) {\n  try {\n    const res = await fetch(`http://${SERVICE_HOST}:${port}/health`, { method: 'GET' });\n    if (!res.ok) return false;\n\n    const payload = await res.json().catch(() => null);\n    if (!payload || typeof payload !== 'object') return false;\n    return payload.ok === true && payload.app === 'Mac Update Manager' && payload.protocol === 6;\n  } catch {\n    return false;\n  }\n}\n\nfunction isPortAvailable(port) {\n  return new Promise((resolve) => {\n    const server = net.createServer();\n\n    server.once('error', () => {\n      resolve(false);\n    });\n\n    server.once('listening', () => {\n      server.close(() => resolve(true));\n    });\n\n    server.listen(port, SERVICE_HOST);\n  });\n}\n\nasync function selectServicePort() {\n  for (let port = SERVICE_PORT_MIN; port <= SERVICE_PORT_MAX; port += 1) {\n    // eslint-disable-next-line no-await-in-loop\n    if (await serviceHealthyOnPort(port)) {\n      return { port, alreadyRunning: true };\n    }\n  }\n\n  for (let port = SERVICE_PORT_MIN; port <= SERVICE_PORT_MAX; port += 1) {\n    // eslint-disable-next-line no-await-in-loop\n    if (await isPortAvailable(port)) {\n      return { port, alreadyRunning: false };\n    }\n  }\n\n  throw new Error(`No available backend port found in range ${SERVICE_PORT_MIN}-${SERVICE_PORT_MAX}`);\n}\n\nasync function ensureServiceRunning() {\n  const selection = await selectServicePort();\n  activeServicePort = selection.port;\n\n  if (selection.alreadyRunning) return;\n\n  if (!fs.existsSync(SERVICE_SCRIPT)) {\n    const tried = SERVICE_SCRIPT_INFO.candidates\n      .map((candidate) => `- ${candidate}`)\n      .join('\\n');\n    throw new Error(`Backend service script missing: ${SERVICE_SCRIPT}\\nTried:\\n${tried}`);\n  }\n\n  const pythonBin = getPythonBin();\n\n  const child = spawn(pythonBin, [\n    SERVICE_SCRIPT,\n    '--serve',\n    '--host',\n    SERVICE_HOST,\n    '--port',\n    String(activeServicePort),\n  ], {\n    detached: false,\n    stdio: 'ignore',\n  });\n  ownedServiceChild = child;\n  child.once('exit', () => {\n    if (ownedServiceChild === child) ownedServiceChild = null;\n  });\n\n  for (let i = 0; i < 60; i += 1) {\n    // eslint-disable-next-line no-await-in-loop\n    if (await serviceHealthyOnPort(activeServicePort)) return;\n    // eslint-disable-next-line no-await-in-loop\n    await delay(200);\n  }\n\n  throw new Error(`Service did not become healthy in time on port ${activeServicePort}`);\n}\n\nfunction createWindow() {\n  mainWindow = new BrowserWindow({\n    width: 1340,\n    height: 900,\n    minWidth: 1100,\n    minHeight: 700,\n    title: 'Mac Update Manager',\n    webPreferences: {\n      preload: path.join(__dirname, 'preload.js'),\n      contextIsolation: true,\n      nodeIntegration: false,\n    },\n  });\n\n  mainWindow.loadFile(path.join(appRoot(), 'renderer', 'index.html'));\n\n  mainWindow.on('closed', () => {\n    mainWindow = null;\n  });\n}\n\nfunction focusMainWindow() {\n  if (!mainWindow) {\n    createWindow();\n    return;\n  }\n\n  if (mainWindow.isMinimized()) {\n    mainWindow.restore();\n  }\n  mainWindow.focus();\n}\n\nasync function bootstrap() {\n  await ensureServiceRunning();\n  createWindow();\n}\n\n// Single-instance behavior: additional launches focus existing window.\nconst gotLock = app.requestSingleInstanceLock();\nif (!gotLock) {\n  app.quit();\n} else {\n  app.on('second-instance', () => {\n    focusMainWindow();\n  });\n}\n\napp.whenReady().then(async () => {\n  try {\n    appUpdater = createAppUpdater({\n      app,\n      repo: FIXED_UPDATE_REPO,\n    });\n\n    const marker = appUpdater.readAndConsumeUpdateMarker();\n    if (marker?.status === 'rolled_back') {\n      dialog.showErrorBox(\n        'Mac Update Manager',\n        'The previous app update failed to start correctly and was rolled back to the last working version.',\n      );\n    }\n\n    await bootstrap();\n  } catch (error) {\n    dialog.showErrorBox('Mac Update Manager', `Failed to start backend service:\\n${error.message}`);\n    app.quit();\n    return;\n  }\n\n  app.on('activate', () => {\n    if (BrowserWindow.getAllWindows().length === 0) {\n      createWindow();\n    } else {\n      focusMainWindow();\n    }\n  });\n});\n\napp.on('window-all-closed', () => {\n  app.quit();\n});\n\napp.on('before-quit', () => {\n  if (ownedServiceChild && ownedServiceChild.exitCode === null) {\n    // The backend drains any active check/update before stopping its server.\n    ownedServiceChild.kill('SIGTERM');\n    ownedServiceChild = null;\n  }\n});\n\nipcMain.handle('state:get', async () => fetchJson(serviceUrl('/api/state')));\nipcMain.handle('update:plan:get', async () => fetchJson(serviceUrl('/api/update-plan')));\nipcMain.handle('progress:get', async () => fetchJson(serviceUrl('/api/progress')));\nipcMain.handle('updates:history:get', async () => fetchJson(serviceUrl('/api/update-history')));\nipcMain.handle('settings:get', async () => fetchJson(serviceUrl('/api/settings')));\nipcMain.handle('settings:update-policy', async (_event, payload) => fetchJson(serviceUrl('/api/settings/update-policy'), {\n  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('settings:scheduler:update', async (_event, payload) => fetchJson(serviceUrl('/api/settings/scheduler'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('settings:brew-path:update', async (_event, payload) => fetchJson(serviceUrl('/api/settings/brew-path'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('settings:brew-path:auto-detect', async () => fetchJson(serviceUrl('/api/brew/auto-detect')));\nipcMain.handle('app-update:check', async () => {\n  if (!appUpdater) {\n    throw new Error('App updater is not initialized');\n  }\n\n  return appUpdater.checkForUpdate({\n    onProgress: broadcastAppUpdateProgress,\n  });\n});\nipcMain.handle('app-update:download-install', async () => {\n  if (!appUpdater) {\n    throw new Error('App updater is not initialized');\n  }\n\n  return appUpdater.downloadAndInstallUpdate({\n    onProgress: broadcastAppUpdateProgress,\n  });\n});\nipcMain.handle('check:run', async () => fetchJson(serviceUrl('/api/check'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({}),\n}));\nipcMain.handle('update:one', async (_event, payload) => fetchJson(serviceUrl('/api/update-one'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('update:all', async (_event, payload) => fetchJson(serviceUrl('/api/update-all'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('update:selected', async (_event, payload) => fetchJson(serviceUrl('/api/update-selected'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify(payload || {}),\n}));\nipcMain.handle('operation:cancel', async () => fetchJson(serviceUrl('/api/cancel-operation'), {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({}),\n}));\n\nfor (const [channel, endpoint] of [['migration:plan','/api/migrations/plan'],\n  ['migration:approve','/api/migrations/approve'], ['migration:recovery-plan','/api/migrations/recovery-plan'], ['macports:sync','/api/macports/sync']]) {\n  ipcMain.handle(channel, async (_event, payload) => fetchJson(serviceUrl(endpoint), {\n    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload || {}),\n  }));\n}\n",
+    "electron/preload.js": "const { contextBridge, ipcRenderer } = require('electron');\n\ncontextBridge.exposeInMainWorld('brewApp', {\n  migrationPlan: (name) => ipcRenderer.invoke('migration:plan', {name}),\n  migrationApprove: (id) => ipcRenderer.invoke('migration:approve', {id}),\n  migrationRecoveryPlan: (transaction_id, action) => ipcRenderer.invoke('migration:recovery-plan', {transaction_id, action}),\n  macportsSync: () => ipcRenderer.invoke('macports:sync'),\n  getState: () => ipcRenderer.invoke('state:get'),\n  getUpdatePlan: () => ipcRenderer.invoke('update:plan:get'),\n  getProgress: () => ipcRenderer.invoke('progress:get'),\n  getUpdateHistory: () => ipcRenderer.invoke('updates:history:get'),\n  getSettings: () => ipcRenderer.invoke('settings:get'),\n  updateScheduler: (scheduler) => ipcRenderer.invoke('settings:scheduler:update', { scheduler }),\n  updateBrewPath: (brewPath) => ipcRenderer.invoke('settings:brew-path:update', { brew_path: brewPath }),\n  updatePolicy: (policy) => ipcRenderer.invoke('settings:update-policy', policy),\n  autoDetectBrewPath: () => ipcRenderer.invoke('settings:brew-path:auto-detect'),\n  checkAppUpdate: () => ipcRenderer.invoke('app-update:check'),\n  downloadAndInstallAppUpdate: () => ipcRenderer.invoke('app-update:download-install'),\n  onAppUpdateProgress: (handler) => {\n    if (typeof handler !== 'function') {\n      return () => {};\n    }\n    const listener = (_event, payload) => handler(payload);\n    ipcRenderer.on('app-update:progress', listener);\n    return () => ipcRenderer.removeListener('app-update:progress', listener);\n  },\n  runCheckNow: () => ipcRenderer.invoke('check:run'),\n  updateOne: (name, kind, decision) => ipcRenderer.invoke('update:one', decision || { name, kind }),\n  updateAll: (payload) => ipcRenderer.invoke('update:all', payload || {}),\n  updateSelected: (packages) => ipcRenderer.invoke('update:selected', Array.isArray(packages) ? { packages } : packages),\n  cancelOperation: () => ipcRenderer.invoke('operation:cancel'),\n});\n",
+    "renderer/mac-manager.js": "// Automatic availability results; review and approval remain separate actions.\nfunction macAlternativeLabel(status) {\n  status=status||'checking_pending';\n  const he=i18n.lang==='he';\n  const labels={\n    binary_available:['נמצאה חבילה מוכנה ב־MacPorts','Ready package available in MacPorts'],\n    mapping_unverified:['אין התאמה מאומתת ב־MacPorts','No verified MacPorts mapping'],\n    catalog_unverified:['בדיקת החלופה ממתינה לרענון מידע','Alternative check awaits catalog refresh'],\n    checking_pending:['החלופה תיבדק אוטומטית בבדיקה הבאה','Alternative will be checked automatically on the next scan'],\n    older_than_installed:['החלופה ישנה מהגרסה המותקנת — ירידה בגרסה חסומה','Alternative is older than the installed version; downgrade blocked'],\n    not_newer:['אין גרסה חדשה יותר במסלול זה','No newer upstream version on this route'],\n    version_unverified:['לא ניתן לאמת התאמת גרסאות','Version compatibility could not be verified'],\n    archive_missing:['חבילה מוכנה או תלות חסרה באתרים שנבדקו','Ready package or dependency is missing from checked sites'],\n    archive_unknown:['לא ניתן לאמת זמינות בגלל שגיאת תקשורת','Availability could not be verified due to network errors'],\n    resolution_failed:['לא ניתן להשלים בדיקת תלויות','Dependency resolution could not be completed'],\n    architecture_unverified:['לא אומתה התאמה למחשב','Compatibility with this computer is unverified'],\n    variants_unverified:['נדרשת בדיקת אפשרויות ההתקנה הקיימת','Installed variants need separate review'],\n    excluded:['החבילה או תלות שלה מוחרגת','Package or dependency is excluded'],\n    check_failed:['בדיקת החלופה נכשלה','Alternative check failed'],\n  };\n  return (labels[status]||[status,status])[he?0:1];\n}\nfunction unifiedPlanExpired(state, nowMillis = Date.now()) {\n  if (!state?.unified_plan_id) return false;\n  if (state.unified_plan_stale === true) return true;\n  const expiry = Number(state.unified_plan_expires_at);\n  return !Number.isFinite(expiry) || expiry <= 0 || nowMillis >= expiry * 1000;\n}\nfunction unifiedReasonLabel(code) {\n  const he=i18n.lang==='he';\n  const known={\n    newest_verified_compatible:['העדכון הבינארי החדש ביותר שאומת','Latest verified compatible binary'],\n    partial_provider_comparison:['השוואת הספקים חלקית','Provider comparison is incomplete'],\n    discovery_incomplete:['מידע על חלק מהספקים חסר','Some providers could not be verified'],\n    excluded_package:['חבילה מוחרגת','Excluded package'],\n    no_executable_binary_route:['אין מסלול בינארי בטוח לביצוע','No executable binary route'],\n    recovery_required:['נדרש שחזור עסקה','Transaction recovery required'],\n    plan_expired:['תוכנית העדכון פגה — נדרשת בדיקה חדשה','Update plan expired — run a new check'],\n    migration_profile_missing:['אין פרופיל מעבר בטוח לחבילה','No safe migration profile for this package'],\n    fresh_classification_required:['נדרש סיווג התקנה עצמאי ומאומת','Fresh standalone classification required'],\n    pixi_migration_transaction_unavailable:['מעבר אוטומטי ל־Pixi אינו נתמך עדיין','Automatic migration to Pixi is not yet supported'],\n    pixi_scan_budget_exhausted:['תם זמן בדיקת החלופות של Pixi','Pixi alternative scan time budget exhausted'],\n    migration_source_provider_unsupported:['מעבר מספק זה אינו נתמך עדיין','Migration from this provider is not yet supported'],\n    cask_binary_adapter_not_verified:['עדכון Cask טרם אומת במסלול הבינארי','Cask binary update route is not yet verified'],\n    comparison_unknown:['לא ניתן להשוות את הגרסאות בוודאות','Version comparison is uncertain'],\n    downgrade_forbidden:['אין לבצע ירידה בגרסה','Downgrade is not permitted'],\n    not_newer:['אין גרסה חדשה יותר','No newer version'],\n    execution_unsupported:['מסלול ההתקנה אינו נתמך לביצוע','Installation route is not executable'],\n    provider_unverified:['ספק העדכון לא אומת','Provider is not verified'],\n    binary_closure_unverified:['לא אומתו כל התלויות הבינאריות','Binary dependencies are not fully verified'],\n    homebrew_catalog_unavailable:['נתוני Homebrew אינם זמינים','Homebrew catalog is unavailable'],\n    ownership_unreadable:['אי אפשר לאמת בעלות','Ownership registry cannot be verified'],\n    already_current:['אין עדכון מאומת','No verified update'],\n  };\n  return (known[code]||[he?'נימוק טכני בפרטים':'Technical reason in details',he?'נימוק טכני בפרטים':'Technical reason in details'])[he?0:1];\n}\nfunction renderMacManager() {\n  let panel=document.getElementById('macManagerPanel');\n  if (!panel) {\n    panel=document.createElement('details');panel.id='macManagerPanel';panel.className='panel';\n    panel.style.padding='16px';panel.style.marginBlock='16px';document.querySelector('.tabs').before(panel);\n  }\n  panel.replaceChildren();const he=i18n.lang==='he';\n  const title=document.createElement('summary');\n  title.textContent=(he?'עדכונים חסומים וחלופות':'Blocked updates and alternatives')+` (${snapshot?.migrations?.length||0})`;\n  panel.appendChild(title);\n  if (unifiedPlanExpired(snapshot)) {\n    const warning=document.createElement('p');\n    warning.textContent=he?'תוכנית העדכון אינה בתוקף. כדי לעדכן חבילות יש לבצע בדיקה חדשה.':'The update plan is no longer valid. Run a new check before updating packages.';\n    warning.setAttribute('role','status');\n    panel.appendChild(warning);\n    const rescan=document.createElement('button');\n    rescan.textContent=he?'בדוק עדכונים מחדש':'Check for updates again';\n    rescan.disabled=!!busyLoading||!!lastKnownOperationRunning;\n    rescan.onclick=()=>checkNow();\n    panel.appendChild(rescan);\n  }\n  const hint=document.createElement('p');\n  hint.textContent=he?'עדכון חבילה יוצג רק עם נתיב בינארי מאומת. פעולות מעבר שאינן מוכנות חסומות.':'An update is executable only with a verified binary route. Unfinished migration paths remain blocked.';\n  for (const decision of snapshot?.update_decisions||[]) {\n    if (decision.status==='current') continue;\n    const line=document.createElement('p');\n    const route=decision.current_provider===decision.target_provider?decision.current_provider:`${decision.current_provider} → ${decision.target_provider}`;\n    line.textContent=`${decision.logical_id}: ${decision.installed_version||'—'} → ${decision.target_version||'—'} · ${route} · ${decision.status} · ${(decision.reason_codes||[]).map(unifiedReasonLabel).join(' · ')}`;\n    panel.appendChild(line);\n  }\n  panel.appendChild(hint);\n  const labels={fresh:he?'עדכני':'current',refreshed:he?'רוענן אוטומטית':'refreshed automatically',stale:he?'ירוענן בבדיקה הבאה':'will refresh on next check',awaiting_authorization:he?'הרענון ממתין להזדהות; לחץ התחל בדיקה':'refresh awaits authorization; press Start Check',refresh_failed:he?'הרענון נכשל או לא אושר; התחל בדיקה ינסה שוב':'refresh failed or was declined; Start Check will retry',not_installed:he?'MacPorts אינו מותקן':'MacPorts is not installed'};\n  for(const [name,provider] of Object.entries(snapshot?.providers||{})) {\n    const status=document.createElement('p');\n    status.textContent=`${name}: ${provider.ok?'✓':'⚠'} · ${provider.checked_at||'—'}`;\n    if(provider.catalog)status.textContent+=' · '+(labels[provider.catalog.status]||provider.catalog.status);\n    if(provider.error)status.title=provider.error;\n    panel.appendChild(status);\n  }\n  if(['running','needs_attention'].includes(snapshot?.migration_journal?.status)) {\n    const warning=document.createElement('p');warning.textContent=he?'מעבר קודם דורש בדיקה לפני המשך.':'A previous migration needs review before continuing.';panel.appendChild(warning);\n  }\n  for (const pending of snapshot?.pending_recovery || []) {\n    const item=document.createElement('div');\n    item.style.marginBlock='12px';\n    const description=document.createElement('p');\n    description.textContent=(he?'נדרש טיפול בעסקה: ':'Recovery required: ')+\n      (pending.logical_id||'—')+' · '+(pending.stage||'—');\n    item.appendChild(description);\n    for (const action of ['resume','rollback']) {\n      const button=document.createElement('button');\n      button.textContent=action==='resume'?(he?'סקירת המשך':'Review resume'):\n        (he?'סקירת שחזור':'Review rollback');\n      button.disabled=!!busyLoading||!!lastKnownOperationRunning;\n      button.onclick=async()=>{\n        button.disabled=true;\n        try {\n          const response=await window.brewApp.migrationRecoveryPlan(pending.transaction_id,action);\n          const plan=response.plan;\n          if (!plan || !plan.id) throw new Error('Recovery plan unavailable');\n          const review=document.createElement('p');\n          review.textContent=JSON.stringify(plan.preview||{},null,2);\n          review.style.whiteSpace='pre-wrap';\n          item.appendChild(review);\n          const approve=document.createElement('button');\n          approve.textContent=he?'אשר את פעולת ההתאוששות':'Approve this recovery';\n          approve.onclick=async()=>{\n            approve.disabled=true;\n            setLoading(true,'message.loadingState');\n            beginOperationRequest();\n            const generation=operationRequestGeneration;\n            let result=null;\n            startProgressPolling();\n            try {\n              result=await window.brewApp.migrationApprove(plan.id);\n              await loadState({showLoader:false});\n            } catch(error) {\n              showMessage(error.message,true);\n            } finally {\n              await finishOperationRequest(result,generation);\n              setLoading(false,'message.loadingState');\n            }\n          };\n          item.appendChild(approve);\n        } catch(error) {\n          showMessage(error.message,true);\n        } finally {\n          button.disabled=false;\n        }\n      };\n      item.appendChild(button);\n    }\n    panel.appendChild(item);\n  }\n  for(const offer of snapshot?.migrations||[]) {\n    const row=document.createElement('details');row.style.marginBlock='10px';\n    const summary=document.createElement('summary');\n    summary.textContent=`${offer.name} — ${macAlternativeLabel(offer.status)}`;\n    if(offer.target&&offer.installed_version)summary.textContent+=` · ${offer.installed_version} → ${offer.target}`;\n    row.appendChild(summary);\n    const detail=document.createElement('p');\n    detail.textContent=(offer.ports?.length?`${offer.ports.join(', ')} · `:'')+(offer.detail||'');\n    if(offer.checked_at)detail.textContent+=' · '+(he?'נבדק: ':'Checked: ')+offer.checked_at;\n    row.appendChild(detail);\n    const classification = offer.classification || {category:'unclassified'};\n    const installation=(snapshot?.packages||[]).find(p=>p.provider==='homebrew'&&p.kind==='formula'&&p.name===offer.name)?.inventory_verification;\n    if(installation) {\n      const evidence=document.createElement('details');const title=document.createElement('summary');\n      title.textContent=he?'ראיות ההתקנה':'Installation evidence';\n      const text=document.createElement('p');text.style.whiteSpace='pre-wrap';\n      text.textContent=(he?'גרסה לפי ההתקנה הפעילה: ':'Active installation version: ')+installation.package_version+'\\n'+\n        (he?'גרסאות שדווחו: ':'Manager versions: ')+(installation.manager_versions||[]).join(', ')+'\\n'+\n        (installation.active_keg||'')+'\\n'+(installation.command_resolution?.resolved_path||'')+'\\n'+\n        [...(installation.issues||[]),...(installation.warnings||[])].join(' · ');\n      if(installation.version_probe?.code)text.textContent+='\\n'+installation.version_probe.output;\n      evidence.append(title,text);row.appendChild(evidence);\n    }\n    const classificationLabels = {\n      service:['שירות עם הגדרות ונתונים','Service with configuration and data'],\n      shared_environment:['ספרייה או סביבת פיתוח משותפת','Shared library or development environment'],\n      standalone_candidate:['כלי עצמאי מועמד לאוטומציה','Standalone automation candidate'],\n      insufficient_information:['חסר מידע לסיווג','Insufficient classification evidence'],\n      unclassified:['טרם סווג','Not yet classified'],\n    };\n    const classificationText=document.createElement('p');\n    classificationText.className='migration-classification';\n    classificationText.textContent=(he?'סיווג: ':'Classification: ')+(classificationLabels[classification.category]||classificationLabels.unclassified)[he?0:1];\n    row.appendChild(classificationText);\n    const reasons=document.createElement('p');\n    reasons.textContent=(classification.reasons||[]).map(migrationReasonLabel).join(' · ');\n    if(classification.checked_at) reasons.textContent+=' · '+classification.checked_at;\n    row.appendChild(reasons);\n    if(classification.consumers?.length) {\n      const consumers=document.createElement('p');consumers.textContent=(he?'תלויים מתועדים: ':'Documented consumers: ')+classification.consumers.map(c=>c.name).join(', ');row.appendChild(consumers);\n    }\n    for(const [label,values] of [[he?'מידע חסר':'Missing evidence',classification.gaps],[he?'קובצי ראיות':'Evidence files',classification.evidence_refs]]) {\n      if(values?.length) {const evidence=document.createElement('details');const title=document.createElement('summary');title.textContent=label;const text=document.createElement('p');text.textContent=values.join(' · ');evidence.append(title,text);row.appendChild(evidence);}\n    }\n    if(!snapshot?.unified_plan_id && offer.status==='binary_available') {\n      if(offer.below_homebrew_target) {\n        const version=document.createElement('p');\n        version.textContent=he?`זו גרסה חדשה מהמותקנת אצלך. יעד Homebrew הוא ${offer.homebrew_target}; אין בכך הוכחה שזו הגרסה האחרונה הנתמכת ב־Intel.`:`This is newer than your installed version. Homebrew targets ${offer.homebrew_target}; this does not prove it is the last Intel-supported release.`;\n        row.appendChild(version);\n      }\n      const availability=document.createElement('p');\n      availability.textContent=he?'נבדקה זמינות קבצים לכל התלויות. חתימות ותפקוד יאומתו רק בהתקנה.':'Archive availability was checked for all dependencies. Signatures and functionality are verified during installation.';row.appendChild(availability);\n      if(!offer.executable) {\n        const blocked=document.createElement('p');blocked.textContent=classification.category==='standalone_candidate'?(he?'מנגנון המעבר לכלי זה טרם מומש.':'The migration mechanism for this tool is not implemented yet.'):(he?'המעבר דורש טיפול בצרכנים, בנתונים או במידע החסר; אינו מבוצע בעדכון רגיל.':'Migration needs consumer, data or missing-evidence review; regular updates do not perform it.');row.appendChild(blocked);\n      } else {\n        const review=document.createElement('button');review.textContent=he?'סקירת תוכנית המעבר':'Review migration plan';\n        review.disabled=!!busyLoading||!!lastKnownOperationRunning;\n        review.onclick=async()=>{\n          review.disabled=true;setLoading(true,'message.loadingState');startProgressPolling();\n          try {\n            const {plan}=await window.brewApp.migrationPlan(offer.name);\n            const contents=document.createElement('p');\n            contents.textContent=`${plan.installed_version} → ${plan.target} · ${plan.graph.nodes.map(n=>n.name).join(', ')} · ${plan.paths.join(', ')} · ${he?'צרכנים':'Consumers'}: ${plan.consumers.join(', ')||'—'}`;row.appendChild(contents);\n            const approve=document.createElement('button');approve.textContent=he?'אישור מעבר חד־פעמי':'Approve this migration once';\n            approve.onclick=async()=>{\n              if(!confirm(he?'לאשר התקנה, בדיקת שימוש והסרת העותק הקודם רק אם אין לו תלויים?':'Approve installation, verification, and removal of the old copy only if unused?'))return;\n              approve.disabled=true;setLoading(true,'message.loadingState');startProgressPolling();\n              try {await window.brewApp.migrationApprove(plan.id);const response=await window.brewApp.getState();snapshot=response.snapshot||response;renderCards(snapshot);renderTable();}\n              catch(error){showMessage(error.message,true);}\n              finally{stopProgressPolling();setLoading(false,'message.loadingState');approve.disabled=false;}\n            };row.appendChild(approve);\n          }catch(error){showMessage(error.message,true);}\n          finally{stopProgressPolling();setLoading(false,'message.loadingState');review.disabled=false;}\n        };row.appendChild(review);\n      }\n    }\n    panel.appendChild(row);\n  }\n}\n",
+}
+
+UNIFIED_EXISTING_BLOBS = {
+    "docs/PRODUCT_GOAL.md": "a898c850eb8e84793940b6cdd3b3549845758b77",
+    "docs/INTEL_UPDATE_IMPLEMENTATION_PLAN.md": "cacc92986ca8816400464cc9968a3dc7d44cc3c0",
+    ".github/workflows/ci.yml": "e17b64678c84613fc87bf8c9c189655c620a6ba9",
+    "docs/MAC_MANAGER_TASKS.md": "6dc9563527293ab7c7910d4b8057778171f104c6",
+    "docs/MAC_MANAGER.md": "2c425e910834fc08f283214442a71896317a2ea0",
+    "backend/update_routes.py": "7b017fffa6627c6321187396cea81e57e7c245ca",
+    "tools/verify-current-code.py": "766265930f4342bcf54b434053510d78d51d3e45",
+    "tools/verify-migration.py": "e9df93e719efe755d8acaf03087e3a413f02145c",
+    "package.json": "53ff834648c07b47a509bd727e0396aa94598d24",
+    "package-lock.json": "9e05af589baffcb614f7b25e05b27f41b72f8e5a",
+    "backend/macports_provider.py": "836d1850b33c5f0820cd720db7e9cfd204f6b8e3",
+    "backend/migration_engine.py": "22aa1d285bc3486e66d13dd6df24bf774cef441f",
+    "backend/migration_profiles.py": "7e70f06c7d553d099c5847d41789836a2c357abf",
+    "tests/test_migration_profiles.py": "4e1ea80ee21ba60c344c35ecdc7285e28fac9439",
+    "renderer/app.js": "5f0952f4d9a5de44bd7a55111a46f6ac7c87e2b2",
+    "backend/brew-updates-service.py": "fa29ff482a58a7b96231db8d176bc4dc438191cb",
+    "backend/mac_manager.py": "6a34b0e3ddebd771d3d2199a26594274efb5620e",
+    "electron/main.js": "2836438fee8de455747831085cd449275baa5d07",
+    "electron/preload.js": "52b1b04ab13f9a87729c0e34490eac3365f4a604",
+    "renderer/mac-manager.js": "8c6e2be51e01b1348cea813b2e33e9b3a0638606",
+}
+
+UNIFIED_ROUTING = r'''"""Protected all-or-nothing command routing for native Intel migrations.
+
+This module is deliberately provider-agnostic. A shim can be replaced only
+when a recorded owner hash matches its current bytes. New files are staged
+while the active generation still points at the verified source.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import stat
+import tempfile
+import uuid
+
+from provider_ownership import atomic_write_json
+
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*\Z")
+
+
+class RoutingConflict(RuntimeError):
+    pass
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _atomic_bytes(path, data, mode=0o755):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=".route-")
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temp):
+            os.unlink(temp)
+
+
+def _atomic_link(destination, target):
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.parent / ("." + destination.name + "-" + uuid.uuid4().hex)
+    try:
+        temp.symlink_to(target)
+        os.replace(temp, destination)
+    finally:
+        if os.path.lexists(temp):
+            temp.unlink()
+
+
+def _owned_file(path, manifest):
+    path = Path(path)
+    if not os.path.lexists(path):
+        return True
+    if path.is_symlink() or not path.is_file():
+        return False
+    return manifest.get(path.name) == digest(path)
+
+
+def render_wrapper(executable, *, env=None):
+    """Use fixed argv, never arbitrary shell strings from manifests/network."""
+    executable = str(executable)
+    if not Path(executable).is_absolute():
+        raise RoutingConflict("Target executable must be absolute")
+    assigns = "".join("export " + k + "=" + shlex.quote(str(v)) + "\n"
+                      for k, v in sorted((env or {}).items())
+                      if NAME.fullmatch(k))
+    return ("#!/bin/sh\n" + assigns + "exec " + shlex.quote(executable) + ' "$@"\n').encode()
+
+
+def _safe_commands(commands):
+    if not isinstance(commands, dict) or not commands:
+        raise RoutingConflict("Missing mandatory commands")
+    for name, binary in commands.items():
+        if not NAME.fullmatch(name):
+            raise RoutingConflict("Unsafe command name")
+        path = Path(binary)
+        if not path.is_absolute() or not path.is_file():
+            raise RoutingConflict("Mandatory command missing: " + name)
+    return commands
+
+
+def preflight(root, logical_id, commands, *, owned_shims=None):
+    """No disk writes. Broken symlinks and other owners block immediately."""
+    _safe_commands(commands)
+    if not NAME.fullmatch(logical_id):
+        raise RoutingConflict("Invalid logical tool identity")
+    root = Path(root)
+    bin_dir = root / "bin"
+    owned_shims = owned_shims or {}
+    for name in commands:
+        path = bin_dir / name
+        if not _owned_file(path, owned_shims):
+            raise RoutingConflict("Unmanaged shim or independently edited file: " + str(path))
+    active = root / "migrations" / "active" / logical_id
+    if os.path.lexists(active) and not active.is_symlink():
+        raise RoutingConflict("Active route pointer is not a symlink")
+    return {"logical_id": logical_id, "commands": dict(commands),
+            "owned_shims": dict(owned_shims), "active": str(active)}
+
+
+def generate(root, transaction_id, phase, commands):
+    """A generation is immutable after creation."""
+    _safe_commands(commands)
+    if not NAME.fullmatch(transaction_id) or phase not in ("source", "target"):
+        raise RoutingConflict("Invalid generation identifier")
+    directory = Path(root) / "migrations" / "generations" / transaction_id / phase
+    if directory.exists():
+        raise RoutingConflict("Generation already exists")
+    directory.mkdir(parents=True)
+    for name, binary in commands.items():
+        _atomic_bytes(directory / name, render_wrapper(binary))
+    return directory
+
+
+def activate(root, logical_id, transaction_id, source_commands, target_commands,
+             *, owned_shims=None, progress=None):
+    """Stage source/target wrappers and publish with one active-pointer switch.
+
+    Existing shims are validated *before* any write. Unrelated shims are never
+    removed during compensation or recovery.
+    """
+    previous = preflight(root, logical_id, target_commands, owned_shims=owned_shims)
+    _safe_commands(source_commands)
+    if set(source_commands) != set(target_commands):
+        raise RoutingConflict("Source and target must expose all profile commands")
+    root = Path(root)
+    active = Path(previous["active"])
+    before_pointer = os.readlink(active) if active.is_symlink() else None
+    source = generate(root, transaction_id, "source", source_commands)
+    target = generate(root, transaction_id, "target", target_commands)
+    if progress:
+        progress({"state": "generations_ready", "active": str(active),
+                  "source": str(source), "target": str(target),
+                  "previous_pointer": before_pointer, "shims": {}})
+    staged = {}
+    written = {}
+    try:
+        for name in target_commands:
+            shim = root / "bin" / name
+            content = render_wrapper(active / name)
+            staged[name] = (shim, content)
+        # Source generation must be visible before publishing new shims.
+        if before_pointer is None:
+            _atomic_link(active, source)
+        else:
+            if not active.is_symlink() or os.readlink(active) != before_pointer:
+                raise RoutingConflict("Active pointer changed during staging")
+        for name, (shim, content) in staged.items():
+            if not _owned_file(shim, previous["owned_shims"]):
+                raise RoutingConflict("Shim ownership changed during staging")
+            prior = shim.read_bytes() if shim.exists() else None
+            _atomic_bytes(shim, content)
+            written[name] = {"prior": prior.hex() if prior is not None else None,
+                             "after_sha256": hashlib.sha256(content).hexdigest()}
+            if progress:
+                progress({"state": "shim_written", "active": str(active),
+                          "source": str(source), "target": str(target),
+                          "previous_pointer": before_pointer, "shims": dict(written)})
+        if progress:
+            progress({"state": "pointer_switch_pending", "active": str(active),
+                      "source": str(source), "target": str(target),
+                      "previous_pointer": before_pointer, "shims": dict(written)})
+        _atomic_link(active, target)
+        return {"active": str(active), "source": str(source), "target": str(target),
+                "previous_pointer": before_pointer, "shims": written,
+                "commands": list(target_commands)}
+    except BaseException:
+        _revert(root, active, before_pointer, written)
+        raise
+
+
+def _revert(root, active, previous_pointer, written):
+    # If an independent actor changed a generated shim, never overwrite it.
+    for name, item in written.items():
+        path = Path(root) / "bin" / name
+        if not path.is_file() or digest(path) != item["after_sha256"]:
+            raise RoutingConflict("Cannot restore changed shim: " + name)
+    if previous_pointer is None:
+        if active.is_symlink():
+            active.unlink()
+    else:
+        _atomic_link(active, previous_pointer)
+    for name, item in written.items():
+        path = Path(root) / "bin" / name
+        if item["prior"] is None:
+            path.unlink()
+        else:
+            _atomic_bytes(path, bytes.fromhex(item["prior"]))
+
+
+def restore(root, activation):
+    active = Path(activation["active"])
+    if not active.is_symlink():
+        raise RoutingConflict("Missing active pointer")
+    current = os.readlink(active)
+    if Path(current).resolve() != Path(activation["target"]).resolve():
+        raise RoutingConflict("Active route was changed independently")
+    _revert(root, active, activation["previous_pointer"], activation["shims"])
+    return {"restored": True, "source": activation["source"]}
+
+
+def owned_shim_hashes(root, activation):
+    return {name: digest(Path(root) / "bin" / name)
+            for name in activation["commands"]}
+
+
+def verify_shell(s, root, commands):
+    """Check real login-shell resolution; never mask it by prepending PATH."""
+    for name in commands:
+        if not NAME.fullmatch(name):
+            raise RoutingConflict("Unsafe command name")
+        result = s.run_cmd(["/bin/zsh", "-lc", "command -v " + shlex.quote(name)],
+                           timeout=30, cancellable=True)
+        expected = Path(root) / "bin" / name
+        if result.code != 0 or result.stdout.strip() != str(expected):
+            raise RoutingConflict("Login shell PATH does not resolve managed shim: " + name)
+    return True
+'''
+
+UNIFIED_ROUTING_TESTS = r'''import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import routing_activation as route
+
+
+class RoutingTests(unittest.TestCase):
+    def setup_dirs(self, root):
+        binpath = Path(root) / "bin"
+        binpath.mkdir()
+        a = binpath / "tool"
+        a.write_text("#!/bin/sh\nexit 0\n")
+        a.chmod(0o755)
+        b = binpath / "replacement"
+        b.write_text("#!/bin/sh\nexit 0\n")
+        b.chmod(0o755)
+        return a, b
+
+    def test_unmanaged_file_and_broken_link_blocked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            a,b = self.setup_dirs(temp)
+            with self.assertRaises(route.RoutingConflict):
+                route.preflight(temp, "jq", {"tool": str(a)})
+            a.unlink()
+            a.symlink_to("/no/such/path")
+            with self.assertRaises(route.RoutingConflict):
+                route.preflight(temp, "jq", {"tool": str(b)})
+
+    def test_all_commands_switch_atomically_and_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            a,b = self.setup_dirs(temp)
+            shim = Path(temp)/"bin"/"newshim"
+            out = route.activate(temp, "jq", "tx1", {"newshim":str(a)},
+                                 {"newshim":str(b)})
+            self.assertTrue(shim.is_file())
+            self.assertEqual(os.readlink(out["active"]), out["target"])
+            route.restore(temp,out)
+            self.assertFalse(os.path.lexists(shim))
+            self.assertFalse(os.path.lexists(out["active"]))
+            self.assertTrue(a.is_file())
+
+    def test_independent_edit_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temp:
+            a,b = self.setup_dirs(temp)
+            out = route.activate(temp, "jq", "tx2", {"newshim":str(a)},
+                                 {"newshim":str(b)})
+            shim = Path(temp)/"bin"/"newshim"
+            shim.write_text("independent edit")
+            with self.assertRaises(route.RoutingConflict):
+                route.restore(temp,out)
+            self.assertEqual(shim.read_text(), "independent edit")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_PROFILE_CODE = r'''"""Fixed, profile-bound probes for standalone Intel migration targets."""
+from __future__ import annotations
+from dataclasses import dataclass
+from pathlib import Path
+import hashlib
+import json
+import os
+import platform
+import re
+import sys
+import tempfile
+
+@dataclass(frozen=True)
+class Profile:
+    name: str
+    ports: tuple[str, ...]
+    commands: tuple[str, ...]
+    version_args: tuple[str, ...]
+    version: int = 1
+    provider: str = "macports"
+
+PROFILES = {
+    "terminal-notifier": Profile(
+        "terminal-notifier", ("terminal-notifier",), ("terminal-notifier",), ("-version",)),
+    "include-what-you-use": Profile(
+        "include-what-you-use", ("include-what-you-use",),
+        ("include-what-you-use", "iwyu_tool.py", "fix_includes.py"), ("--version",)),
+}
+
+
+# Only simple, fixed CLI contracts can become transactional Pixi migrations.
+# Mapping in PIXI_TOOLS alone is not an authorization to remove Homebrew.
+PIXI_MIGRATION_PROFILES = {
+    "jq": Profile("jq", (), ("jq",), ("--version",), provider="pixi"),
+    "pandoc": Profile("pandoc", (), ("pandoc",), ("--version",), provider="pixi"),
+}
+
+
+def pixi_get(name):
+    return PIXI_MIGRATION_PROFILES.get(name)
+
+
+def smoke_pixi(s, profile, prefix, target):
+    """Executable and functional probes for a fixed, app-owned Pixi generation."""
+    if not isinstance(profile, Profile) or profile.provider != "pixi":
+        raise ValueError("Unsupported Pixi migration profile")
+    prefix = Path(prefix)
+    commands = {cmd: prefix / "bin" / cmd for cmd in profile.commands}
+    if not commands or any(not path.is_file() or not os.access(path, os.X_OK)
+                           for path in commands.values()):
+        raise RuntimeError("Pixi mandatory command is missing or not executable")
+    env = {"CONDA_PREFIX": str(prefix), "PATH": str(prefix / "bin") + ":/usr/bin:/bin"}
+    result = s.run_cmd([str(commands[profile.commands[0]]), *profile.version_args],
+                       timeout=30, cancellable=True, env_override=env)
+    report = {"version": _check(result, "Pixi version")}
+    if not version_matches(result.stdout + result.stderr, target):
+        raise RuntimeError("Pixi target version mismatch")
+    if profile.name == "jq":
+        probe = s.run_cmd([str(commands["jq"]), "-n", "{verified:true}"],
+                          timeout=90, cancellable=True, env_override=env)
+        report["functional"] = _check(probe, "jq functional smoke")
+        if json.loads(probe.stdout) != {"verified": True}:
+            raise RuntimeError("jq functional output mismatch")
+    elif profile.name == "pandoc":
+        probe = s.run_cmd([str(commands["pandoc"]), "--from=markdown", "--to=html"],
+                          timeout=90, cancellable=True, env_override=env,
+                          input_data="*probe*\n")
+        report["functional"] = _check(probe, "pandoc functional smoke")
+        if "<em>probe</em>" not in probe.stdout:
+            raise RuntimeError("pandoc functional output mismatch")
+    else:
+        raise RuntimeError("Pixi smoke profile not implemented")
+    return report
+
+
+def get(name):
+    return PROFILES.get(name)
+
+def intel_only():
+    if (platform.system() != "Darwin" or platform.machine() != "x86_64" or
+            os.environ.get("SYSCTL_TRANSLATED") == "1"):
+        raise ValueError("Migration is supported only on native Intel macOS")
+
+def command_paths(profile):
+    if not isinstance(profile, Profile):
+        raise ValueError("Unsupported profile")
+    return {name: Path("/opt/local/bin") / name for name in profile.commands}
+
+def version_matches(text, target):
+    return re.search(r"(?<![0-9])" + re.escape(str(target).split("_")[0]) +
+                     r"(?![0-9])", text or "") is not None
+
+def _check(result, title, required=0):
+    if result.code != required:
+        raise RuntimeError(title + ": unexpected exit " + str(result.code) +
+                           ": " + (result.stderr or result.stdout)[-500:])
+    return {"code": result.code, "stdout": result.stdout[-3000:],
+            "stderr": result.stderr[-3000:]}
+
+def _python():
+    executable = Path(sys.executable)
+    if sys.version_info[:2] != (3, 14) or not executable.is_file():
+        raise RuntimeError("Verified Python 3.14 is required for IWYU")
+    return str(executable)
+
+def smoke(s, profile, target):
+    """Run full version + practical checks on target binaries, without source edits."""
+    paths = command_paths(profile)
+    for name, path in paths.items():
+        if not path.is_file():
+            raise RuntimeError("Required target command missing: " + name)
+    first = s.run_cmd([str(paths[profile.commands[0]]), *profile.version_args],
+                      timeout=30, cancellable=True)
+    result = {"version": _check(first, "version")}
+    if not version_matches(first.stdout + first.stderr, target):
+        raise RuntimeError("Target package version mismatch")
+    if profile.name == "terminal-notifier":
+        # Preserve the existing notification helper, not a replacement identity.
+        return result
+    if profile.name != "include-what-you-use":
+        raise RuntimeError("Unsupported smoke profile")
+    python = _python()
+    sdk = s.run_cmd(["/usr/bin/xcrun", "--show-sdk-path"], timeout=30, cancellable=True)
+    _check(sdk, "Xcode SDK")
+    sdk_dir = Path(sdk.stdout.strip())
+    if not sdk_dir.is_dir() or not (sdk_dir / "usr" / "include").is_dir():
+        raise RuntimeError("SDK path is unavailable")
+    with tempfile.TemporaryDirectory(prefix="iwyu acceptance ") as temp:
+        root = Path(temp)
+        (root / "needed.h").write_text("struct Needed { int value; };\n")
+        (root / "unused.h").write_text("struct Unused { int value; };\n")
+        source = root / "probe.cc"
+        source.write_text('#include "needed.h"\n#include "unused.h"\n#include <vector>\n'
+                          'int main(){ Needed x{2}; std::vector<int> v{x.value}; return v[0]; }\n')
+        original = hashlib.sha256(source.read_bytes()).hexdigest()
+        arguments = ["/usr/bin/clang++", "-std=c++17", "-isysroot",
+                     str(sdk_dir), "-I", str(root), str(source)]
+        (root / "compile_commands.json").write_text(
+            json.dumps([{"directory": str(root), "arguments": arguments,
+                         "file": str(source)}]))
+        direct = s.run_cmd(
+            [str(paths["include-what-you-use"]), "-std=c++17", "-isysroot",
+             str(sdk_dir), "-I", str(root), "-Xiwyu", "--error=17",
+             str(source)], timeout=90, cancellable=True)
+        direct_report = _check(direct, "IWYU analysis", required=17)
+        output = direct.stdout + "\n" + direct.stderr
+        if not re.search(r"(?m)^\s*-\s*#include\s+[\"<]unused\.h[\">]", output):
+            raise RuntimeError("IWYU did not recommend removal of unused.h")
+        tool = s.run_cmd(
+            [python, str(paths["iwyu_tool.py"]), "-p", str(root), str(source),
+             "--", "-Xiwyu", "--error=17"], timeout=90, cancellable=True,
+            env_override={"IWYU_BINARY": str(paths["include-what-you-use"])})
+        tool_report = _check(tool, "iwyu_tool.py", required=17)
+        if not re.search(r"(?m)^\s*-\s*#include\s+[\"<]unused\.h[\">]",
+                         tool.stdout + "\n" + tool.stderr):
+            raise RuntimeError("iwyu_tool did not report the expected include")
+        fix = s.run_cmd(
+            [python, str(paths["fix_includes.py"]), "--dry_run", str(source)],
+            timeout=90, cancellable=True, input_data=output)
+        fix_report = _check(fix, "fix_includes.py", required=1)
+        if "unused.h" not in fix.stdout + fix.stderr or "-#include" not in fix.stdout + fix.stderr:
+            raise RuntimeError("Fix preview does not remove unused include")
+        if hashlib.sha256(source.read_bytes()).hexdigest() != original:
+            raise RuntimeError("Dry-run unexpectedly edited a source file")
+        result.update(iwyu=direct_report, tool=tool_report, fix=fix_report,
+                      source_sha256=original, sdk=str(sdk_dir))
+        return result
+'''
+
+UNIFIED_PROFILE_TESTS = r'''import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import migration_profiles as p
+
+class Profiles(unittest.TestCase):
+    def test_pixi_profiles_are_strictly_allowlisted(self):
+        self.assertEqual(set(p.PIXI_MIGRATION_PROFILES), {"jq", "pandoc"})
+        self.assertIsNone(p.pixi_get("ffmpeg"))
+        self.assertIsNone(p.pixi_get("ngrok"))
+
+    def test_pixi_smoke_runs_real_paths_and_functional_check(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            binary = root / "bin" / "jq"
+            binary.parent.mkdir()
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    self.calls.append((argv, kwargs))
+                    value = "jq-1.8.1\n" if "--version" in argv else '{"verified":true}\n'
+                    return SimpleNamespace(code=0, stdout=value, stderr="")
+                def __init__(self):
+                    self.calls = []
+            fake = Fake()
+            result = p.smoke_pixi(fake, p.pixi_get("jq"), root, "1.8.1")
+            self.assertIn("functional", result)
+            self.assertEqual(len(fake.calls), 2)
+            self.assertTrue(all(call[0][0] == str(binary) for call in fake.calls))
+            self.assertTrue(all(call[1]["cancellable"] for call in fake.calls))
+
+    def test_pixi_version_or_missing_executable_blocks(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaises(RuntimeError):
+                p.smoke_pixi(None, p.pixi_get("jq"), root, "1.8")
+            binary = root / "bin" / "jq"
+            binary.parent.mkdir()
+            binary.write_text("x")
+            binary.chmod(0o755)
+            class Wrong:
+                def run_cmd(self, argv, **kwargs):
+                    return SimpleNamespace(code=0, stdout="jq-1.7", stderr="")
+            with self.assertRaisesRegex(RuntimeError, "version mismatch"):
+                p.smoke_pixi(Wrong(), p.pixi_get("jq"), root, "1.8")
+
+    def test_pandoc_smoke_rejects_nonfunctional_converter(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            prefix = Path(temp)
+            program = prefix / "bin" / "pandoc"
+            program.parent.mkdir()
+            program.write_text("#!/bin/sh\nexit 0\n")
+            program.chmod(0o755)
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    if "--version" in argv:
+                        return SimpleNamespace(code=0, stdout="pandoc 3.2.1", stderr="")
+                    self.input = kwargs["input_data"]
+                    return SimpleNamespace(code=0, stdout="<em>probe</em>\n", stderr="")
+            fake = Fake()
+            p.smoke_pixi(fake, p.pixi_get("pandoc"), prefix, "3.2.1")
+            self.assertEqual(fake.input, "*probe*\n")
+            class Broken:
+                def run_cmd(self, argv, **kwargs):
+                    return SimpleNamespace(code=0, stdout=(
+                        "pandoc 3.2.1" if "--version" in argv else "unchanged"), stderr="")
+            with self.assertRaisesRegex(RuntimeError, "functional output mismatch"):
+                p.smoke_pixi(Broken(), p.pixi_get("pandoc"), prefix, "3.2.1")
+
+    def test_two_fixed_profiles_and_commands(self):
+        self.assertEqual(set(p.PROFILES), {"terminal-notifier", "include-what-you-use"})
+        self.assertEqual(p.get("include-what-you-use").commands,
+                         ("include-what-you-use", "iwyu_tool.py", "fix_includes.py"))
+    def test_arm_or_rosetta_rejected(self):
+        with patch("migration_profiles.platform.system", return_value="Darwin"),\
+             patch("migration_profiles.platform.machine", return_value="arm64"):
+            with self.assertRaises(ValueError): p.intel_only()
+        with patch("migration_profiles.platform.system", return_value="Darwin"),\
+             patch("migration_profiles.platform.machine", return_value="x86_64"),\
+             patch.dict("migration_profiles.os.environ", {"SYSCTL_TRANSLATED":"1"}):
+            with self.assertRaises(ValueError): p.intel_only()
+    def test_version_parser_not_fooled_by_minor_digits(self):
+        self.assertTrue(p.version_matches("IWYU 0.24", "0.24"))
+        self.assertFalse(p.version_matches("IWYU 0.241", "0.24"))
+    def test_paths_use_real_port_location(self):
+        self.assertTrue(all(str(v).startswith("/opt/local/bin/")
+                            for v in p.command_paths(p.get("include-what-you-use")).values()))
+
+if __name__=="__main__": unittest.main()
+'''
+
+UNIFIED_ENGINE = r'''"""Journalled Intel Homebrew->MacPorts migrations with guarded recovery.
+
+No source removal is attempted until the source is backed up, binary graph and
+smoke probes have passed, and owned command routing has been verified.
+Unresolved transactions never automatically resume on process startup.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import time
+import uuid
+
+import installation_evidence
+import macports_provider as mp
+import migration_profiles as profiles
+import provider_ownership as ownership
+import routing_activation as routing
+from update_selection import compare_upstream, material_fingerprint
+
+SCHEMA = 2
+FINISHED = {"completed", "rolled_back", "canceled"}
+
+
+class MigrationConflict(ValueError):
+    def __init__(self, code, detail=None):
+        super().__init__(detail or code)
+        self.code = code
+
+
+def _root(s):
+    return Path(s.DATA_DIR) / "migrations"
+
+
+def _plan_path(s, plan_id):
+    return _root(s) / "plans" / (plan_id + ".json")
+
+
+def _transaction_path(s, transaction_id):
+    return _root(s) / "transactions" / transaction_id
+
+
+def _write(path, data):
+    ownership.atomic_write_json(path, data)
+
+
+def _read(s, path):
+    return s.read_json(path)
+
+
+def _hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _check_id(value):
+    if not isinstance(value, str) or len(value) != 32 or any(
+            char not in "0123456789abcdef" for char in value):
+        raise MigrationConflict("invalid_identifier")
+    return value
+
+
+def _source(s, name):
+    inventory = s.fetch_installed_inventory(s.fetch_outdated_index())
+    rows = [r for r in inventory if r.get("name") == name
+            and r.get("kind") == "formula"
+            and r.get("brew_installation_present") is not False]
+    if len(rows) != 1:
+        raise MigrationConflict("source_installation_ambiguous")
+    row = rows[0]
+    audit = row.get("inventory_verification") or {}
+    keg = Path(audit.get("active_keg") or "/nonexistent")
+    receipt = keg / "INSTALL_RECEIPT.json"
+    if (audit.get("status") != "verified" or not keg.is_dir() or
+            keg.is_symlink() or not receipt.is_file() or
+            len(audit.get("manager_versions") or []) != 1):
+        raise MigrationConflict("source_evidence_unverified")
+    return row, audit, keg, receipt
+
+
+def _source_commands(keg, profile):
+    commands = {}
+    for command in profile.commands:
+        path = keg / "bin" / command
+        if not path.is_file():
+            raise MigrationConflict("source_command_missing:" + command)
+        commands[command] = str(path)
+    return commands
+
+
+def _fresh_classification(s, name, row, *, provided=None):
+    """Validate the same T02 classification against a fresh source audit."""
+    if provided is None:
+        state = s.read_json(s.STATE_FILE) or {}
+        entries = [x for x in state.get("packages", [])
+                   if x.get("provider") == "homebrew"
+                   and x.get("kind") == "formula" and x.get("name") == name]
+        provided = entries[0].get("classification") if len(entries) == 1 else None
+        if provided is None:
+            offer = next((x for x in state.get("migrations", [])
+                          if x.get("name") == name), None)
+            provided = (offer or {}).get("classification")
+    cls = provided if isinstance(provided, dict) else {}
+    audit = row.get("inventory_verification") or {}
+    if (cls.get("category") != "standalone_candidate" or cls.get("gaps")
+            or cls.get("consumers") or cls.get("shared_roles")
+            or cls.get("inventory_fingerprint") != installation_evidence.fingerprint(audit)):
+        raise MigrationConflict("standalone_classification_blocked")
+    checked = cls.get("checked_at")
+    if not isinstance(checked, str):
+        raise MigrationConflict("classification_timestamp_missing")
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(checked.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("Timezone is required")
+        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    except (ValueError, TypeError) as error:
+        raise MigrationConflict("classification_timestamp_invalid") from error
+    if age < -60 or age >= 900:
+        raise MigrationConflict("classification_stale")
+    return cls
+
+def _consumers(s, name):
+    check = s.run_cmd([s.brew_bin(), "uses", "--installed", name],
+                      timeout=90, cancellable=True)
+    if check.code:
+        raise MigrationConflict("consumer_check_failed", check.stderr or check.stdout)
+    items = [x.strip() for x in check.stdout.splitlines() if x.strip()]
+    if items:
+        raise MigrationConflict("source_has_consumers", ", ".join(items))
+    return items
+
+
+def _target_graph(s, profile):
+    graph = mp.preflight(s, list(profile.ports))
+    nodes = graph.get("nodes") or []
+    root = next((x for x in nodes if x.get("name") == profile.ports[0]), None)
+    if root is None:
+        raise MigrationConflict("target_graph_missing_root")
+    return graph, root
+
+
+def _route_ownership(s, name):
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("route_registry_unverified")
+    if any(x.get("logical_id") == name for x in registry.get("legacy", [])):
+        raise MigrationConflict("legacy_route_requires_review")
+    prior = next((x for x in registry["routes"] if x.get("logical_id") == name
+                  and x.get("status") == "committed"), None)
+    return prior, registry
+
+
+def _material_pixi(s, name, *, classification=None, candidate=None,
+                   generation_id=None):
+    """Read-only Intel preflight for a fixed-profile Homebrew-to-Pixi route."""
+    from pathlib import Path
+    import pixi_provider
+    import update_routes
+    profiles.intel_only()
+    profile = profiles.pixi_get(name)
+    if not profile:
+        raise MigrationConflict("pixi_migration_profile_missing")
+    if name == "ngrok" or s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    if update_routes.read_records(s.TOOLS_ROOT).get(name):
+        raise MigrationConflict("existing_managed_tool_conflict")
+    row, audit, keg, receipt = _source(s, name)
+    cls = _fresh_classification(s, name, row, provided=classification)
+    _consumers(s, name)
+    fresh = candidate if candidate is not None else pixi_provider.discover(s, name)
+    if (not isinstance(fresh, dict) or fresh.get("provider") != "pixi"
+            or fresh.get("availability") != "verified"
+            or fresh.get("execution_supported") is not True
+            or fresh.get("closure_verified") is not True
+            or fresh.get("system", {}).get("arch") != "x86_64"
+            or fresh.get("system", {}).get("os") != "macos"):
+        raise MigrationConflict("pixi_binary_route_unverified")
+    import update_routes
+    if fresh.get("provider_names") != [update_routes.PIXI_TOOLS[name][0]]:
+        raise MigrationConflict("pixi_package_identity_mismatch")
+    version = fresh.get("upstream_version")
+    current = row.get("installed_upstream_version") or row.get("installed_version")
+    if compare_upstream(version, current) != 1:
+        raise MigrationConflict("migration_downgrade_or_unknown")
+    lock = fresh.get("lock")
+    manifest = fresh.get("manifest")
+    if (not isinstance(lock, str) or not isinstance(manifest, str)
+            or hashlib.sha256(lock.encode()).hexdigest() != fresh.get("lock_sha256")
+            or manifest != pixi_provider.manifest_text(name, version)):
+        raise MigrationConflict("pixi_lock_or_manifest_unverified")
+    closure = fresh.get("closure")
+    if (not isinstance(closure, list) or not closure
+            or any(not isinstance(node, dict)
+                   or node.get("arch") not in ("osx-64", "noarch")
+                   or not node.get("archive_id") or not node.get("checksum")
+                   for node in closure)
+            or not any(n.get("arch") == "osx-64" for n in closure)):
+        raise MigrationConflict("pixi_binary_closure_unverified")
+    generation_id = _check_id(generation_id or uuid.uuid4().hex)
+    directory = Path(s.TOOLS_ROOT) / "environments" / name / ("generation-" + generation_id)
+    if os.path.lexists(directory):
+        raise MigrationConflict("pixi_generation_conflict")
+    prefix = directory / ".pixi" / "envs" / "default"
+    target_commands = {command: str(prefix / "bin" / command)
+                       for command in profile.commands}
+    previous, registry = _route_ownership(s, name)
+    source_commands = _source_commands(keg, profile)
+    owned_shims = (previous or {}).get("owned_shims", {})
+    routing.preflight(s.TOOLS_ROOT, name, target_commands, owned_shims=owned_shims)
+    route = {key: fresh.get(key) for key in (
+        "provider", "availability", "execution_supported", "closure_verified",
+        "upstream_version", "package_version", "revision", "provider_names",
+        "system", "closure", "manifest", "lock", "lock_sha256")}
+    source = {"name": name, "kind": "formula", "provider": "homebrew",
+              "installation_id": "homebrew:formula:" + name,
+              "version": row["installed_version"], "keg": str(keg),
+              "receipt_sha256": _hash(receipt),
+              "manager_versions": audit.get("manager_versions"),
+              "commands": source_commands}
+    target = {"provider": "pixi", "installation_id": "pixi:" + name,
+              "version": version, "revision": None,
+              "generation_id": generation_id, "directory": str(directory),
+              "prefix": str(prefix), "candidate": route,
+              "mapped_name": fresh["provider_names"][0],
+              "commands": target_commands, "ports": []}
+    core = {"source": source, "target": target, "profile": name,
+            "profile_version": profile.version, "classification": cls,
+            "consumers": [], "route_generation": (previous or {}).get("generation", 0),
+            "owned_shims": owned_shims, "system": fresh["system"],
+            "exclusions": s.load_settings().get("excluded_packages", [])}
+    return core, material_fingerprint(source, core, previous or {})
+
+
+def _material(s, name, *, classification=None, provider="macports",
+              pixi_candidate=None, planned_generation=None):
+    if provider == "pixi":
+        return _material_pixi(s, name, classification=classification,
+                              candidate=pixi_candidate,
+                              generation_id=planned_generation)
+    if provider != "macports":
+        raise MigrationConflict("unsupported_target_provider")
+    profiles.intel_only()
+    if name == "ngrok" or s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    profile = profiles.get(name)
+    if not profile or profile.provider != "macports":
+        raise MigrationConflict("unsupported_migration_profile")
+    row, audit, keg, receipt = _source(s, name)
+    cls = _fresh_classification(s, name, row, provided=classification)
+    _consumers(s, name)
+    graph, target = _target_graph(s, profile)
+    installed_upstream = row.get("installed_upstream_version") or row["installed_version"]
+    if compare_upstream(target["version"], installed_upstream) != 1:
+        raise MigrationConflict("migration_downgrade_or_unknown")
+    existing = {x["name"]: x for x in mp.inventory(s)}
+    for node in graph["nodes"]:
+        old = existing.get(node["name"])
+        if old:
+            expected = str(node["version"]) + (
+                "_" + str(node["revision"]) if node.get("revision") not in ("", "0", None)
+                else "")
+            if old["installed_version"] != expected or old.get("installed_variants", "") != node.get("variants", ""):
+                raise MigrationConflict("existing_port_variant_or_version_conflict:" + node["name"])
+    prior, registry = _route_ownership(s, name)
+    source_commands = _source_commands(keg, profile)
+    target_commands = {key: str(path) for key, path in profiles.command_paths(profile).items()}
+    owned_shims = (prior or {}).get("owned_shims", {})
+    routing.preflight(s.TOOLS_ROOT, name, target_commands, owned_shims=owned_shims)
+    source = {
+        "name": name, "kind": "formula", "provider": "homebrew",
+        "installation_id": "homebrew:formula:" + name,
+        "version": row["installed_version"], "keg": str(keg),
+        "receipt_sha256": _hash(receipt),
+        "manager_versions": audit.get("manager_versions"),
+        "commands": source_commands,
+    }
+    target_data = {
+        "provider": "macports", "installation_id": "macports:" + profile.ports[0],
+        "version": target["version"], "revision": target.get("revision"),
+        "graph": graph["nodes"], "commands": target_commands,
+        "ports": list(profile.ports),
+    }
+    core = {"source": source, "target": target_data,
+            "classification": cls, "consumers": [], "profile": name,
+            "profile_version": profile.version,
+            "route_generation": (prior or {}).get("generation", 0),
+            "owned_shims": owned_shims, "system": graph.get("system"),
+            "exclusions": s.load_settings().get("excluded_packages", [])}
+    return core, material_fingerprint(source, core, prior or {})
+
+
+def plan(s, name, action="migrate", transaction_id=None, *,
+         classification=None, provider="macports", pixi_candidate=None):
+    if action != "migrate":
+        return recovery_plan(s, transaction_id, action)
+    core, fingerprint = _material(s, name, classification=classification,
+                                  provider=provider, pixi_candidate=pixi_candidate)
+    plan_id = uuid.uuid4().hex
+    created = time.time()
+    data = {"schema_version": SCHEMA, "id": plan_id,
+            "action": "migrate", "created_at": created,
+            "expires_at": created + 900,
+            "fingerprint": fingerprint, **core}
+    _write(_plan_path(s, plan_id), data)
+    return data
+
+
+def _load_plan(s, plan_id):
+    plan_id = _check_id(plan_id)
+    record = _read(s, _plan_path(s, plan_id))
+    if not record or record.get("schema_version") != SCHEMA:
+        raise MigrationConflict("migration_plan_not_found")
+    if record["expires_at"] <= time.time():
+        raise MigrationConflict("migration_plan_expired")
+    return record
+
+
+def _manifest(root):
+    result = []
+    root = Path(root)
+    for path in sorted(root.rglob("*")):
+        name = str(path.relative_to(root))
+        mode = path.lstat().st_mode
+        kind = "link" if stat.S_ISLNK(mode) else "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "special"
+        if kind == "special":
+            raise MigrationConflict("unsupported_source_file_type:" + name)
+        item = {"path": name, "kind": kind, "mode": stat.S_IMODE(mode)}
+        if kind == "link":
+            item["target"] = os.readlink(path)
+        if kind == "file":
+            item["sha256"] = _hash(path)
+        result.append(item)
+    return result
+
+
+def _backup(s, journal, directory):
+    source = Path(journal["plan"]["source"]["keg"])
+    if not source.is_dir():
+        raise MigrationConflict("source_keg_disappeared")
+    target = directory / "backup" / "keg"
+    if target.exists():
+        raise MigrationConflict("backup_already_exists")
+    initial = _manifest(source)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2)
+    if _manifest(target) != initial:
+        raise MigrationConflict("backup_integrity_failed")
+    manifest_path = directory / "backup" / "manifest.json"
+    _write(manifest_path, {"entries": initial, "source": str(source)})
+    journal["backup"] = {"path": str(target), "manifest": str(manifest_path),
+                         "manifest_sha256": _hash(manifest_path)}
+    _write(directory / "journal.json", journal)
+
+
+def _phase(journal, directory, phase, state, **values):
+    if state not in ("started", "finished"):
+        raise ValueError("Invalid phase status")
+    journal["stage"] = phase
+    journal.setdefault("phases", {})[phase] = {
+        "status": state, "timestamp": time.time(), **values}
+    journal["updated_at"] = time.time()
+    _write(directory / "journal.json", journal)
+
+
+def _verify_backup(journal):
+    backup = journal.get("backup") or {}
+    manifest_path = Path(backup.get("manifest") or "/nonexistent")
+    saved = Path(backup.get("path") or "/nonexistent")
+    if not manifest_path.is_file() or _hash(manifest_path) != backup.get("manifest_sha256"):
+        raise MigrationConflict("backup_manifest_changed")
+    data = json.loads(manifest_path.read_text())
+    if not saved.is_dir() or _manifest(saved) != data["entries"]:
+        raise MigrationConflict("backup_contents_changed")
+    return saved, data["entries"]
+
+
+def _target_ready(s, plan):
+    target = plan["target"]
+    if target["provider"] == "pixi":
+        import pixi_provider
+        profile = profiles.pixi_get(plan["profile"])
+        if not profile:
+            raise MigrationConflict("pixi_migration_profile_missing")
+        prefix = Path(target["prefix"])
+        if (not prefix.is_dir() or prefix.is_symlink()
+                or not prefix.resolve().is_relative_to(
+                    (Path(s.TOOLS_ROOT) / "environments" / plan["profile"]).resolve())):
+            raise MigrationConflict("pixi_target_prefix_unverified")
+        pixi_provider.installed_record(prefix, target["mapped_name"], target["version"])
+        pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+        return profiles.smoke_pixi(s, profile, prefix, target["version"])
+    profile = profiles.get(plan["profile"])
+    current = {p["name"]: p for p in mp.inventory(s)}
+    root = current.get(profile.ports[0])
+    if not root:
+        raise MigrationConflict("target_installation_missing")
+    expected = plan["target"]["version"]
+    observed = root["installed_version"]
+    expected_revision = str(plan["target"].get("revision") or "0")
+    wanted = expected + ("_" + expected_revision if expected_revision != "0" else "")
+    if (observed != wanted or root.get("installed_variants", "") !=
+            next((n.get("variants", "") for n in plan["target"]["graph"]
+                  if n["name"] == profile.ports[0]), "")):
+        raise MigrationConflict("target_version_or_variant_mismatch")
+    smoke = profiles.smoke(s, profile, expected)
+    return smoke
+
+
+def _source_still_safe(s, plan):
+    name = plan["source"]["name"]
+    current, _, keg, receipt = _source(s, name)
+    if str(keg) != plan["source"]["keg"] or _hash(receipt) != plan["source"]["receipt_sha256"]:
+        raise MigrationConflict("source_installation_changed")
+    _consumers(s, name)
+    if s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    return current
+
+
+def _target_postcheck(s, journal):
+    target = journal["plan"]["target"]
+    name = journal["plan"]["source"]["name"]
+    activation = journal.get("activation") or {}
+    if not activation:
+        raise MigrationConflict("routing_not_activated")
+    routing.verify_shell(s, s.TOOLS_ROOT, target["commands"])
+    smoke = _target_ready(s, journal["plan"])
+    primary = name
+    managed = Path(s.TOOLS_ROOT) / "bin" / primary
+    profile = (profiles.pixi_get(name) if target["provider"] == "pixi"
+               else profiles.get(name))
+    result = s.run_cmd([str(managed), *profile.version_args],
+                       timeout=30, cancellable=True)
+    if result.code or not profiles.version_matches(result.stdout + result.stderr,
+                                                    target["version"]):
+        raise MigrationConflict("managed_command_postcheck_failed")
+    return smoke
+
+
+def _compensate(s, journal, directory):
+    """Compensate without observing the original cancel flag."""
+    activation = journal.get("activation")
+    if activation:
+        routing.restore(s.TOOLS_ROOT, activation)
+        journal["activation_rolled_back"] = True
+    source = Path(journal["plan"]["source"]["keg"])
+    if not source.is_dir():
+        backup, _ = _verify_backup(journal)
+        if os.path.lexists(source):
+            raise MigrationConflict("source_path_changed_independently")
+        source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(backup, source, symlinks=True, copy_function=shutil.copy2)
+        if _manifest(source) != _manifest(backup):
+            raise MigrationConflict("restored_source_hash_mismatch")
+        linked = s.run_cmd([s.brew_bin(), "link", journal["plan"]["source"]["name"]],
+                           timeout=180, cancellable=False,
+                           env_override={"HOMEBREW_NO_AUTO_UPDATE": "1",
+                                         "HOMEBREW_NO_AUTOREMOVE": "1",
+                                         "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
+        if linked.code:
+            raise MigrationConflict("source_relink_failed", linked.stderr)
+    if journal["plan"]["target"]["provider"] == "pixi":
+        _remove_pixi_target_record(s, journal)
+    return True
+
+
+def _register_pixi_target(s, journal, directory):
+    """Publish physical Pixi evidence only after verified route postcheck."""
+    import pixi_provider
+    import update_routes
+    from provider_ownership import atomic_write_json
+    plan = journal["plan"]
+    target = plan["target"]
+    prefix = Path(target["prefix"])
+    evidence = pixi_provider.installed_record(
+        prefix, target["mapped_name"], target["version"])
+    pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+    if not evidence.get("name"):
+        raise MigrationConflict("pixi_installed_record_invalid")
+    name = plan["profile"]
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    existing = records.get(name)
+    if existing and (existing.get("transaction_id") != journal["transaction_id"]
+                     or existing.get("prefix") != str(prefix)):
+        raise MigrationConflict("pixi_managed_record_conflict")
+    record = {"provider": "pixi", "version": target["version"],
+              "prefix": str(prefix), "workspace": target["directory"],
+              "executables": list(target["commands"]),
+              "owned_shims": routing.owned_shim_hashes(
+                  s.TOOLS_ROOT, journal["activation"]),
+              "transaction_id": journal["transaction_id"],
+              "verified_at": time.time(), "probe_output": "transactional migration"}
+    journal["pixi_managed_record"] = record
+    _write(directory / "journal.json", journal)
+    if existing != record:
+        records[name] = record
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
+    journal["pixi_managed_record_written"] = True
+    _write(directory / "journal.json", journal)
+    return [{"name": name, "kind": "tool", "provider": "pixi",
+             "installation_id": target["installation_id"],
+             "installed_version": target["version"]}]
+
+
+def _remove_pixi_target_record(s, journal):
+    """Rollback only metadata written by this exact transaction."""
+    import update_routes
+    from provider_ownership import atomic_write_json
+    name = journal["plan"]["profile"]
+    target = journal["plan"]["target"]
+    if target["provider"] != "pixi":
+        return
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("pixi_ownership_registry_unreadable")
+    for route in registry.get("routes", []):
+        if route.get("logical_id") == name:
+            if route.get("transaction_id") != journal["transaction_id"]:
+                raise MigrationConflict("pixi_ownership_changed_independently")
+    kept = [r for r in registry["routes"]
+            if r.get("transaction_id") != journal["transaction_id"]]
+    if len(kept) != len(registry["routes"]):
+        atomic_write_json(Path(s.TOOLS_ROOT) / "migrations" / "routes.json",
+                          dict(registry, routes=kept))
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    managed = records.get(name)
+    if managed:
+        if (managed.get("transaction_id") != journal["transaction_id"]
+                or managed.get("prefix") != target["prefix"]):
+            raise MigrationConflict("pixi_managed_record_changed_independently")
+        records.pop(name)
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
+
+
+def _run(s, journal, directory, *, resume=False):
+    plan_data = journal["plan"]
+    provider = plan_data["target"]["provider"]
+    profile = (profiles.pixi_get(plan_data["profile"]) if provider == "pixi"
+               else profiles.get(plan_data["profile"]))
+    if not profile:
+        raise MigrationConflict("unsupported_migration_profile")
+    try:
+        if not resume:
+            _phase(journal, directory, "backup", "started")
+            _backup(s, journal, directory)
+            _phase(journal, directory, "backup", "finished")
+            _phase(journal, directory, "install", "started")
+            if provider == "pixi":
+                import pixi_provider
+                target = plan_data["target"]
+                prefix = pixi_provider.install_locked(
+                    s, target["candidate"], Path(target["directory"]))
+                if str(prefix) != target["prefix"]:
+                    raise MigrationConflict("pixi_target_prefix_changed")
+                _phase(journal, directory, "install", "finished", code=0)
+            else:
+                result = mp.privileged(s, "install", plan_data["target"]["ports"])
+                if result.code:
+                    raise MigrationConflict("target_install_failed", result.stderr or result.stdout)
+                _phase(journal, directory, "install", "finished", code=result.code)
+        else:
+            _verify_backup(journal)
+        _phase(journal, directory, "verify", "started")
+        journal["smoke"] = _target_ready(s, plan_data)
+        _phase(journal, directory, "verify", "finished")
+        if not journal.get("activation"):
+            _source_still_safe(s, plan_data)
+            _phase(journal, directory, "activate", "started")
+            def routing_progress(state):
+                journal["activation_pending"] = state
+                _write(directory / "journal.json", journal)
+            journal["activation"] = routing.activate(
+                s.TOOLS_ROOT, profile.name, journal["transaction_id"],
+                plan_data["source"]["commands"], plan_data["target"]["commands"],
+                owned_shims=plan_data.get("owned_shims"),
+                progress=routing_progress)
+            journal.pop("activation_pending", None)
+            _phase(journal, directory, "activate", "finished")
+        _phase(journal, directory, "cleanup", "started")
+        source_keg = Path(plan_data["source"]["keg"])
+        if source_keg.is_dir():
+            _source_still_safe(s, plan_data)
+            routing.verify_shell(s, s.TOOLS_ROOT, plan_data["target"]["commands"])
+            _verify_backup(journal)
+            result = s.run_cmd(
+                [s.brew_bin(), "uninstall", "--formula", profile.name],
+                timeout=300, cancellable=True,
+                env_override={"HOMEBREW_NO_AUTO_UPDATE": "1",
+                              "HOMEBREW_NO_AUTOREMOVE": "1",
+                              "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
+            if result.code:
+                raise MigrationConflict("source_uninstall_failed", result.stderr or result.stdout)
+        _phase(journal, directory, "cleanup", "finished")
+        _phase(journal, directory, "postcheck", "started")
+        journal["postcheck"] = _target_postcheck(s, journal)
+        _phase(journal, directory, "postcheck", "finished")
+        _phase(journal, directory, "ownership", "started")
+        route = {
+            "logical_id": profile.name, "status": "committed",
+            "source_installation_id": plan_data["source"]["installation_id"],
+            "source_name": profile.name,
+            "target_provider": provider,
+            "target_installation_id": plan_data["target"]["installation_id"],
+            "profile_id": profile.name, "profile_version": profile.version,
+            "transaction_id": journal["transaction_id"],
+            "owned_shims": routing.owned_shim_hashes(s.TOOLS_ROOT, journal["activation"]),
+            "active": journal["activation"]["active"],
+            "evidence_path": str(directory / "journal.json"),
+        }
+        installed_targets = (_register_pixi_target(s, journal, directory)
+                             if provider == "pixi" else mp.inventory(s))
+        ownership.commit_route(s.TOOLS_ROOT, route, directory / "journal.json",
+                               installed_targets)
+        _phase(journal, directory, "ownership", "finished")
+        journal.update(status="completed", completed_at=time.time())
+        _phase(journal, directory, "completed", "finished")
+        return journal
+    except BaseException as error:
+        journal.update(status="needs_attention", error=str(error))
+        _write(directory / "journal.json", journal)
+        # Do not automatically destroy a potentially changed source after cleanup.
+        # Before cleanup, compensate only ownership-controlled route files.
+        if journal.get("stage") in ("backup", "install", "verify", "activate"):
+            try:
+                activation = journal.get("activation")
+                if not activation:
+                    pending = journal.get("activation_pending") or {}
+                    if pending.get("state") == "pointer_switch_pending":
+                        activation = pending
+                if activation:
+                    routing.restore(s.TOOLS_ROOT, activation)
+                    journal["activation_rolled_back"] = True
+                elif journal.get("activation_pending"):
+                    raise MigrationConflict("activation_interrupted_needs_manual_recovery")
+                journal["status"] = "rolled_back"
+            except BaseException as rollback:
+                journal["compensation_error"] = str(rollback)
+                journal["status"] = "needs_attention"
+            _write(directory / "journal.json", journal)
+        raise
+
+
+def approve(s, plan_id, request_id=None):
+    old = _load_plan(s, plan_id)
+    if old.get("action") in ("resume", "rollback"):
+        return approve_recovery(s, old)
+    if old.get("action") != "migrate":
+        raise MigrationConflict("unsupported_migration_action")
+    target_provider = old["target"]["provider"]
+    # Pixi re-discovers the route here, rather than trusting a saved lock.
+    # The fixed generation ID permits exact material-fingerprint comparison.
+    fresh, fingerprint = _material(
+        s, old["profile"], provider=target_provider,
+        planned_generation=old["target"].get("generation_id"))
+    if fingerprint != old.get("fingerprint"):
+        raise MigrationConflict("plan_changed")
+    tid = uuid.uuid4().hex
+    directory = _transaction_path(s, tid)
+    directory.mkdir(parents=True)
+    journal = {"schema_version": SCHEMA, "transaction_id": tid,
+               "plan_id": plan_id, "request_id": request_id,
+               "status": "running", "stage": "preflight",
+               "started_at": time.time(), "plan": old, "phases": {}}
+    _write(directory / "journal.json", journal)
+    return _run(s, journal, directory)
+
+
+def recovery_plan(s, transaction_id, action):
+    tid = _check_id(transaction_id)
+    if action not in ("resume", "rollback"):
+        raise MigrationConflict("unsupported_recovery_action")
+    journal = _read(s, _transaction_path(s, tid) / "journal.json")
+    if not journal or journal.get("schema_version") != SCHEMA:
+        raise MigrationConflict("transaction_not_found")
+    if journal.get("status") in FINISHED:
+        raise MigrationConflict("transaction_already_resolved")
+    source = Path(journal["plan"]["source"]["keg"])
+    preview = {"source_present": source.is_dir(),
+               "routing_active": bool(journal.get("activation")),
+               "last_stage": journal.get("stage"),
+               "backup_verified": False}
+    try:
+        _verify_backup(journal)
+        preview["backup_verified"] = True
+    except Exception as error:
+        preview["backup_error"] = str(error)
+    pid = uuid.uuid4().hex
+    created = time.time()
+    data = {"schema_version": SCHEMA, "id": pid, "action": action,
+            "transaction_id": tid, "created_at": created,
+            "expires_at": created + 900, "preview": preview,
+            "journal_sha256": _hash(_transaction_path(s, tid) / "journal.json")}
+    _write(_plan_path(s, pid), data)
+    return data
+
+
+def approve_recovery(s, approved):
+    tid = approved["transaction_id"]
+    directory = _transaction_path(s, tid)
+    journal_path = directory / "journal.json"
+    if _hash(journal_path) != approved["journal_sha256"]:
+        raise MigrationConflict("recovery_plan_changed")
+    journal = _read(s, journal_path)
+    _verify_backup(journal)
+    if approved["action"] == "rollback":
+        try:
+            _compensate(s, journal, directory)
+            journal.update(status="rolled_back", recovery_completed_at=time.time())
+            _write(journal_path, journal)
+            return journal
+        except Exception as exc:
+            journal.update(status="needs_attention", recovery_error=str(exc))
+            _write(journal_path, journal)
+            raise
+    if approved["action"] == "resume":
+        return _run(s, journal, directory, resume=True)
+    raise MigrationConflict("unsupported_recovery_action")
+'''
+
+UNIFIED_ENGINE_TESTS = r'''import sys
+import tempfile
+import unittest
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import migration_engine as engine
+
+class MigrationContracts(unittest.TestCase):
+    def test_backup_manifest_preserves_file_links_modes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)/"source"
+            root.mkdir()
+            script = root/"command"
+            script.write_text("#!/bin/sh\n")
+            script.chmod(0o755)
+            (root/"linked").symlink_to("command")
+            entries = engine._manifest(root)
+            self.assertEqual({e["path"] for e in entries}, {"command", "linked"})
+            self.assertEqual(next(e for e in entries if e["path"]=="linked")["target"],"command")
+            self.assertEqual(next(e for e in entries if e["path"]=="command")["mode"],0o755)
+    def test_pixi_material_plan_is_read_only_and_profile_gated(self):
+        import hashlib
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import migration_profiles
+        import pixi_provider
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            (source / "bin").mkdir(parents=True)
+            (source / "bin" / "pandoc").write_text("executable")
+            receipt = source / "INSTALL_RECEIPT.json"
+            receipt.write_text("{}")
+            candidate = {
+                "provider": "pixi", "availability": "verified",
+                "execution_supported": True, "closure_verified": True,
+                "system": {"os": "macos", "arch": "x86_64"},
+                "upstream_version": "3.2", "package_version": "3.2",
+                "provider_names": ["pandoc"],
+                "closure": [{"arch": "osx-64", "archive_id": "pandoc-3.2.conda",
+                             "checksum": "a"*64}],
+                "manifest": pixi_provider.manifest_text("pandoc", "3.2"),
+                "lock": "fixture-lock",
+                "lock_sha256": hashlib.sha256(b"fixture-lock").hexdigest(),
+            }
+            class Service:
+                TOOLS_ROOT = root
+                def is_excluded(self, name, kind):
+                    return False
+                def load_settings(self):
+                    return {"excluded_packages": []}
+            service = Service()
+            audited = {"manager_versions": ["1.0"]}
+            source_data = {"installed_version": "1.0",
+                           "installed_upstream_version": "1.0"}
+            with patch.object(migration_profiles, "intel_only"), \
+                 patch.object(engine, "_source",
+                              return_value=(source_data, audited, source, receipt)), \
+                 patch.object(engine, "_fresh_classification",
+                              return_value={"category": "standalone_candidate"}), \
+                 patch.object(engine, "_consumers", return_value=[]), \
+                 patch.object(engine, "_route_ownership",
+                              return_value=(None, {"routes": []})), \
+                 patch.object(engine.routing, "preflight"), \
+                 patch("update_routes.read_records", return_value={}):
+                first, fingerprint = engine._material_pixi(
+                    service, "pandoc", candidate=candidate, generation_id="a"*32)
+                second, same = engine._material_pixi(
+                    service, "pandoc", candidate=candidate, generation_id="a"*32)
+            self.assertEqual(first, second)
+            self.assertEqual(fingerprint, same)
+            self.assertEqual(first["target"]["provider"], "pixi")
+            self.assertEqual(first["target"]["installation_id"], "pixi:pandoc")
+            self.assertFalse((root / "environments").exists())
+
+    def test_macports_revision_suffix_does_not_block_newer_upstream(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            keg = root / "keg"
+            keg.mkdir()
+            receipt = keg / "INSTALL_RECEIPT.json"
+            receipt.write_text("{}")
+            class Service:
+                TOOLS_ROOT = root
+                def is_excluded(self, name, kind):
+                    return False
+                def load_settings(self):
+                    return {"excluded_packages": []}
+            row = {"installed_version": "1.2_4", "installed_upstream_version": "1.2"}
+            target = {"name": "terminal-notifier", "version": "1.3",
+                      "revision": "0", "variants": "", "archive": "fixture"}
+            graph = {"nodes": [target], "system": {"os": "macos", "arch": "x86_64"}}
+            with patch.object(engine.profiles, "intel_only"), \
+                 patch.object(engine, "_source", return_value=(
+                     row, {"manager_versions": ["1.2_4"]}, keg, receipt)), \
+                 patch.object(engine, "_fresh_classification", return_value={
+                     "category": "standalone_candidate"}), \
+                 patch.object(engine, "_consumers", return_value=[]), \
+                 patch.object(engine, "_target_graph", return_value=(graph, target)), \
+                 patch.object(engine.mp, "inventory", return_value=[]), \
+                 patch.object(engine, "_route_ownership", return_value=(None, {})), \
+                 patch.object(engine, "_source_commands", return_value={
+                     "terminal-notifier": "/source/terminal-notifier"}), \
+                 patch.object(engine.routing, "preflight"):
+                result, digest = engine._material(Service(), "terminal-notifier")
+            self.assertEqual(result["target"]["version"], "1.3")
+            self.assertEqual(result["source"]["version"], "1.2_4")
+            self.assertEqual(len(digest), 64)
+
+    def test_pixi_target_postinstall_checks_exact_meta_and_smoke(self):
+        import pixi_provider
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            prefix = home / "environments" / "pandoc" / "generation-a" / ".pixi" / "envs" / "default"
+            prefix.mkdir(parents=True)
+            plan = {"profile": "pandoc", "target": {
+                "provider": "pixi", "prefix": str(prefix), "mapped_name": "pandoc",
+                "version": "3.2.1", "candidate": {"closure": [{"archive_id": "pandoc"}]}}}
+            class S:
+                TOOLS_ROOT = home
+            with patch.object(pixi_provider, "installed_record", return_value={
+                     "name": "pandoc", "version": "3.2.1"}) as meta, \
+                 patch.object(pixi_provider, "verify_generation") as closure, \
+                 patch.object(engine.profiles, "smoke_pixi",
+                              return_value={"functional": {"code": 0}}) as smoke:
+                result = engine._target_ready(S(), plan)
+            self.assertEqual(result["functional"]["code"], 0)
+            meta.assert_called_once()
+            closure.assert_called_once()
+            smoke.assert_called_once()
+
+    def test_pixi_managed_record_roundtrip_and_independent_edit_protection(self):
+        import json
+        import pixi_provider
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work = root / "tx"
+            work.mkdir()
+            target = {"provider": "pixi", "prefix": str(root / "prefix"),
+                      "directory": str(root / "workspace"), "mapped_name": "pandoc",
+                      "version": "3.2.1", "installation_id": "pixi:pandoc",
+                      "candidate": {"closure": []}, "commands": {"pandoc": "/tool/pandoc"}}
+            journal = {"transaction_id": "a"*32, "plan": {"profile": "pandoc",
+                       "target": target}, "activation": {"active": "/managed/active"}}
+            class S:
+                TOOLS_ROOT = root
+            engine._write(work / "journal.json", journal)
+            with patch.object(pixi_provider, "installed_record", return_value={
+                     "name": "pandoc", "version": "3.2.1"}), \
+                 patch.object(pixi_provider, "verify_generation"), \
+                 patch.object(engine.routing, "owned_shim_hashes", return_value={
+                     "pandoc": "sha"}):
+                physical = engine._register_pixi_target(S(), journal, work)
+            self.assertEqual(physical[0]["installation_id"], "pixi:pandoc")
+            stored = json.loads((root / "installed.json").read_text())
+            self.assertEqual(stored["pandoc"]["transaction_id"], "a"*32)
+            stored["pandoc"]["prefix"] = "/independent-user-change"
+            engine._write(root / "installed.json", stored)
+            with self.assertRaisesRegex(engine.MigrationConflict, "independently"):
+                engine._remove_pixi_target_record(S(), journal)
+            self.assertEqual(json.loads((root / "installed.json").read_text())
+                             ["pandoc"]["prefix"], "/independent-user-change")
+            stored["pandoc"]["prefix"] = target["prefix"]
+            engine._write(root / "installed.json", stored)
+            engine._remove_pixi_target_record(S(), journal)
+            self.assertNotIn("pandoc", json.loads((root / "installed.json").read_text()))
+
+    def test_pixi_unlisted_profile_cannot_authorize_migration(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            class Service:
+                TOOLS_ROOT = Path(temp)
+            with patch.object(engine.profiles, "intel_only"):
+                with self.assertRaisesRegex(engine.MigrationConflict, "profile_missing"):
+                    engine._material_pixi(Service(), "ffmpeg", candidate={})
+
+    def test_pixi_approval_rechecks_pinned_generation_and_refuses_changed_lock(self):
+        import json
+        import time
+        from unittest.mock import patch
+        from provider_ownership import atomic_write_json
+        with tempfile.TemporaryDirectory() as temp:
+            class S:
+                DATA_DIR = Path(temp)
+                def read_json(self, path):
+                    return json.loads(Path(path).read_text())
+            service = S()
+            old_plan = {"schema_version": engine.SCHEMA, "id": "a"*32,
+                        "action": "migrate", "expires_at": time.time()+600,
+                        "profile": "jq", "fingerprint": "f"*64,
+                        "target": {"provider": "pixi", "generation_id": "b"*32}}
+            atomic_write_json(Path(temp)/"migrations"/"plans"/("a"*32+".json"), old_plan)
+            with patch.object(engine, "_material", return_value=({}, "0"*64)) as material:
+                with self.assertRaisesRegex(engine.MigrationConflict, "plan_changed"):
+                    engine.approve(service, "a"*32)
+            self.assertEqual(material.call_args.kwargs["provider"], "pixi")
+            self.assertEqual(material.call_args.kwargs["planned_generation"], "b"*32)
+            self.assertIsNone(material.call_args.kwargs.get("pixi_candidate"))
+            self.assertFalse((Path(temp)/"migrations"/"transactions").exists())
+
+    def test_recovery_refuses_invalid_ids(self):
+        for value in ("../../../etc/passwd", "bad", "", None):
+            with self.assertRaises(engine.MigrationConflict):
+                engine._check_id(value)
+    def test_profile_unknown_fails_closed(self):
+        self.assertIsNone(engine.profiles.get("unknown-tool"))
+    def test_backup_hash_changes_if_file_mutated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp)/"x"
+            p.write_text("first")
+            first = engine._hash(p)
+            p.write_text("second")
+            self.assertNotEqual(first,engine._hash(p))
+
+if __name__=="__main__":unittest.main()
+'''
+
+UNIFIED_T04_PLAN = "# T04 — תוכנית ביצוע: גילוי והשוואת ספקי עדכון ל־Mac Intel\n\nתאריך: 20.10.2026. מיושם בענף `feat/unified-intel-134-foundations` בלבד. מבוסס על [התוכנית המחייבת](INTEL_UPDATE_IMPLEMENTATION_PLAN.md), סעיף 7, ועל [דוח המצב](UNIFIED_IMPLEMENTATION_STATUS.md).\n\n## יעד ומסירה\n\nסריקה יחידה מציגה לכל התקנה פיזית מועמדות מהספק הנוכחי ומחלופות מוכרות Homebrew/MacPorts/Pixi גם אם Homebrew אינו מסמן `outdated`. בחירה היא גרסת upstream היציבה והגבוהה ביותר **מבין מסלולים בינאריים מאומתים שניתן לבצע**, ובשוויון שומרים בעלים נוכחי. סטטוס ספק שנכשל נשמר כמידע חסר, ללא המצאת ״העדכני ביותר״. פעולה לא נתמכת נשארת ברשימת חלופות כחסומה.\n\n## סדר צעדי המימוש\n\n1. **איסוף ואמת־מקור**: להוציא איסוף חלופות לפונקציה שניתן לבדוק עם fake service; לאסוף Homebrew גם כשה־outdated=false; MacPorts גם אם אין `offer` ישן ורק למיפוי מאומת; Pixi למיפויי CLI בעלי התאמה גם כשהמקור Homebrew. לשמור זהויות `homebrew:formula`, `macports:`, `pixi:` נפרדות. Cask מקבל חסם מפורש ולא מסלול משוער.\n2. **T02 ו־scope**: עבור כל אפשרות מעבר לבצע סיווג מקור עדכני מתוך `installation_evidence` המשותף, ללא חיפוש פרויקטים פרטיים; לאפשר רק standalone ללא consumers/roles/gaps, וללא טענת התאמה אם הסריקה חלקית. לא להשתמש במיפוי שם או `--force-bottle` לבדם כראיה. להחריג ngrok ותלויות מוחרגות.\n3. **בינאריים/ביצוע**: לשמר preflight Homebrew bottle ו־MacPorts archives, ולגלות Pixi osx-64 עם lock מדויק, provenance, hashes וסגירת תלויות. מסלול מעבר `ready` ידרוש פרופיל מותקן, preflight מאומת, גיבוי, בדיקת שימוש, הפעלה אטומית, cleanup ושחזור; ללא כל אלה `execution_supported=false` והסיבה מוצגת. אין לגזור נתיבי shell ממשתמש או מהרשת.\n4. **אלגוריתם/תצוגה**: לגרום ל־`generate_plan` להזין `update_selection.select` בכל החלופות; לתת `discovery_complete` אמת רק כאשר שלושת המסלולים הרלוונטיים נבדקו או ידוע שאינם רלוונטיים; שגיאה בספק יחיד אינה חוסמת עדכון כשיר מספק אחר. להוסיף `reason_codes` מובחנים ותיאורי מסלול בעברית/אנגלית.\n5. **בדיקות וביקורת**: fixtures לכל מצב (Brew current with newer port, Brew binary available but Port higher, Pixi newer but unsupported, failed provider + valid provider, excluded, duplicate physical install, version suffix, stale plan). בדיקות מבודדות בלבד; CI syntax+tests focused+guarded `unified-check`. לבחון hash generator vs emitted files, תיעוד, היעדר שינויי התקנה אמיתיים, ו־`main` שלא שונה.\n\n## גבולות בטיחות מפורשים\n\n- אין מעבר אוטומטי לספק אחר שאין לו פרופיל עסקה בטוח; מיפוי `PIXI_TOOLS` לבדו אינו הרשאה להסרת Homebrew.\n- כאשר פיילוט מעבר מלא תלוי בתיקוני T03 (recovery/ownership), העבודה תחסום את הביצוע ותציין חסם ממוקד ולא תכריז על T04 סגור.\n- אין להתקין Pixi, MacPorts או Homebrew, להסיר חבילות, לשנות PATH, לפרסם release או להריץ קבלה אמיתית במהלך המימוש.\n- מסמך תוכנית זה אינו דוח הצלחה; דוח הביקורת יתווסף רק עם קומיטים/תוצאות שנבדקו.\n\n## נקודות ביקורת סופיות\n\n- [ ] סריקה אוספת לפחות את כל הספקים **הרלוונטיים** לכל התקנה שמיפויה מוכר, ללא תלות ב־Brew outdated.\n- [ ] החלופות כוללות גם חסמים מפורטים, ואין ״ready״ ללא adapter ועסקה תואמת.\n- [ ] מצבים של שוויון/כשל ספק/שתי התקנות/unknown version/מניעת downgrade נבדקו.\n- [ ] generated files תואמים ל־generator ובדיקת CI ממוקדת עברה.\n- [ ] נרשמו בבירור מסלולים שעוד אינם מבצעים מעבר ודרישות בדיקת הקבלה.\n\n## התקדמות קוד עד 555ae7b — 20.10.2026\n\nהסעיפים שלמעלה היו **תוכנית**, ולא הוכחה לביצוע. בזמן בדיקת הענף התברר:\n\n- **מומש:** `collect_candidates` מחפש חלופות ממופות גם אם Homebrew אינו outdated; Homebrew revisions מזוהים בנפרד מגרסת upstream; מיפוי MacPorts ריק לא יוצר port מדומה; Pixi נבדק עם מגבלת זמן מצטברת, וחסר ראיות T02 מחזיר חסם ולא התרת התקנה.\n- **מומש:** פרופילי `jq` ו־`pandoc` בלבד למעבר Homebrew→Pixi, עם בדיקות שימוש, `_material_pixi` לצורכי preflight, מסלול התקנה ביומן עסקה, רישום בעלות לאחר אימות וניקוי רשומה מוגן במקרה rollback.\n- **טרם מחובר:** `_pixi_bridge` ב־`unified_updates.py` מסמן את כל ההצעות החדשות למעבר Homebrew→Pixi כ־`execution_supported=False`, גם כשמנוע העסקה מסוגל לתכנן מעבר לפרופיל. אין לסמן את המעבר כ־ready לפני השלמת החיבור והסקירה.\n- **אימות ממוקד:** [CI #39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017) עבר 63 בדיקות Python, בדיקת JS, תחביר, `unified-check` קריאה בלבד של 37 קבצים ו־packaging smoke. בדיקות קבלה אמיתיות לא בוצעו.\n\n### צעד ההמשך המדויק (שלב 2 בתוכנית המשותפת)\n\n1. לסקור את `_pixi_bridge`, `collect_candidates`, `update_selection.select` וה־`migration_engine` מקצה לקצה, לרבות ניתוב `plan/approve`, fingerprint ו־revalidation.\n2. לבדוק הבדל בין version upstream לבין revisions, תרחיש source במיפוי, צרכנים, T02 שאינו מעודכן, lock/hash/closure, הגבלות 180 שניות, duplicate installations והחרגות.\n3. להגדיר תנאי חובה שבהם Pixi יכול להיבחר לביצוע לעומת חסימה; אין להתיר התקנה בגלל עצם קיומו של `PIXI_TOOLS`.\n4. למסור מפת פערים וסדר שינויי קוד לפני שלב 3; לא לבצע מעבר אמיתי, לא לשנות PATH ולא להכריז ש־T04 הושלמה.\n\n### בדיקות פתוחות גם לאחר הקוד הקיים\n\n- [ ] חיבור `_pixi_bridge` למנגנון אישור המעבר המאומת.\n- [ ] הוכחת ביצוע ושחזור מלאים ב־fixtures עם כשלים בכל שלב והגנה מפני עריכה עצמאית.\n- [ ] מעבר Homebrew→Pixi ב־Mac Intel בריצת קבלה מפורשת של המשתמש.\n- [ ] בדיקות HTTP/Electron וגילוי עתידי של עדכון אצל הספק החדש לאחר restart.\n\n---\n\n## שלב 2 — דוח סקירת חוזים ובטיחות לקראת חיבור Homebrew→Pixi\n\n**סטטוס:** סקירת קוד הושלמה ב־20.10.2026 על בסיס `53abc72`; שלב 3 (מימוש החיבור) **טרם בוצע**.\nהסקירה היא סטטית של הקוד והבדיקות הקיימות, **לא** הוכחת הרצה על Mac או תוצאת התקנה.\nלא הופעלו פקודות חבילות, לא שונו PATH או ההתקנות, ולא שונה קוד מוצר במסגרת שלב 2.\n\n### 1. נתיב הנתונים שנבדק\n\n```text\nPOST /api/check\n -> mac_manager._combined(refresh=True)\n -> installation_evidence.annotate(...): סיווג T02 ומיפוי לכלי Homebrew\n -> unified_updates.generate_plan\n -> collect_candidates -> _pixi_bridge -> pixi_provider.discover(osx-64)\n -> update_selection.select -> persisted plan / 15-minute fingerprint\n -> UI: update selected / all / one (request_id, decision_id, material_fingerprint)\n -> unified_updates.validate_request -> execute\n -> migration_engine._material / approve / _run\n -> backup -> pixi install --locked -> metadata+functional smoke\n -> routing -> shell PATH check -> guarded brew uninstall\n -> postcheck -> installed.json + ownership routes -> refresh/recovery\n```\n\n**הפרדה חשובה:** `pixi_provider.discover` מאמת מועמדות בינארית ו־lock, אך אינו מתיר מעבר; `migration_profiles.pixi_get` מתיר רק `jq` ו־`pandoc`; `migration_engine.plan` יוצר תוכנית עסקה אחרי preflight, וה־executor צריך להוכיח מחדש את התאמתה לפני כל מוטציה.\n\n### 2. ממצאים מאומתים בקוד\n\n| מזהה | דחיפות | ממצא וקוד תומך | השלכה | טיפול נדרש |\n| --- | --- | --- | --- | --- |\n| P0-A | חוסם הפעלה | `backend/unified_updates.py:228-245`: `_pixi_bridge` משאיר `execution_supported=False`, `profile_id=None`, `migration_plan_id` חסר גם לאחר `discover` מוצלח. `update_selection.py:117-151` חוסם הצעה זו. | מנוע Pixi החדש אינו נבחר לעדכון. | לחבר פרופיל קבוע ותוכנית `migration_engine.plan(... provider=\"pixi\", pixi_candidate=verified, classification=...)` רק לאחר כל תנאי הסף, ולהציב `ready` רק עם מזהה ו־fingerprint תקינים. |\n| P0-B | חוסם הפעלה | `backend/unified_updates.py:535-539, 550-556`: ה־executor מאמת מעבר דרך `migration_engine._material(s, logical_id)` **ללא provider**, ולכן ברירת המחדל היא MacPorts. | הצעת Pixi שתסומן `ready` תיבדק בטעות לפי נתיב MacPorts, ועלולה להיכשל ב־`plan_changed` או לפרש חוזה לא מתאים. | לנתב במפורש לפי `selected_candidate.provider` / `target_provider`, ולהצליב עם תוכנית העסקה השמורה, `profile_version`, `migration_fingerprint`, `generation_id` ונתוני Pixi. לא להסיר את האימות. |\n| P0-C | חוסם הפעלה | `backend/mac_manager.py:168-186` מעביר סיווג T02 מלא מה־supplemental ל־packages בבדיקה מלאה; אולם `installation_evidence.py:281-306` בסריקה `refresh=False` משחזר סיווג רק מ־`previous.migrations`, **לא** מרשומת `previous.packages`. `unified_updates.py:527-539` קורא `compute_snapshot(False)` לפני מימוש, ו־`mac_manager.py:204` שומר את המצב החדש. `migration_engine.py:94-125` דורש סיווג טרי/מתאים. | עבור כלי שהיה supplemental בלבד (למשל jq עם Homebrew bottle), סיווג `standalone_candidate` עלול להפוך ל־`unclassified` לפני אישור העסקה; פעולה נכונה תידחה גם ללא שינוי התקנה. | לשמר סיווג **רק** מרשומת התקנה פיזית תואמת עם fingerprint תקף ותוקף זמן, או להפיק סיווג טרי לפני ביצוע. בדיקות חייבות להוכיח שסיווג מיושן/שונה/חסר נחסם. |\n| P1-D | חשוב | `backend/migration_engine.py:297-310` מקבל מועמד Pixi נעול ויוצר תוכנית; אבל `approve:648-659` בונה `_material(... provider=\"pixi\")` **ללא pixi_candidate**, כך ש־`_material_pixi:175` מגלה מועמד מחדש. | גם ללא שינוי קוד אפשר לקבל lock/closure שונה, timeout או חסם ממקור חיצוני בין תכנון לאישור. זה אינו אישור בטיחות אוטומטי. | להגדיר במדויק revalidation: תוכנית/מקור/דור דורשים התאמה מהותית, ונתיב גילוי מחדש מוגבל בזמן ויכול רק לדחות כשיש שינוי; לא ליפול לגרסה או lock אחרים. |\n| P1-E | חשוב | `update_selection.py:145-151` בודק פרופיל כללי אך **לא** מחייב תוכנית migration; `unified_updates.validate_request:475-479` דורש `migration_plan_id` ו־fingerprint רק בזמן לחיצה. | אם יוצב `execution_supported=True` לפני תוכנית מאומתת, ה־UI עלול להציג `ready` שה־backend ידחה. | גם בזמן selection לדרוש ראיית תוכנית תקפה ומצומדת לפרופיל, מקור, ספק ויעד; בדיקת השרת חייבת להישאר בנוסף. |\n| P1-F | חשוב לשלב 4 | `migration_engine._run:540-645`: יש backup/locked install/smoke/routing/cleanup/postcheck/ownership, אבל ברירות כשל אחרי cleanup יוצרות `needs_attention`, והמנוע לא מכוסה בבדיקות end-to-end של כל השלבים. `_compensate:445-469` משחזר קג רק כשהתיקייה חסרה; נדרש מבחן להסרה חלקית כשהיא עדיין קיימת. | אי אפשר להבטיח שחזור מלא במקרה כשל ביניים או פגיעה חלקית במקור. | לשמור חסימה עד הבדיקות הרלוונטיות; לכתוב fault-injection ו־resume/rollback מדומים לכל שלב, לשמור שינוי עצמאי, ורק לאחר מכן קבלת Mac אמיתית. |\n| P2-G | המשך | `backend/brew-updates-service.py` מפעיל unified תחת `run_with_progress` ומנעול בין תהליכים; בקשת migration legacy חדשה נדחית ב־`review_required`, recovery נפרד. טיפול ב־`MigrationConflict` ו־409/500 אינו אחיד. | חסמי ביצוע טכניים עלולים להופיע כהודעת כשל כללית, ו־UI/HTTP לא נבדקו במלואם. | בשלב 6–7 להבטיח סטטוס 409 מובנה והצגת מסלול בדיקה מחדש; אין להמציא אישור migration חדש שעוקף את ה־executor המאוחד. |\n\n### 3. הגנות חיוביות שנמצאו — לשמר\n\n- `migration_engine._material_pixi:164-214`: native Intel בלבד, allowlist של פרופילים, ngrok/החרגות, איסור רשומת tool קיימת, בעלות shim, השוואת upstream ללא downgrade, lock/hash ומיפוי מדויק.\n- `_fresh_classification:94-125`: fingerprint של מלאי המקור, חותמת זמן (עד 15 דקות), ללא gaps/consumers/shared roles; `_consumers` מבצע `brew uses --installed` מחדש.\n- `pixi_provider.discover/install_locked/verify_generation`: osx-64, manifest+lock מדויקים, URL/channel מוגבלים, רשומות `conda-meta` וארטיפקטים תואמים, התקנה חדשה בלבד.\n- `migration_profiles.smoke_pixi`: בודק version ותפקוד ממשי של `jq` ו־`pandoc` דרך executables מוגדרים.\n- `routing_activation`: מסרב ל־shim זר או משתנה, כותב wrappers בשלבים, ומאמת login shell לפני הסרת מקור.\n- `migration_engine._run`: מקור מוסר רק אחרי גיבוי, התקנת היעד ואימות שימוש; רישום בעלות מתבצע רק אחרי postcheck; כשל אחרי cleanup אינו מסומן הצלחה אוטומטית.\n- `provider_ownership.commit_route`: דורש יעד פיזי יחיד ורשומת journal לפני commit; אין לייצר רשומת port פיקטיבית ב־installed.json.\n- `unified_updates.validate_request`: דוחה תוכנית שפג תוקפה, החלטות כפולות, fingerprint שונה או החלטה לא מוכנה; שכבת ה־API שומרת request IDs ומנעול פעולה.\n\n### 4. מפת שינויים מצומצמת לשלב 3\n\n1. **קודם P0-C:** ב־`installation_evidence.annotate` / `mac_manager._combined` לתקן שימור בטוח של classification ב־snapshot `refresh=False`. ליצור fixtures לסריקה מלאה של jq עם `classification_only`, אחריה `compute_snapshot(False)`, ולוודא שראיה אמיתית נשמרת רק עד פקיעת התוקף/שינוי fingerprint. בלי fallback לסיווג בלתי מאומת.\n2. **P0-A + P1-E:** ב־`unified_updates._pixi_bridge` וב־`collect_candidates` להפעיל `migration_engine.plan` רק ל־`pixi_get(name)` תואם ל־`PIXI_TOOLS[name]`, T02 טרי, ללא consumers, עם candidate `osx-64` ב־closure נעול ו־version חדש. לתעד `migration_plan_id`, `migration_fingerprint`, `profile_id`, `profile_version`; רק אז `execution_supported=True`.\n3. **P0-B + P1-D:** ב־`unified_updates.execute` ו־`migration_engine.approve` להעביר יעד provider מפורש, לאמת תוכנית Pixi שנשמרה ונתוני lock/closure ומספר generation, ולחסום כל שינוי מהותי. אין מעבר מספק אחר או שינוי ספק סמוי.\n4. **בדיקות ממוקדות:** קוד `test_unified_updates.py`, `test_migration_engine.py`, בדיקות T02, provider-version ו־`test_update_selection.py`: jq/pandoc `ready` עם preflight מלא, כלי ממופה ללא profile חסום, T02 ישן/שונה, שינוי lock, revision, שינוי בעלות, תוכנית שפג תוקפה, חבילת Homebrew רגילה שנבחרת כש־Pixi חסום, וגם בדיקה שמקור ה־Pixi לא עבר בטעות בנתיב MacPorts.\n5. **גנרטור וביקורת:** לעדכן `tools/implement-mac-manager.py` באותם קובצי קוד/בדיקות, לבדוק `unified-check`, syntax ו־CI ממוקד. אין להריץ `--full`, לשנות חבילות, להגדיל allowlist ללא smoke או להתקין Pixi במחשב בזמן כתיבת הקוד.\n\n**שער כניסה למצב `ready`:** כל P0 סגור בקוד + fixtures חיוביים ושליליים עברו + `validate_request` ו־`execute` יודעים לאמת/להפעיל *בדיוק* את תוכנית Pixi שנבחרה. אם תנאי חסר, משאירים `execution_supported=False`, גם אם `discover` מצא גרסה חדשה.\n\n### 5. מה לא בוצע בשלב 2\n\n- לא שונה `execution_supported` ולא הופעל מסלול Homebrew→Pixi בבקשת העדכון.\n- לא נערכו קוד backend, UI, בדיקות מוצר או סקריפט התקנה; השינויים הם תיעוד ועותק התיעוד בגנרטור בלבד.\n- לא הורצו בדיקות קבלה על Mac או התקנה/הסרה/חילופי PATH.\n- 63 בדיקות ה־CI מהבסיס `555ae7b` הן רגרסיות ממוקדות; הן אינן מוכיחות את התרחישים החסרים שתועדו כאן.\n\n## תוצאת שלב 3 — מימוש מוגן של Pixi bridge (20.10.2026)\n\nשלב 2 לעיל הוא דוח ממצאים היסטורי; בעקבותיו בוצעו תיקוני קוד ב־`f2543f0` עד `ff48877`.\n\n| ממצא משלב 2 | טיפול בשלב 3 | סטטוס |\n| --- | --- | --- |\n| P0-A | `_pixi_bridge` מייצר תוכנית `migration_engine.plan` מוגנת לפרופילי `jq`/`pandoc` ורק אז מחזיר executable | מומש; קבלה חיה ממתינה |\n| P0-B | `_revalidate_migration` מאמת את ספק היעד המפורש לפני ביצוע, עם תוכנית נעולה, fingerprint, generation ומאפייני מועמד מדויקים | מומש; fault-injection ממתין |\n| P0-C | סיווג T02 נשמר בסריקה חלקית רק אם מקור פיזי, fingerprint, גרסה וזמן תואמים; אחרת נחסם | מומש ונבדק במקרים ממוקדים |\n| P1-D | `migration_engine.approve` ממשיך לבצע `discover` מחודש ומשווה לתוכנית הישנה; שינוי lock/closure/version מבטל את ההרצה | נבדק במוק/fixture; אינטגרציה מלאה ממתינה |\n| P1-E | דרישת מזהה תוכנית ו־fingerprint כבר בשכבת `update_selection` ובדיקת זהות מפורטת שוב ב־`execute` | מומש ונבדק במקרים ממוקדים |\n| P1-F / P2-G | כשל אחרי cleanup, rollback/restart, HTTP 409, ממשק legacy | פתוח לשלב 4 ולאחריו |\n\n**אין הרחבת allowlist** מעבר ל־`jq`/`pandoc`, אין fallback לבניית מקור, ואין הרשאת מעבר לכל חבילה ממופה שאין לה פרופיל עסקה. סקריפט `--full` וקבלת Mac Intel עדיין לא בוצעו.\n"
+UNIFIED_PRODUCT_GOAL_CURRENT = "# מטרת המוצר והחלטות העבודה\n\n> **עדכון סטטוס ענף 1.3.4, קומיט 555ae7b (20.10.2026):** זהו מסמך **יעד מוצר**, לא דוח השלמה. [דוח המימוש](UNIFIED_IMPLEMENTATION_STATUS.md) מתעד שכבר נכתבו החלטות מאוחדות, גילוי חלופות ממופות ומנוע עסקה לפרופילי Pixi קבועים (`jq`/`pandoc`), ומאז שלב 3 ה־Pixi bridge מחובר לפרופילי `jq`/`pandoc` בלבד עם תוכנית עסקה, אך אין קבלה אמיתית במחשב. סעיפי מצב 1.3.3 להלן הם היסטוריים.\n\nעודכן: 20.10.2026, בעקבות הבהרת המשתמש. זהו מקור ההחלטות למימוש הבא.\nמסמך זה מתאר את היעד; מצב המימוש נמצא ב־[מסמך המשימות](MAC_MANAGER_TASKS.md).\nאם תכנון קודם דורש אישור מעבר נפרד לכל חבילה או בדיקות מלאות בידי הסוכן,\nההחלטות במסמך זה מחליפות אותו.\n\n## חוויית השימוש הנדרשת\n\n1. המשתמש לוחץ ״התחל בדיקה״.\n2. המערכת מזהה התקנות ועדכונים ובודקת את הספקים הרלוונטיים.\n3. לכל חבילה היא בוחרת מסלול עם חבילה מוכנה וכל תלויותיה, המתאים לגרסת\n   macOS ול־Mac Intel, עם הגרסה העדכנית ביותר מבין המסלולים הנתמכים שנבדקו.\n4. התוצאות מציגות גרסה מותקנת, גרסת יעד, ספק נוכחי, ספק מבצע וסיבה לבחירה.\n   מעבר ספק מתוכנן מוצג כחלק מהעדכון לפני הלחיצה.\n5. המשתמש בוחר הכול או חלק ולוחץ ״עדכן הכול״ או ״עדכן נבחרים״.\n   הלחיצה מאשרת את הפעולות המוצגות, כולל המעברים; אין אשף או אישור נוסף\n   לכל חבילה. דרישת סיסמת מנהל מערכת של macOS עשויה להישאר כשנחוצה.\n6. המערכת מתקינה, מאמתת ומסכמת מה עודכן, מה דולג ומה נכשל, עם הסיבה.\n7. מעבר מוצלח נשמר: בסריקה הבאה ובפתיחה מחדש החבילה מזוהה אצל הספק החדש,\n   והעדכון הבא נבדק מולו, גם כשעותק Homebrew כבר אינו קיים.\n\n## מדיניות הבחירה\n\n- היעד הנוכחי הוא Mac Intel אמיתי. אין להרחיב קבלה ל־Apple Silicon/Rosetta\n  כחלק מהעבודה הזאת. המנגנון כללי למחשבי Intel, בלי רשימת התקנות של משתמש\n  מסוים, גרסאות קבועות או נתיבי משתמש מקובעים.\n- Homebrew, MacPorts ו־Pixi הם ספקים רצויים. קיימת תמיכה חלקית בלבד כיום;\n  אין להציג יעד מוצר כאילו כל הספקים כבר תומכים במעבר כל חבילה.\n- מסלול דורש התאמת זהות החבילה, ארכיטקטורה, מערכת, גרסה וכל תלויות ההרצה.\n  זמינות קובץ בלבד אינה מספיקה. אין נפילה לבנייה מקוד מקור.\n- מבין מסלולים שניתן לבצע ולבדוק, לבחור בגרסת upstream החדשה המתאימה\n  ביותר; לא לדרוש התאמה ליעד Homebrew כשאינו מסופק בינארית. אין ירידה בגרסה.\n  revisions נבדקים בתוך ספק; אין להשוות מספרי אריזה בין ספקים כגרסאות תוכנה.\n- בשוויון גרסה והתאמה, לשמר את הספק שכבר מנהל את ההתקנה כדי למנוע מעברים\n  מיותרים. כשאין לו מסלול מתאים או כשיש חלופה חדשה מתאימה, לבדוק חלופות מחדש.\n- רישום ספק חדש מתבצע אחרי אימות הצלחה, ומייצג בעלות; הגרסה והעדכניות\n  ממשיכות להגיע מהמלאי והקטלוג החיים של הספק, ולא מרשומה שמורה בלבד.\n- כשל תקשורת או מידע חסר יוצגו כלא מאומתים, ולא כ״אין חבילה״.\n- מסלול לא נתמך או תלויים/שירותים שלא טופלו יחסמו רק את החבילה המושפעת,\n  עם סיבה ברורה. פישוט הממשק אינו הרשאה להסיר התקנה בלי אימות ושחזור.\n- לשמר החרגות, ובפרט ngrok, הגדרות, תזמון, היסטוריה וזהות הרשאת ההתראות.\n  אין לסרוק פרויקטים פרטיים או לחסום רק בשל אפשרות לסקריפט פרטי.\n\n## משמעות הפיילוטים\n\n`terminal-notifier` ו־`include-what-you-use` הם מקרי בדיקה טכניים למעבר.\nהם אינם המטרה העסקית ואינם תפריט שהמשתמש צריך ללמוד. הצלחתם אינה הוכחה\nלמעבר ספריות, שירותים או כל חבילה אחרת. לא מחליפים פיילוט או מעבירים חבילה\nאמיתית בזמן פיתוח תיעוד או קוד בלי ההרשאה המתאימה.\n\n## חלוקת העבודה בבדיקות\n\n- הסוכן מממש קוד, כותב בדיקות ומרכז אותן בסקריפט. במהלך הפיתוח מבצע רק\n  אימות קצר וממוקד הנדרש לשינוי, כגון תחביר, תקינות קישורים או בדיקה נקודתית.\n- המשתמש מריץ בפקודה אחת את חבילת הבדיקות המלאה: Python, HTTP, ממשק,\n  רגרסיות, אריזה/קבלה לפי השינוי, ודוח שמור. אין להריץ את כולן מראש ואז\n  למסור למשתמש סקריפט שחוזר על אותה עבודה, בלי בקשה מפורשת ממנו.\n- בדיקות מבודדות אינן משנות חבילות או הגדרות אמיתיות. פעולה אמיתית בסקריפט\n  דורשת הצגת הפעולות ואישור כולל אחד. ההפרדה היא שלב בטיחות בסקריפט הקבלה,\n  ואינה דרישה לאישורי מעבר נוספים בממשק העדכון הרגיל.\n- הדוח יבדיל בין בדיקות קוד, סימולציה ואימות במחשב, ויתעד גרסאות וחתימות,\n  כשל, דילוג או מצב לא מאומת. דילוג אינו PASS; ניתוק אינו הוכחת הצלחה או כשל.\n- קוראים את הדוח ומתקנים כשלים ממוקדים. אין להריץ מחדש הכול כשאותו קוד כבר\n  נבדק, אלא אם שינוי או כשל מצדיקים זאת. עלות הטוקנים הקודמת לא נמדדה.\n- מסירה ללא ריצת המשתמש תסומן ״מימוש נמסר; בדיקות מלאות טרם הורצו״.\n  אין לטעון שהמטרה הושגה לפני דוח שמוכיח את תנאי הקבלה הרלוונטיים.\n\n## גבול המימוש והקבלה נכון ל־555ae7b\n\nגרסת מקור הפיתוח המיועדת היא 1.3.4; תיעוד ה־baseline של 1.3.3 הוא היסטורי.\nקיימים מנגנון החלטה שמורה, גילוי Homebrew/MacPorts/Pixi לפי מיפויים,\nעדכון Pixi מנוהל, מעבר Homebrew→MacPorts לפרופילים קיימים ומנוע Homebrew→Pixi\nל־`jq`/`pandoc` עם גיבוי ושחזור. **ה־Pixi bridge מאפשר כעת לבחור מעבר רק לפרופילים קשיחים עם תוכנית עסקה מאומתת**,\nאך מסלולי legacy/בדיקות כשל/ממשק וקבלת משתמש עדיין פתוחים.\n\nהסקריפט `tools/verify-migration.py` כולל ב־1.3.4 דגלי `--checks` ו־`--full`,\nאך ה־CI הנוכחי אישר רק בדיקות ממוקדות; `--full` אינו מאושר עדיין\nלהפעלה על ה־Mac של המשתמש. פירוט מלא ב־[דוח המימוש](UNIFIED_IMPLEMENTATION_STATUS.md).\n\n## תוכנית ביצוע\n\n[תוכנית המימוש המפורטת](INTEL_UPDATE_IMPLEMENTATION_PLAN.md) מתרגמת את ההחלטות\nלחוזי קוד, שלבי עבודה ותנאי קבלה. סטטוס הביצוע נשאר במסמך המשימות.\n"
+UNIFIED_PLAN_CURRENT = "# תוכנית מימוש — עדכון אחיד ובחירת ספק ל־Mac Intel\n\n> **מצב 20.10.2026 לאחר 555ae7b:** זהו מסמך הדרישות והארכיטקטורה המקורי מבסיס 1.3.3. מאז נכתבו מנגנון החלטות, גילוי חלופות ממופות, מנוע מעבר Homebrew→Pixi מוגבל לפרופילי `jq`/`pandoc`, בדיקות ממוקדות וסקריפט `--checks/--full`. שלב 3 חיבר מאז את ה־Pixi bridge לפרופילי `jq`/`pandoc` בלבד כאשר קיימת תוכנית עסקה מאומתת; `--full` לא עבר קבלה אמיתית. [דוח המימוש העדכני](UNIFIED_IMPLEMENTATION_STATUS.md) ו[סדר המשימות](MAC_MANAGER_TASKS.md) קובעים את מצב הקוד; אין להריץ `--full` כעת.\n\nתאריך: 20.10.2026. מצב: תוכנית לביצוע; שינויי המוצר המפורטים כאן טרם מומשו.\nבסיס הקוד: `6158c0a`, גרסה 1.3.3. יעד המסירה המקומית: 1.3.4.\nהמשימות בתוכנית: T03, T04, T07; שימור T01/T02. אין הרחבה ל־T05 או תיקוני T06.\n\nמסמכי יסוד: [מטרת המוצר](PRODUCT_GOAL.md), [משימות וסטטוס](MAC_MANAGER_TASKS.md),\n[מצב המימוש](MAC_MANAGER.md), [פערי T03](T03_VALIDATION.md).\nהחלטות המוצר האחרונות גוברות על תוכנית T03 הישנה ועל הודעות קומיט היסטוריות.\n\n## 1. התוצאה שהמשתמש יקבל\n\n1. ״התחל בדיקה״ מזהה התקנות ומחפש עדכונים בספקים הנתמכים.\n2. ליד כל חבילה מופיעים הגרסה המותקנת, הגרסה שנבחרה, הספק המבצע והנימוק.\n   אם מתוכנן מעבר, מוצג למשל ״Homebrew → MacPorts״ בתוך אותה שורת עדכון.\n3. המשתמש מסמן חבילות או בוחר הכול ולוחץ עדכון. הלחיצה מאשרת את הפעולות\n   המוצגות; אין confirm נוסף ואין אישור מעבר נפרד לכל חבילה.\n4. המערכת מבצעת כל פעולה דרך הספק שנבחר, מאמתת, ומציגה תוצאה סופית.\n5. לאחר מעבר מוצלח, הספק החדש נשמר. פתיחה מחדש וסריקות עתידיות ממשיכות\n   לזהות ולעדכן את ההתקנה אצלו גם לאחר שהעותק הקודם הוסר.\n\nהבחירה מבוססת על הגרסה המתאימה החדשה ביותר מבין מסלולים שניתנים לביצוע\nעם חבילות מוכנות וכל התלויות. אין בנייה מקוד מקור, ירידה בגרסה או החלפת\nספק רק כדי לקבל את אותה גרסת תוכנה. הרשאת מנהל מערכת של macOS נשארת כשנחוצה.\n\n## 2. נקודת הבסיס המוכחת וגבולותיה\n\nהמשתמש הריץ `tools/verify-migration.py --checks` וקיבל PASS ב־19 שלבים,\nכולל 83 בדיקות Python, תחביר, HTTP ושני תרחישי Electron בעברית ובאנגלית.\nהדוח נשמר ב־[תיקיית הריצה](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t03-1.3.3/checks-1792496033916688000/summary.json).\nחתימות 42 קובצי הקוד התאימו בעת קריאת הדוח. זהו בסיס היסטורי מתאריך זה,\nלא אישור לשינויי התוכנית החדשים. לא בוצע מעבר אמיתי בריצה זו.\n\nפערים שנקראו בקוד הנוכחי:\n\n| רכיב | מצב קיים | שינוי נדרש |\n| --- | --- | --- |\n| `mac_manager._combined` | מלאי וסיווג; רוב החלופות נבדקות אחרי חסם Homebrew | הצעות לכל התקנה רלוונטית, גם כשמסלול Homebrew תקין |\n| `Engine.plan/run` | בוחר בעיקר לפי סוג, הגדרות ויעד Homebrew | שימוש בהחלטה שהוצגה בסריקה, עם ספק ויעד מדויקים |\n| `update_routes` | מסלולי Pixi ממופים ו־installed.json; activate כותב shims | adapter ל־Pixi ובעלות מוגנת, בלי דריסת קבצים זרים |\n| `migration_engine` | שלד תוכנית/התקנה/יומן | הפעלה, שחזור, חזרתיות, בעלות ואימות מלאים |\n| `migration_profiles` | שני פרופילים ובדיקת IWYU חלקית | חוזה פרופיל משותף ובדיקות שימוש תקינות |\n| `installation_evidence.annotate` | איסוף וסיווג בתוך לולאת סריקה | חילוץ איסוף של מועמדת יחידה לשימוש חוזר |\n| `macports_provider.upgrade` | אימות גרסת מלאי לאחר port | גם בדיקת שימוש לפרופיל שהועבר |\n| renderer | כפתור סקירת מעבר ו־confirm לעדכון נבחרים | רשימת עדכון אחת ולחיצה אחת |\n| `/health` | hash השירות נקרא מהדיסק בבקשה | זהות קוד שנלכדת בתחילת התהליך |\n| סקריפט הבדיקות | בדיקות מבודדות עובדות; קבלה ישנה מוגבלת לפיילוט | קבלה אחידה של גרסה ארוזה ושל זרימת העדכון |\n\nאין למחוק את הקוד הקיים ולהתחיל מחדש. יש להשתמש בפונקציות הספקים,\nבמלאי, באיסוף הראיות ובמנגנון התוצאות של T01 שכבר קיימים.\n\n## 3. היקף מדויק והחלטות שאינן נתונות לבחירה\n\n- יעד קבלה: macOS על חומרת Intel; לזהות גם Rosetta ולדחות מסלול מעבר חדש על ARM.\n- מסלולי ביצוע: עדכון אצל ספק נוכחי — Homebrew, MacPorts, Pixi; מעבר חדש\n  של כלי עצמאי מ־Homebrew ל־MacPorts או Pixi. מעבר שמקורו MacPorts לספק\n  אחר, ספריות, שירותים ומערכות פיתוח משותפות נשארים חסומים עם נימוק מפורש.\n- מיפויים ופרופילים הם קבועים בקוד. אין להסיק זהות חבילה מדמיון בשם בלבד.\n  אין לקבל פקודת shell או בדיקת שימוש מ־HTTP או מקובץ משתמש.\n- המסלולים העצמאיים הקיימים ל־Node, Deno ו־uv ממשיכים לעבוד כפי שהם;\n  אין להוסיף ספקי מתקינים רשמיים חדשים במסגרת התוכנית.\n- לשמר Pixi קיים וסביבות שהמשתמש מנהל. אין להמיר סביבת משתמש לנכס של המנגנון.\n- `terminal-notifier` הוא רגרסיה של מסלול קיים; helper וזהות הרשאת ההתראות נשמרים.\n  `include-what-you-use` הוא מקרה הקבלה למעבר הנוסף ל־MacPorts, ללא טיפול ב־LLVM Homebrew.\n- אין לבחור פיילוט חלופי אוטומטית אם IWYU חסום. תמיכת Pixi תיבדק מבודד;\n  שינוי אמיתי נוסף דרך Pixi יוצג בנפרד לבחירת המשתמש במסגרת רשימת הפעולות הכוללת.\n- ngrok נשאר מוחרג בכל ספק ובסגירת תלויות. לשמר כל יתר ההחרגות וההגדרות.\n- אין לשנות shell startup files או prefix של Homebrew לצורך ניתוב חדש.\n- אין לבצע מעבר, הסרה או עדכון חבילות אמיתי במהלך המימוש בידי הסוכן.\n- אין להריץ חבילת בדיקות מלאה בידי הסוכן. אין להריץ אוטומטית pack/install\n  שגוררים verify מלא; המשתמש יבצע זאת במסלול הקבלה המתואר בסעיף 14.\n\n## 4. חלוקת אחריות וקבצים\n\n| קובץ | אחריות לאחר השינוי |\n| --- | --- |\n| חדש: `backend/update_selection.py` | חוזי נתונים, השוואה, בחירה ו־fingerprint מהותי; ללא כתיבת התקנות |\n| חדש: `backend/provider_ownership.py` | רישום בעלות, מיזוג למלאי וניתוב פקודות מוגן |\n| חדש: `backend/pixi_provider.py` | גילוי גרסאות Pixi, lock, אימות graph, התקנה ומלאי של סביבות מנוהלות |\n| חדש: `backend/operation_lock.py` | נעילת קובץ משותפת לפעולות משנות מצב |\n| `backend/migration_engine.py` | עסקה, גיבוי, הפעלה, ניקוי, פיצוי ו־recovery |\n| `backend/migration_profiles.py` | מיפויים נתמכים, פקודות חובה, version probes ו־smoke probes |\n| `backend/installation_evidence.py` | אותו איסוף וסיווג לסריקה ולבדיקה טרם ביצוע |\n| `backend/mac_manager.py` | מלאי משולב, discovery והצעות; ללא מימוש עסקה נוסף |\n| `backend/update_engine.py` | ביצוע רציף של בחירת חבילות דרך החלטות אחידות |\n| `backend/update_routes.py` | תאימות למסלולים הישנים; להעביר ל־adapter החדש בהדרגה |\n| `backend/macports_provider.py` | לשמר preflight והתקנה בינארית; לאמת את היעד המדויק ובדיקת שימוש לאחר עדכון |\n| `backend/brew-updates-service.py` | API, זהות שירות, נעילה וסיכום תוצאות |\n| `electron/main.js`, `electron/preload.js` | העברת מזהי הצעות וסבבי בדיקה, בלי החלטת ספק בצד הלקוח |\n| `renderer/app.js`, `mac-manager.js`, `index.html`, `i18n.js` | שורה אחידה, בחירה, ביצוע ותוצאה בשתי שפות |\n| `tools/verify-current-code.py`, `tools/verify-migration.py` | בדיקות מלאות וקבלה בידי המשתמש; דוח אחד מפורט |\n\nאין ליצור service נוסף, מסווג נוסף או engine נוסף. פונקציות קיימות עם אותה\nאחריות יועברו או ייקראו דרך המתאם; אין להשאיר שתי דרכי ביצוע שונות לאותו עדכון.\n\n## 5. שלב א — חבילת שינוי ושחזור קוד\n\nלהוסיף בגנרטור bundle 004 עבור 1.3.4. להתחיל מהקבצים הנוכחיים, כולל תוכנית\nזו ותיקון סקריפט הבדיקות. אין לשנות manifest או גיבוי של bundles קודמים.\n\nפקודות החבילה: `unified-check`, `unified-apply`, `unified-restore`,\n`unified-pack`, `unified-install`. הבדיקות המלאות נשארות ב־`--checks`.\n\n1. לפני עריכת הגנרטור לשמור עותק שלו, manifest של קובצי היעד ועותקים מדויקים\n   תחת `~/.local/share/brew-update-manager/recovery/unified-intel-1.3.4/`.\n2. לערוך רק את `tools/implement-mac-manager.py` באמצעות apply_patch ולהפיק ממנו\n   קוד, בדיקות ותיעוד. `unified-check` בודק hashes ללא כתיבה.\n3. לאמת את כל תנאי הקדם לפני כתיבה. החלה חוזרת זהה לא משנה דבר; עריכה עצמאית\n   מאז ההחלה מחייבת עצירה ולא דריסה. שחזור חייב לסרב לעריכה מאוחרת.\n4. `unified-pack/install` יקבלו דוח בדיקות תואם לחתימת הקוד והבדיקות, ולא יריצו\n   בדיקות מחדש בעצמם. דוח ישן או קובץ חדש שלא נכלל בחתימה אינם תקפים.\n5. לשמור README כפי שהוא, בלי reset או ניקוי עבודה קיימת. לציין פקודת שחזור\n   והבדל בין שחזור קוד לבין rollback של עסקת חבילה.\n\n**תוצר:** bundle שניתן להחיל ולשחזר במבודד, בלי לגעת בהתקנות אמיתיות.\n\n## 6. שלב ב — חוזי הצעה, החלטה ובעלות\n\n### 6.1 זהויות\n\n`installation_id` מזהה התקנה אמיתית: `homebrew:formula:<name>`,\n`homebrew:cask:<name>`, `macports:<port>` או `pixi:<managed-id>`.\n`logical_id` הוא מזהה תוכנה מהמיפוי בקוד. שתי התקנות קיימות של אותה תוכנה\nאינן הופכות אוטומטית להתקנה אחת ואינן מוסרות רק מפני ששמותיהן חופפים.\n\nהפניה מפורשת של route חדש ל־installation_id של היעד מאפשרת לזהות שהמקור\nהוחלף. אין ליצור רשומת tool נוספת עבור port אמיתי כדי לייצג את המעבר.\n\n### 6.2 חוזה Candidate\n\nכל adapter יחזיר JSON שניתן לשמירה, עם השדות הבאים:\n\n```json\n{\n  \"schema_version\": 1,\n  \"logical_id\": \"<mapped-tool>\",\n  \"source_installation_id\": \"homebrew:formula:<name>\",\n  \"provider\": \"macports\",\n  \"provider_names\": [\"<port>\"],\n  \"upstream_version\": \"<version>\",\n  \"package_version\": \"<provider-version>\",\n  \"revision\": \"<provider-revision-or-null>\",\n  \"action\": \"migrate\",\n  \"availability\": \"verified\",\n  \"execution_supported\": true,\n  \"profile_id\": \"<profile>\",\n  \"profile_version\": 1,\n  \"system\": {\"os\": \"macos\", \"arch\": \"x86_64\", \"release\": \"<detected>\"},\n  \"closure\": [],\n  \"evidence_refs\": [],\n  \"checked_at\": \"<timestamp>\",\n  \"blockers\": []\n}\n```\n\n`action`: `update` / `migrate` / `none`. `availability`: `verified` /\n`unavailable` / `unverified`. רשומת closure כוללת זהות, גרסה, build/revision,\nvariants, ארכיטקטורה, תלויות, URL או archive ID ו־checksum כשמפורסם.\nשדות חסרים אינם מוחלפים בערך שנראה חיובי. חתימת MacPorts זמינה ואימות\nחתימה שבוצע הם שני שדות שונים.\n\n### 6.3 החלטה שמוצגת ומאושרת בלחיצה\n\nלהוסיף לכל התקנה `update_decision` עם:\n`decision_id`, `plan_id`, `logical_id`, `source_installation_id`, `current_provider`,\n`target_provider`, `installed_version`, `target_version`, `action`, `status`,\n`selected_candidate`, `alternatives`, `reason_codes`, `blockers`, `created_at`,\n`expires_at`, `material_fingerprint`.\n\n`status`: `ready` / `current` / `blocked` / `unverified` / `needs_recovery`.\nTTL של תוכנית: 15 דקות. הנתונים נשמרים תחת `DATA_DIR/update-plans/<id>.json`.\n`GET /api/state` ו־`GET /api/update-plan` מציגים נתונים שמורים ואינם מתחילים\nסריקת חלופות מלאה. כאשר פג תוקף, אפשר לקרוא את הנתונים אך אין לבצע אותם.\n\n### 6.4 רישום בעלות\n\nלהשתמש ב־`TOOLS_ROOT/migrations/routes.json` עם schema מפורש ו־`routes`:\nכל רשומה כוללת `logical_id`, מקור, ספק/זהות יעד, פרופיל וגרסתו, transaction ID,\ngeneration של הניתוב, פקודות בבעלות המנגנון, נתיב evidence ותאריך אימות.\nלשמור את שם המקור ל־provenance, לא כבסיס לגרסה עתידית.\n\nלתמוך בקריאת הצורה הישנה ללא schema כנתון legacy; להמיר אטומית רק רשומה\nשניתן לאמת את בעלותה במלאי. רשומה לא מאומתת נשמרת ומסומנת, לא נמחקת.\n`installed.json` ימשיך לתאר כלים קיימים; אין להוסיף אליו port. סביבות Pixi\nמנוהלות קיימות נקראות דרכו עד שהadapter אימת את המלאי האמיתי ואת השיוך.\nכתיבות לשני קבצים יהיו מתועדות ביומן בר־התאוששות; אין להניח שהן אטומיות יחד.\n\n## 7. שלב ג — גילוי ובחירת ספק\n\n### 7.1 אלגוריתם מחייב\n\nלממש ב־`update_selection.select(installed, candidates, ownership)`:\n\n1. לסנן החרגות ושגיאות זהות. חבילה מוחרגת אינה מקבלת מועמדת לביצוע.\n2. מועמדת חייבת להתאים ל־macOS/Intel, לספק גרסה שניתנת להשוואה, להיות\n   בעלת closure בינארית מלאה ולהיות נתמכת לביצוע הפעולה המבוקשת.\n3. מעבר מחייב סיווג עצמאי עדכני ללא shared/service roles, פערים או תלויים.\n   עדכון רגיל באותו ספק אינו מקבל חסם מעבר רק משום שהחבילה היא ספרייה.\n4. לפסול downgrade. מעבר לגרסת upstream זהה אינו עדכון; revision חדש אצל\n   אותו ספק יכול להיות עדכון אם הספק מדווח עליו ככזה.\n5. לבחור את הגרסה הגבוהה מבין המועמדות הכשירות. בשוויון לשמר את הספק\n   הנוכחי; אם אינו מועמד כשיר, סדר שוויון קבוע: Homebrew, MacPorts, Pixi.\n6. חלופה חדשה יותר שאינה נתמכת אינה מעלימה עדכון כשיר אצל הספק הנוכחי:\n   מציגים אותה ב־alternatives עם חסם, והבחירה נשארת המסלול שניתן לבצע.\n7. ספק שכשל אינו נחשב כמי שאין לו גרסה חדשה יותר. אם יש מסלול כשיר,\n   מציגים אותו עם אזהרה שההשוואה חלקית; אין לטעון ״החדש ביותר״ באופן מוחלט.\n   אם אין מסלול כשיר, התוצאה unverified כשחסר מידע, blocked כשיש חסם ידוע,\n   ו־current רק כשכל הבדיקות הנדרשות הושלמו ואינן מציעות עדכון.\n\nלהפריד שלוש פעולות: `normalize_upstream`, `compare_upstream`,\n`compare_same_provider_package`. אין להשתמש ב־version_key הנוכחית להשוואה\nכללית, משום שהיא מאבדת משמעות של suffix ו־revision.\nבשלב זה השוואה בין ספקים תומכת בגרסאות יציבות מספריות, עם v אופציונלי\nורכיבי נקודות. להשלים אפסים להשוואת 1.2 ו־1.2.0. suffix לא מוכר או prerelease\nמחזירים `comparison_unknown`; אין להסיר אותם כדי להמציא סדר. הספקים ממשיכים\nלהחליט עדכניות אריזה בתוך הספק באמצעות המטא־נתונים שלהם.\n\n### 7.2 איסוף בתוך הסריקה\n\n- להרחיב `_combined` כך שחלופות נאספות לכל התקנה ממופה רלוונטית, גם כאשר\n  Homebrew מספק bottle. אחרת לא ניתן למצוא חלופה בינארית חדשה יותר.\n- לא לסנן מועמדות רק לפי `Homebrew outdated`. `outdated` בתוצאה המוצגת\n  נגזר מ־update_decision מתאים, גם אם העדכון זוהה אצל ספק אחר.\n- שגיאת Brew לא תעצור גילוי יעד עבור port או סביבת Pixi שכבר מנוהלים.\n- לחלץ `collect_candidate(s, installation, context, force_refresh)` מתוך\n  `installation_evidence.annotate`; הפונקציה תחזיר classification ו־refs.\n  הסריקה וה־preflight משתמשים בה; אין מסווג נוסף במנוע.\n- לצבור נתוני receipt ותלויים לכל הסריקה, לבדוק קבצים רק למועמדת הרלוונטית,\n  ולחלוק תוצאות באותה ריצה. לפני שינוי התקנה לרענן נתונים מהותיים, לא להסתפק ב־cache.\n- timeout לכל command/network probe, ביטול והתייחסות לכשל מקומי כתוצאה חלקית.\n  לשמר מדיניות catalog_refresh הקיימת; לרענן בעת צורך, לא לשאול את המשתמש\n  אם צריך רענון קטלוג. כשל הזדהות יוצג כחסם ממוקד.\n\n### 7.3 Homebrew ו־MacPorts\n\nHomebrew: להשתמש ב־catalog, verified_dependencies ו־bottle_blockers הקיימים;\nלקשור את היעד ל־bottle tag/hash ולמטא־נתונים שנבדקו. קיומו של `--force-bottle`\nאינו חוזה מלא האוסר בניית תלות: להשלים preflight לכל closure ולבדוק שהקטלוג\nלא השתנה לפני הביצוע. אין להוסיף fallback של build-from-source.\n\nMacPorts: להשתמש ב־preflight וב־privileged הקיימים, עם מצב `-b`. לשמר את\nגרף הגרסאות, revisions ו־variants המדויק בתוכנית. לא לבצע מעבר שמחייב לשנות\nגרסה/variants של port שכבר מותקן. שינוי קטלוג בין הבדיקות מחייב החלטה חדשה.\nאחרי התקנה להשוות לגרף שאושר; יציאה 0 בלי היעד שנבחר אינה הצלחה.\n\n### 7.4 Pixi — adapter נפרד\n\n1. מקור המיפויים הראשוני הוא `PIXI_TOOLS` הקיים. מיפוי אינו פרופיל מעבר:\n   רק פרופיל עם פקודות חובה ובדיקת שימוש יוכל לקבל execution_supported.\n2. לגלות את Pixi runtime מהגדרות/runtime קיימים, לקרוא גרסה ויכולות; לא להתקין\n   runtime ולא לשנות סביבות בזמן סריקה. runtime חסר הוא חסם Pixi בלבד.\n3. לבדוק את הפלט של ה־CLI המותקן מול parser מוגדר, עם fixture מייצג.\n   לפעול מתוך scratch בבעלות המנגנון; `--no-config` לבדו אינו מבטל config מקומי.\n4. discovery: חיפוש שם ממופה מדויק ב־conda-forge עבור osx-64, בפלט JSON\n   ובכל הגרסאות. לא לקחת רק חמש גרסאות ברירת מחדל ולא לרשת channels מפרויקט.\n5. לנסות גרסאות יציבות בסדר יורד עד שמתקבל lock תקין למערכת המקומית.\n   כשל solver עבור הגרסה הגבוהה אינו הוכחה שאין גרסה נמוכה יותר מתאימה.\n   כל נסיונות ה־solve כפופים לביטול ותקציב זמן מצטבר של 180 שניות לכלי;\n   timeout לפני השלמת ההשוואה מסומן במפורש כהשוואה חלקית.\n6. manifest חדש מקבע את גרסת השורש שנבחרה. אין constraint מסוג >= שיכול\n   להביא גרסה אחרת בביצוע. לא לכלול PyPI, editable/local dependencies או build sources.\n7. לשמור lock, manifest וייצוא explicit בפורמט שה־CLI המקומי תומך בו.\n   closure תכלול osx-64/noarch בלבד, ערוצי HTTPS מאושרים ו־hashes זמינים.\n   noarch מותר כתלות, לא כהוכחה שכלי native מתאים ל־Intel.\n8. לאמת דרישות מערכת/virtual packages דרך ה־solver ללא overrides שמעמידים\n   פנים שגרסת macOS או הארכיטקטורה שונה. לאמת נגישות ארטיפקטים לפני ready.\n9. התקנה בסביבת generation חדשה מתוך ה־lock המאושר במצב `--locked`,\n   ללא solve מחדש. אם ה־CLI אינו תומך בחוזה זה, להחזיר חסם יכולת מפורש.\n10. לקרוא את גרסת השורש והחבילות מ־conda-meta ולהשוות ל־lock; לאמת פקודות\n    ובדיקת שימוש לפני החלפת ניתוב. לא לשנות או לנקות את סביבת הדור הקודם.\n11. עדכון Pixi עתידי מגלה יעד ב־Pixi, יוצר lock ודור חדש ומחליף מצביע רק אחרי\n    אימות. הוא אינו מבקש את latest_version של Homebrew כדי לבחור יעד.\n\n## 8. שלב ד — תוכנית בלתי משתנה, נעילה וחזרתיות\n\n### 8.1 Fingerprint מהותי\n\nלחשב SHA-256 על JSON קנוני של: זהויות מקור ויעד; גרסאות ו־receipt hash;\nקג פעיל; graph/lock/variants/artifact hashes; מערכת; פרופיל וגרסתו; החלטת סיווג,\nתלויים ופערים; החרגות רלוונטיות; בעלות קבצי הפעלה ומצב ניתוב קודם.\nלא לכלול זמני checked_at, נתיב קובץ ראיות חדש או מזהה תוכנית אקראי.\n\nלפני שינוי ראשון לרענן ולהשוות. שינוי מהותי מחזיר 409 עם\n`error=plan_changed`, הצעה חדשה וסיבה. אין לבצע אותה אוטומטית תחת הלחיצה\nהקודמת. תצוגה מעודכנת מאפשרת לחיצה חדשה אחת; אין אשף אישורים לכל חבילה.\n\nלפני תחילת batch יש לאמת את כל ההחלטות שנבחרו. חבילה שחסומה כבר בתצוגה\nמדולגת עם נימוק; שינוי מהותי בהצעה מוכנה מחייב חזרה לרשימה לפני שינוי batch.\nלאמת שוב כל item לפני ביצועו, מאחר שפעולה קודמת עשויה לשנות תלויות משותפות.\n\n### 8.2 נעילה בין תהליכים\n\nלשלב `fcntl.flock(LOCK_EX | LOCK_NB)` בקובץ תחת TOOLS_ROOT, לפני OP_LOCK\nובאותו סדר בכל הכניסות. הנעילה משותפת גם ל־DATA_DIR חלופי כדי למנוע שינוי\nאותן התקנות משני backends. אין למחוק קובץ נעילה כדי להשתלט על תהליך חי.\nלשמור בעלים/PID/operation ID לצורכי תצוגה, בלי לראות בקיום הקובץ נעילה פעילה.\n\nלעטוף את כל מסלולי השינוי — update-one/selected/all, אישור migration,\nrecovery ו־sync. אין לקנן נעילה חדשה כאשר batch כבר מחזיק אותה: לקרוא\nלמתודה פנימית עם context בעלות מפורש. לא לעקוף נעילה במשתנה גלובלי.\nבדיקה מקבילה קיימת בזמן עדכון רגיל נשמרת; מרגע התחלת batch עם migration\nאין להתחיל בדיקה מקבילה חדשה, ובדיקה קיימת חייבת להסתיים לפני mutation.\n\n### 8.3 זהות בקשה ועסקה\n\nכל לחיצה יוצרת `request_id` פעם אחת בצד הממשק. backend שומר batch journal\nוהשיוך ל־plan לפני שינוי. בקשה חוזרת עם אותו ID ותוכן תחזיר מצב/תוצאה קיימים;\nאותו ID עם תוכן אחר יחזיר 409. אין ליצור transaction חדש לאחר timeout.\nעסקה לא פתורה חוסמת פעולה מתנגשת בלבד ודורשת recovery מפורש; אין auto-resume בהפעלה מחדש.\n\n## 9. שלב ה — מנוע מעבר והפעלה בטוחים\n\n### 9.1 מצבי עסקה\n\n`preflight → backup → install → verify → activate → cleanup → postcheck → completed`.\nכל שינוי שלב נכתב לפני ואחרי ב־journal.json עם סטטוס started/finished,\nתוצאות ונתיבי גיבוי. כתיבה אטומית עם קובץ זמני ייחודי, flush, fsync לקובץ,\nos.replace ו־fsync לתיקייה. להשתמש באותו helper לנתיבי תוכנית/בעלות רגישים;\nלתקן את atomic_write_json הקיים שאינו יוצר parent שרירותי ואינו מבצע fsync.\n\nמצבים סופיים: completed, canceled, rolled_back, needs_attention.\nהפסקה בין שני רישומים אינה הוכחה שהשלב לא בוצע: recovery בודק מצב אמיתי.\n\n### 9.2 גיבוי\n\n- לאפשר במעבר החדש קג מקור יחיד בלבד, receipt תקין וקישור שניתן לשחזר.\n- להעתיק קג עם הרשאות וקישורים, לתעד את כל הקבצים: relative path, סוג,\n  mode, SHA-256 של קובץ רגיל או יעד קישור. לבדוק שלמות ההעתק מול manifest.\n- לתעד opt/link state וקישורים ש־brew link מנהל, וכן מצביעי ניתוב ו־shims קיימים.\n  אין לקרוא קישורי symlink כקובץ רגיל ולגבות בטעות עץ חיצוני.\n- לבצע בדיקת שימוש מקור לפני מעבר ולשמור תוצאה. מקור פגום או מצב שלא ניתן\n  לאמת חסומים; rollback אינו מבטיח לתקן בעיה שהייתה במקור קודם.\n- גיבוי פגום/העתקה חלקית עוצרים לפני התקנת יעד והסרת מקור.\n\n### 9.3 התקנה ואימות\n\nה־engine קורא ל־adapter של היעד, בלי ליצור מתקין חלופי.\nהוא משתמש ברכיב MacPorts קיים רק אם הגרסה/variants תואמים בדיוק.\nרכיבי MacPorts שנוספו מתועדים ונשארים אחרי כשל; אין הסרת תלויות אוטומטית.\nPixi משתמש בסביבה חדשה וב־lock שנבדק. בלי החלפת ניתוב עד שכל פקודות החובה,\nגרסה ובדיקות שימוש הצליחו בנתיבי היעד המפורשים.\n\n### 9.4 ניתוב פקודות\n\nלהשתמש ב־`TOOLS_ROOT/bin` ו־`TOOLS_ROOT/migrations/active/<logical-id>`.\nכל דור הוא תיקייה שמכילה wrappers לכל פקודות הפרופיל; המצביע active מוחלף\nאטומית. shim ב־bin מפנה ל־active, כך שהחלפת המצביע מעבירה יחד את כל הפקודות.\n\nלפני כתיבה לבדוק lstat וגם קישור שבור. לדרוס רק קובץ שמניפסט בעלות קיים\nמוכיח שהוא של המנגנון ושה־hash שלו לא השתנה. אין להסתפק ב״זה symlink״.\nאם לא כל shims קיימים, להתקינם כש־active עדיין מפנה למקור שנבדק, ואז לבצע\nאת החלפת המצביע היחידה; במקרה כשל לשחזר רק קבצים שהמנגנון עצמו כתב.\nהבדיקה הזו תשתמש גם ב־update_routes.activate הישן כדי למנוע מסלול עוקף בעלות.\n\nלא לשנות PATH בקובצי shell. להשוות resolution של כל פקודה ב־login shell\nרגיל לנתיב המנוהל, וגם בהרצה מפורשת. PATH שלא נותן קדימות ל־TOOLS_ROOT/bin\nחוסם מעבר ומציג הוראה ממוקדת; לא להסיר מקור בתקווה שה־shell יבחר יעד אחר.\nלא להסתיר את הבעיה באמצעות prepend זמני ב־postcheck.\n\nל־IWYU הפקודה הראשית מפנה למעטפת MacPorts, לא לבינארי Clang פנימי.\nסקריפטי Python משתמשים ב־Python 3.14 שזוהה ונבדק; אין לקבע נתיב משתמש.\n`iwyu_tool.py` מקבל IWYU_BINARY המצביע למעטפת המאומתת. argv מופרדים,\nוכל קובץ shell שנוצר משתמש ב־shlex.quote, בלי להריץ טקסט HTTP.\n\n### 9.5 cleanup ו־commit של הבעלות\n\nלרענן תלויים, receipt, קג, החרגות ופקודות לפני הסרת מקור. שינוי חוסם הסרה;\nלשחזר ניתוב אם ניתן, ולרשום needs_attention כאשר נדרשת החלטה חדשה.\nהסרה רק לחבילת המקור המדויקת, בלי force, autoremove, cleanup כללי או תלויות,\nעם HOMEBREW_NO_AUTO_UPDATE, HOMEBREW_NO_AUTOREMOVE,\nHOMEBREW_NO_INSTALL_CLEANUP בערך 1.\n\nלאחר הסרה לבדוק מלאי ו־smoke דרך הפקודות הרגילות. רק אחרי postcheck לכתוב\nבעלות committed ולסיים completed. מידע tentative נשאר ביומן ולא הופך לבעלות\nשהסריקה סומכת עליה. כשל כתיבת בעלות אחרי הסרה הוא מצב התאוששות, לא הצלחה.\nכשל רענון תצוגה אחרי transaction שהושלם הוא אזהרה נפרדת, לא ״התקנה נכשלה״.\n\n## 10. שלב ו — כשל, ביטול, המשך ושחזור\n\n| נקודת כשל/ביטול | התנהגות נדרשת |\n| --- | --- |\n| לפני install | מקור וניתוב כפי שהיו; canceled/rolled_back לאחר אימות |\n| install או verify | אין הפעלה; המקור נשמר; לתעד יעדים שנוספו |\n| אחרי activate ולפני הסרה | להחזיר מצביע וקבצים למצב הקודם, בכפוף לבעלות |\n| הסרה חלקית או אחרי הסרה | לבדוק מה נשאר; לשחזר מקור מהגיבוי רק כשאין התנגשות |\n| יעד/קג/shim ששונו עצמאית | לא לדרוס; לשמר עותק תקין ולסיים needs_attention |\n| תהליך שנפסק | לזהות יומן לא סופי, לבדוק כל postcondition ולהציג recovery |\n\nלפצות ב־context נפרד שאינו נקטע בגלל דגל הביטול המקורי. אין לשחרר נעילה\nולהודיע canceled בזמן שעדיין רץ command משנה התקנות. פיצוי מקבל timeouts\nמשלה ולא מריץ command ללא גבול. timeout מותיר needs_attention אם אין הוכחה.\n\n`recovery_plan(transaction_id, action)` ו־approve חייבים לממש resume/rollback,\nלא רק לשמור תוכנית. תוכנית recovery מכילה מצב עדכני, פעולות ושינויים צפויים.\nresume מדלג על שלב רק לאחר שהוכיח את postcondition שלו; אינו מסיר מקור שוב.\nrollback מחזיר קג רק לנתיב המקורי, בודק היעדר בעלים אחר ו־hashes, ומשתמש\nב־brew link בלי overwrite/force כשצריך. אימות מול מצב הבסיס נשמר בדוח.\nשחזור אינו מסיר רכיבי MacPorts חדשים או סביבות עצמאיות של המשתמש.\n\nבממשק רגיל אין מסכי אישור מעבר. רק במקרה של תקלה לא פתורה מוצגים\n״סקירת המשך״/״סקירת שחזור״ עם הפעולה העדכנית ואישור כולל להליך ההתאוששות.\n\n## 11. שלב ז — פרופילים ובדיקות שימוש\n\nלהרחיב Profile עם: version, שמות ספקים, כל פקודות החובה, version argv/parser,\nsmoke function, נתיבים מוגדרים ושיטת הפעלה. מימושים נבחרים מקוד, לא מתוכן חיצוני.\nפרופילים קטנים ו־adapters משותפים מאפשרים להוסיף תמיכה בלי להעתיק עסקה.\nפרופיל חסר הוא execution_unsupported; אין להתקין חבילה רק לפי סיווג עצמאי.\n\nלהעביר את terminal-notifier לממשק המשותף דרך adapter של התנהגותו הקיימת,\nבלי להעביר אותו מחדש או להחליף את notification helper. לשמר קריאת journal ישן\nכראיה היסטורית; לא להריץ תוכנית legacy ללא fingerprint חדש.\n\nלהגדיר פרופילי Pixi למיפויים הקיימים רק כאשר יש פקודות חובה ו־smoke ידוע בקוד.\nכלי שגם מייצא סביבת פיתוח/ספרייה ייחסם למעבר לפי T02 גם אם הוא בטבלת PIXI_TOOLS.\nעדכוני כלי Pixi שכבר מנוהל ממשיכים בפרופיל הקיים, ללא הסרת סביבת מקור ישנה.\n\n### IWYU — תיקון בדיקת הקבלה הקיימת\n\nכל הקבצים בתיקייה זמנית בלבד. ליצור needed.h, unused.h, probe.cc עם vector\nו־compile_commands.json; להשתמש ב־arguments array, לא command string לא מצוטט.\nלבחור נתיב עם רווחים גם ב־fixture כדי לבדוק quoting. לכתוב newlines אמיתיים.\n\n1. SDK באמצעות xcrun --show-sdk-path; לבדוק תקינות ומערכת, לא להשתמש בערך ריק.\n2. מעטפת IWYU עם std=c++17, isysroot מפורש ו־`-Xiwyu --error=17`.\n   לדרוש exit 17 ופסקת המלצה שמסירה include של unused.h; לדחות שגיאות\n   parsing/compile/dyld ונתיבים חסרים גם אם שם הקובץ מופיע בפלט.\n3. iwyu_tool.py עם Python מאומת, IWYU_BINARY מפורש ופרמטרי IWYU שמחזירים\n   אותו חוזה exit/ניתוח. לא לקבל exit 0 כתחליף ל־17 כשנתבקשה הפרת includes.\n4. להזין את פלט הניתוח ב־stdin ל־fix_includes.py --dry_run עם סינון לקובץ הבדיקה.\n   לדרוש exit 1 ו־diff שמסיר include מיותר; hash המקור נשאר ללא שינוי.\n5. להתאים גרסת IWYU וגרסת Clang מתוך metadata וגרף MacPorts, בלי קיבוע גרסה.\n6. לתעד stdout/stderr/returncode לכל command. timeout גרסה 30 שניות ושימוש\n   90 שניות לכל בדיקה. לחזור על הבדיקות אחרי הפעלה ובקבלה לאחר restart.\n\nאם run_cmd אינו תומך stdin, להוסיף input_data/bytes מפורש ולהעביר ל־Popen\nבלי shell, תוך שימור ניקוז stdout/stderr וביטול. להוסיף בדיקה ממוקדת לכך.\n\n## 12. שלב ח — מלאי, API וממשק\n\n### 12.1 מלאי ועדכונים עתידיים\n\nלמזג בעלות רק על גבי התקנת יעד שנמצאת בפועל. port נשאר kind=port וסביבת\nPixi היא kind=tool עם provider=pixi. מקור שחסר אחרי מעבר committed אינו\nמוחזר כ־formula מדומה. עותק Homebrew אחר שקיים באמת נשאר רשומה נפרדת.\n\nתקלה בקריאת routes אינה מוחקת את המלאי; מסמנת אימות בעלות חסר וחוסמת\nפעולה שתלויה בו. `macports_provider.upgrade` ו־Pixi upgrade קוראים smoke\nשל פרופיל הבעלות. כשל smoke מחזיר עדכון שנכשל גם אם המתקין החזיר 0;\nאין לשמור גרסה מוצלחת מלאכותית. גרסה חיה נשמרת לצד כשל התפקוד.\n\n### 12.2 API ותאימות\n\nלשמר שמות endpoints ו־IPC קיימים ולהוסיף שדות אופציונליים:\n\n```text\nPOST /api/check                         {}\nGET  /api/state\nGET  /api/update-plan\nPOST /api/update-selected               {request_id, plan_id, decisions:[{decision_id, material_fingerprint}]}\nPOST /api/update-all                    {request_id, plan_id, decisions:[...]}\nPOST /api/update-one                    {request_id, plan_id, decision_id, material_fingerprint}\nPOST /api/migrations/plan               {name}\nPOST /api/migrations/approve            {id, request_id}\nPOST /api/migrations/recovery-plan      {transaction_id, action:\"resume\"|\"rollback\"}\n```\n\nupdate-all שולח בדיוק את כל ההחלטות המוכנות שהוצגו, לא בחירה אחרת שהופיעה\nבזמן ההמתנה. בקשה ישנה עם name/kind נשארת תקפה רק לעדכון באותו ספק;\nהיא לעולם אינה מאשרת מעבר שלא הוצג. לבקשה ללא plan שמחייבת מעבר להחזיר\n409 `review_required`. פרמטרים זרים או זהות עמומה אינם נבחרים לפי השם הראשון.\nכל endpoint עובר לאותו executor; אין לבצע לולאת HTTP של migrate ואז update.\n\n400 לקלט לא תקין; 409 להתנגשות, תוכנית ישנה/משתנה או recovery נדרש;\n500 לכשל בלתי צפוי. ביטול מחזיר תוצאה מפורשת ויומן. לשמר בדיקות Origin/JSON\nולהחילן על כל כניסה חדשה. אין לקבל נתיבי גיבוי, יעד executable או shell command מלקוח.\nתגובות סופיות כוללות progress שנלכד לפני שחרור הנעילה.\n\nלאסוף fingerprint של כל קובצי backend הרלוונטיים ב־startup פעם אחת ולשמור\nבזיכרון. `/health` מחזיר version, PID, process_started_at, DATA_DIR, capabilities,\nbackend_code_sha256 ו־build ID מתוך החבילה. capabilities מציינות רק יכולת שבאמת\nממומשת. hash מהדיסק בזמן בקשה אינו משקף בהכרח את הקוד שטעון בתהליך.\n\n### 12.3 ממשק\n\n- לעדכן selectedPackagesFromSnapshot, pruneSelectedPackages וסינון שורות\n  לפי installation_id/decision, תוך תאימות לרשומות היסטוריות name/kind.\n- לעדכן preload/main להעברת payload של ההחלטות; backend הוא מקור האמת לבחירה.\n- ״עדכן הכול״ בוחר את כל ready, ״עדכן נבחרים״ את המסומנים. חסומים אינם נבחרים\n  אוטומטית. המונים יבדילו עדכון זמין, ניתן לביצוע וחסום.\n- להסיר confirm/update dialog ואשף migration רגיל. להציג בפרטי השורה לפני\n  הלחיצה ספק קודם/חדש, גרסאות, תלויות, גיבוי והסרה כשמתוכננים.\n- להשתמש ב־beginOperationRequest/finishOperationRequest בכל פעולה, כולל recovery.\n- 409 מחזיר לרשימה המעודכנת עם הסבר. ניתוק מציג ״לא ניתן לאמת סטטוס״,\n  ממשיך מעקב לפי request ID ואינו שולח פעולה חדשה אוטומטית.\n- לשמר סיכום אחרי סגירת חלונית, רענון ושינוי שפה. להציג מה עודכן, הועבר,\n  דולג, נכשל או לא בוצע. אין ״ממתין״ אחרי תוצאה סופית.\n- לתרגם את כל reason_codes ב־i18n.js בעברית ובאנגלית; בלי raw traceback\n  בתצוגה הראשית. גרסאות/נתיבים ב־LTR; ראיות טכניות בפרטים הנפתחים.\n\n## 13. שלב ט — בדיקות שהמממש יכתוב והמשתמש יריץ\n\nאין להריץ את הטבלה במהלך המימוש. להוסיף את קובצי הבדיקה לסקריפט ולמסור\nאותם למשתמש. אימות המממש מוגבל לתחביר הקבצים ששונו, קישורי התיעוד,\ngit diff --check ובדיקה נקודתית רק כאשר נחוצה לפתרון שגיאה מזוהה.\n\n| קובץ/תחום | תרחישים מחייבים |\n| --- | --- |\n| חדש: test_update_selection.py | שלושה ספקים, חדש ביותר כשיר, שוויון שומר בעלים, revision באותו ספק, suffix לא מוכר, downgrade, ספק כושל ומסלול תקין, חלופה חדשה שאינה נתמכת |\n| חדש: test_pixi_provider.py | JSON ומיפוי, כל הגרסאות, גרסה גבוהה שאינה נפתרת, osx-64/noarch, lock מדויק, URL/hash חסר, channel זר, metadata חסר, אין PyPI/local build, אין runtime, ביטול |\n| חדש: test_provider_ownership.py | port יחיד ללא tool כפול, בלי Brew אחרי מעבר, Pixi מתוך conda-meta, legacy records, שגיאת routes, עדכון עתידי מספק חדש, כשל smoke אחרי update |\n| חדש: test_migration_engine.py | הצלחה וכל שלבי הכשל, העתקה חלקית, hash/link/mode, התנגשות shim וקישור שבור, PATH, תלוי חדש, הסרה חלקית, ביטול ופיצוי |\n| אותו engine | resume/rollback לפני/אחרי הסרה, תהליך שנקטע, שינוי עצמאי, double request, expiry, שינוי receipt/graph/variant/החרגות, timestamps בלבד אינם שינוי |\n| חדש: test_operation_lock.py | שני תהליכים עם DATA_DIR שונים מול אותם TOOLS_ROOT, שחרור אחרי יציאת תהליך, אין נעילה מקוננת, חסימת parallel scan בזמן מעבר |\n| הרחבת test_migration_profiles.py | native Intel/ARM/Rosetta, שלוש פקודות IWYU, version/Clang, stdin ודיפ אמיתי, quotes, source hash unchanged, timeouts ופקודה חסרה |\n| HTTP | מקור/JSON, 400/409/500, legacy אינו מאשר מעבר, selected/all אותה תוכנית, final progress, hash startup אינו משתנה לאחר שינוי דיסק |\n| חדש: unified-update-ui.cjs | כפתור נבחרים/הכול שולח בקשה אחת, ספק ונימוק, חסומים, שינוי תוכנית, תשובה מאוחרת, ניתוק/חזרה, recovery, עברית/אנגלית, תוצאה נשמרת |\n| רגרסיה | כל 83 בדיקות הבסיס, תרחישי T01/T02, זהות התראות, ngrok, הגדרות, היסטוריה ושמות התקנות כפולים |\n| bundle 004 | no-write check, replay ללא שינוי, restore מדויק וסירוב לעריכה מאוחרת; על עותק זמני בלבד |\n\nבדיקות מנוע משתמשות ב־fake providers, תהליכי fixture ונתיבים זמניים, בלי\nתקלות יזומות בהתקנות האמיתיות. HTTP אמיתי נגד backend מבודד עם provider\nfixtures בלבד. אין לפתוח backend נוסף מול נתוני הייצור לשם בדיקה.\nבדיקות update עתידי משתמשות בקטלוג מבוקר, לא ממציאות גרסה אמיתית שאינה זמינה.\n\nלהרחיב את signature collector: רשימה מלאה וממוינת של כל קובצי מוצר/בדיקות/\ngenerator ו־package/lock רלוונטיים, לרבות קבצים חדשים ו־JSON mappings.\nלחשב לפני ואחרי, ולהכשיל reuse אם הרשימה או תוכן קובץ השתנו. שינוי מסמך MD\nבלבד אינו מחייב הרצה מחדש אם אינו חלק מקוד/fixture; אין להשתמש ב־commit SHA\nכתחליף לחתימת התוכן. דוח 83 הבדיקות הוא baseline, לא דוח reusable לקוד החדש.\n\n## 14. שלב י — סקריפט משתמש אחד ובדיקת קבלה\n\n### 14.1 ממשק הפקודות לאחר המימוש בלבד\n\nלשמר את הפקודה העובדת הנוכחית:\n\n```text\ntools/verify-migration.py --checks\n```\n\nולהוסיף מסלול מלא אחד:\n\n```text\ntools/verify-migration.py --full\n```\n\n`--checks` מריץ בדיקות מבודדות ושומר דוח בלי שינוי התקנות אמיתיות.\n`--full` מריץ אותן או משתמש בדוח תואם, אורז ומחליף את האפליקציה המקומית\nלאחר גיבוי כשהיא פנויה, ואז מציג עדכונים ומבקש אישור כולל אחד לפני שינוי חבילות.\nהפעלת --full היא הרשאה להחלפת האפליקציה המקומית; בלי YES לא משתנות חבילות,\nאך האפליקציה עצמה כבר עשויה להיות מעודכנת. לציין זאת בתחילת הריצה ובדוח.\n\nהדגל הישן `--acceptance --pilot ...` נשאר מזוהה אך מפנה למסלול הקבלה החדש\nעם הגבלת אותה חבילה. אין להפעיל את המימוש החלקי הישן דרך fallback.\nאין להוסיף פקודת התקנה עוקפת API בתוך הסקריפט.\n\n### 14.2 סדר הריצה המלאה\n\n1. לפתוח תיקיית דוח חדשה, לאמת Intel, Python, Node/Electron וכלי אריזה\n   קיימים. לא להתקין תלויות משתמש אוטומטית. חסר יכולת מייצר exit 2 ודוח.\n2. לאתר דוח בדיקות תואם ולוודא שכל שלב חובה עבר. אם אין — להריץ את\n   הבדיקות המבודדות. כשל עוצר לפני pack או החלפת אפליקציה.\n3. לארוז x64 בלבד בלי פרסום. להפיק build-manifest עם hashes של backend,\n   renderer, preload ו־version. לחלץ מהחבילה ולאמת מול הקוד שנבדק.\n4. לזהות את אפליקציית Mac Update Manager ואת backend שלה לפי נתיב, health,\n   PID, process start ו־DATA_DIR. אם הזהות אינה ודאית, לעצור; אין pkill כללי.\n5. לוודא שאין operation, parallel check או transaction פעיל; לגבות אפליקציה,\n   הגדרות, היסטוריה וניתובים. לסגור רק Mac Update Manager ולהחליף מקומית.\n6. לוודא שהתהליך הישן הסתיים, לפתוח את החדשה ולוודא version/build ID/\n   fingerprint startup תואמים. לא להסתפק בכך שהדיסק מכיל קוד חדש.\n7. לבצע ״התחל בדיקה״ דרך ה־API הרגיל ולשמור state/plan/מלאי ספקים לפני שינוי.\n   להציג בעברית את הפעולות, הגרסאות, המעברים, התלויות והחסמים.\n8. ברירת הקבלה למעבר היא IWYU אם הוא כשיר. עדכונים נוספים אינם נכללים\n   אוטומטית; אפשרות בחירה של כל/חלק תוצג לפני האישור הכולל. אם IWYU חסום,\n   לתעד את הסיבה ולא לבחור כלי חלופי כדי לסמן מעבר כעובר.\n9. לבקש YES אחד הקשור ל־plan ID, fingerprints ולרשימת הפריטים. אם המשתמש\n   לא מאשר — אין שינוי חבילות; לשמור מצב canceled/approval_required ו־exit 2.\n10. לבצע דרך מסלול selected הרגיל. תרחיש הממשק יכול ללחוץ את הכפתור פעם אחת\n    אחרי אישור הסקריפט, ולהשתמש ב־renderer/preload הארוזים מול השירות האמיתי.\n    אסור לבצע פעם ב־API ואז שוב דרך כפתור. request_id קבוע לריצה.\n11. לנטר progress ולשמור transaction IDs, תוצאות, journal וראיות. לוגים נשמרים\n    בלי צורך בהעתקת פלט. timeout/ניתוק מחייב query לפי ID; אין retry של mutation.\n12. לאמת מלאי אחרי, פקודות, smoke, בעלות, הסרת מקור מבוקרת וגיבוי. לבדוק\n    תוצאה בשתי שפות; ביצוע אמיתי פעם אחת בלבד, והשפה השנייה בודקת אותה תוצאה.\n    כפתורי שני המצבים נבדקים בשתי שפות ב־fixtures המבודדים.\n13. כשהאפליקציה פנויה, לסגור ולפתוח שוב רק אותה; לבדוק PID חדש וחתימות,\n    פקודות/שימוש מחדש, בעלות, מלאי ללא כפילות ותוכנית עדכון מהספק החדש.\n14. להשוות baseline: שאר חבילות Homebrew, החרגות, binary_only, תזמון,\n    הגדרות והיסטוריה. ההיסטוריה רשאית לקבל את הרשומות הצפויות בלבד.\n    תלויות MacPorts שהוצגו ותיקיות/רשומות מנוהלות צפויות הן שינויים מותרים.\n15. לשמור סיכום שמשווה מטרות לתוצאות. אין להסיק הצלחת מסלול Pixi אמיתי\n    מסימולציה בלבד. אם אין עדכון עתידי, מספיק לתכנן אותו מתוך ספק היעד\n    ולוודא מבודד התנהגות גרסה חדשה; לא להתקין אותה גרסה שוב כדי לדמות עדכון.\n\nכל התקשרות לשירות צריכה deadline והדפסת עדכון קצר בזמן המתנה. סקריפט הקבלה\nאינו הורג פעולת חבילות כדי לעמוד בזמן. אם התהליך פעיל או התוצאה אינה מאומתת,\nלשמור מזהה עסקה ו־exit 2. במצב recovery אין להתקין מחדש; להציג תוכנית\nrecovery חדשה ולקבל אישור כולל אחד להליך שנבחר.\n\nהרצה חוזרת אחרי completed מאמתת מצב קיים ואינה מתקינה/מסירה שוב.\nאם הקוד השתנה מאז, בדיקות הקוד מתעדכנות, אבל transaction מוצלח אינו משוכפל.\nאין לסגור Codex, להפעיל DevTools remote debugging או לשנות הגדרות MCP.\n\n### 14.3 דוח וקודי יציאה\n\nלשמור תחת `recovery/unified-intel-1.3.4/runs/<run-id>/`:\nsummary.json, summary.md בעברית, code/build manifests, לוג לכל שלב,\nתוכניות, request/transaction IDs, journals, baseline/after inventories,\nתוצאות smoke וצילומי ממשק. summary מפריד בין code_checks, packaged_app,\nsimulated_scenarios, live_migration ו־restart_verification.\n\nלכל שלב status: pass / fail / blocked / not_run / unverified; לתעד גם scope,\nארגומנטים, זמני ריצה ונתיבי ראיות. אין ערך PASS לבדיקה שדולגה.\n\n- 0: כל הבדיקות הנדרשות למצב המבוקש עברו.\n- 1: כשל בדיקה או ביצוע שאומת.\n- 2: תנאי קדם, אישור שלא ניתן, בדיקה שנחסמה או מצב שלא ניתן לאמת.\n\nאם --checks עבר אבל קבלה אמיתית חסומה, לשמור code_checks=pass והקבלה\nblocked, לא לשנות את אחת התוצאות כדי לקבל סימון כולל ירוק.\n\n## 15. סדר קומיטים ומסירה\n\nכל קבוצה כוללת שינויי גנרטור, קוד ובדיקות תואמים; הקומיט לא טוען שסט בדיקות\nשלא הורץ עבר. אין ליצור קומיט שבו import חדש מצביע למודול שעוד לא קיים.\n\n1. `feat(selection): add provider decisions and durable ownership` — חוזים,\n   fingerprints, בעלות ותמיכת legacy, בדיקות הבחירה והמלאי.\n2. `feat(pixi): discover and install exact Intel binary routes` — adapter,\n   נעילה של גרסאות, discovery וסגירת תלויות, בדיקות מבוקרות.\n3. `fix(migrations): complete activation rollback and recovery` — נעילות,\n   גיבוי, ניתוב, פיצוי, פרופילים ובדיקות כשל; legacy notifier נשמר.\n4. `feat(updates): execute displayed provider routes from update actions` —\n   שילוב snapshot/engine/API/preload/UI, ללא אישור נוסף לכל מעבר.\n5. `feat(validation): add one-command packaged Intel acceptance` — script,\n   package 1.3.4 ו־lockfile, build identity, דוח ושימור הגדרות.\n6. `docs: record delivered scope and pending user acceptance` — מצב אמיתי,\n   פקודת משתמש וקישור לדוח, בלי לסגור משימות מוקדם.\n\nשמות אלו הם כוונת חלוקה; מותר לפצל קבוצה כשיש תלות שמחייבת זאת, אך אין\nלאחד הכול לקומיט עמום. push של קוד אינו release; אין tag או פרסום חבילה.\nהתקנה מקומית נעשית במסלול המשתמש לאחר בדיקות תואמות.\n\n## 16. תנאי סיום — לסמן רק עם ראיות\n\n- [ ] סריקה מציגה החלטות מספקים נתמכים, עם השוואה בינארית וגרסה מתאימה ל־Intel.\n- [ ] הבחירה נכונה ב־fixtures של שלושת הספקים, שוויון, revision ומידע חסר.\n- [ ] ״עדכן נבחרים״ ו״עדכן הכול״ משתמשים בהחלטות שהוצגו, בלי מעבר סמוי או confirm נוסף.\n- [ ] מעבר נתמך בוצע ונבדק במחשב, כולל פקודות, מקור שהוסר וגיבוי; חסם סביבה נשאר חסם.\n- [ ] ביטול, המשך ו־rollback הוכחו בנתיבים מבודדים, כולל שינוי עצמאי והסרה חלקית.\n- [ ] אחרי restart הבעלות והמלאי מציגים ספק חדש ללא כפילות, ותוכנית העדכון מגיעה ממנו.\n- [ ] smoke כושל אחרי עדכון ספק אינו מסומן הצלחה; רענון UI כושל אינו מוחק עסקה מוצלחת.\n- [ ] בדיקות הקוד והממשק עברו בדוח המשתמש התואם לקוד שנמסר.\n- [ ] ngrok, התקנות לא נבחרות, הגדרות וזהות ההתראות נשמרו לפי baseline.\n- [ ] התיעוד מבדיל בין מימוש, בדיקות מבודדות וקבלה אמיתית לכל ספק.\n\nלפני דוח המשתמש: ״המימוש נמסר; הבדיקות המלאות ובדיקת הקבלה ממתינות להרצת המשתמש״.\nאחרי --checks בלבד: ״בדיקות הקוד עברו; קבלה אמיתית טרם הושלמה״.\nאין לסגור T03/T04/T07 יחד רק בגלל שהסקריפט קיים או fixture עבר.\n\n## 17. הוראות קצרות למודל המממש\n\n1. לקרוא תוכנית זו ומסמכי היסוד; לבדוק Git ו־AGENTS בלי להפעיל חבילות ישנות.\n2. להתחיל בשלב א ולהתקדם לפי הסדר: חוזים → adapters ובחירה → עסקה/שחזור →\n   חיבור API/UI → סקריפט. לכתוב את הבדיקות עם הרכיב, לא להפעיל סט מלא.\n3. לשמר שמות/ממשקים קיימים עד שהכניסה החדשה מחוברת; לא להשאיר bypass ישן\n   שמאפשר הסרה, ניתוב או התקנה בלי אותו preflight ונעילה.\n4. בחירה טכנית שלא נקבעה כאן תיעשה במימוש הפשוט שמשמר את החוזים. סתירה\n   מהותית או אפשרות לאבד התקנה תתועד כחסם; אין לשנות יעד או להמציא הצלחה.\n5. לעדכן את מסמך המשימות ודוח המימוש. לבצע אימות ממוקד בלבד ולתעד בדיוק מה נבדק.\n6. **היסטוריית כתיבת התוכנית:** בזמן baseline 1.3.3 הדגל --full לא היה קיים.\n   בענף 1.3.4 הוא כבר נכתב, אך אינו מאושר לקבלה לפני השלמת קוד, בדיקות\n   ודוח מתאים. אין להורות למשתמש להריץ אותו עכשיו:\n\n```bash\n/usr/local/bin/python3.14 \"/Users/tzoharlary/Documents/Projects/brew-update-manager/tools/verify-migration.py\" --full\n```\n\nזו פקודת המסירה העתידית היחידה. המשתמש מריץ, מודיע שהסתיימה, והסוכן קורא\nאת הדוח המקומי ומטפל בכשלים ממוקדים בלי לדרוש העתקת פלט ארוך.\n\n## 18. מקורות טכניים לבדיקת המימוש\n\nהקוד המקומי הוא בסיס ההתאמה ל־CLI המותקן. המקורות הבאים נבדקו בתכנון,\nאך אינם תחליף ל־capability check של הגרסה המקומית:\n\n- [Pixi search](https://pixi.prefix.dev/latest/reference/cli/pixi/search/) — JSON,\n  platform, channel ו־limit; --no-config עדיין מאפשר config מקומי, ולכן משתמשים ב־scratch מנוהל.\n- [Pixi install](https://pixi.prefix.dev/latest/reference/cli/pixi/install/) —\n  --locked בודק התאמת manifest ל־lock; --frozen אינו בודק אותה באותו אופן.\n- [Pixi explicit export](https://pixi.prefix.dev/latest/reference/cli/pixi/workspace/export/conda-explicit-spec/) —\n  יצוא רשימת הארטיפקטים; parser חייב להתאים לגרסה שהותקנה.\n- [Homebrew manpage](https://docs.brew.sh/Manpage) — אפשרויות bottle והסרה;\n  preflight של כל התלויות נדרש מעבר להוספת דגל בשורת הפקודה.\n- [MacPorts guide](https://guide.macports.org/) — התקנה ומלאי, לצד ה־adapter\n  הקיים שמפעיל port במצב בינארי ומכבד את אימות החתימות שלו.\n\n## נספח סטטוס T04 — 20.10.2026, קומיט 555ae7b\n\nהשלבים במסמך זה מתארים דרישות, לא את מצב התקדמות הקוד. לאחר הקומיט נכתבו גילוי חלופות Homebrew/MacPorts/Pixi ממופות גם כשההתקנה הנוכחית אינה outdated, אלגוריתם revision תואם ספק, פרופילים קשיחים `jq`/`pandoc` ומנוע מעבר Pixi עם יומן, גיבוי, smoke ורישום בעלות. `_pixi_bridge` עדיין אינו מפעיל את מנוע המעבר ולכן אין הצעת Pixi executable בזרימה המאוחדת. [CI 39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017) עבר 63 בדיקות Python ממוקדות, בדיקת JavaScript, תחביר, 37-file `unified-check` ואריזה בסיסית בלבד. יש להמשיך בסקירת החיבור לפני שינוי התנהגות; T03/T04/T07 נשארות פתוחות עד בדיקות קבלה תקפות.\n\n### עדכון לאחר שלב 3 — 20.10.2026\n\nהחיבור הנקודתי Homebrew→Pixi ממומש ברמת קוד לפרופילי `jq`/`pandoc` בלבד: גילוי + preflight טרנזקציוני, קישור תוכנית בחירה, סיווג T02 מוגן, אימות ספק/lock/דור לפני ביצוע, ודחיית שינוי בבדיקת `migration_engine.approve`. זה אינו תחליף לבדיקות כשל/שחזור (שלב 4), רגרסיות HTTP/UI, או בדיקת קבלה במחשב. אין להורות למשתמש להריץ `--full` בשלב זה.\n"
+UNIFIED_STATUS_DOC = "# Unified Intel updater — סטטוס מימוש גרסה 1.3.4\n\nעודכן: 20.10.2026. תמונת הקוד המעודכנת לשלב 3 מבוססת על קומיט `ff4887771e84` בענף `feat/unified-intel-134-foundations` ועל [PR #1 (טיוטה)](https://github.com/TzoharLary/brew-update-manager/pull/1).\nמסמך זה הוא מקור האמת למצב **קוד הפיתוח**, ולא אישור הפעלה על מחשב המשתמש. `main` נשאר ב־`a682e4d` בזמן הבדיקה; לא פורסמה גרסה ולא הותקנו/הוסרו חבילות במחשב המשתמש.\n\n## קיים בקוד ונתמך ברמת התשתית\n\n| תחום | מימוש קיים | גבול התמיכה |\n| --- | --- | --- |\n| החלטות אחידות | Candidate/Decision עבור Homebrew, MacPorts, Pixi; השוואת גרסאות upstream ו־revision בתוך ספק בלבד, fingerprint, תוכניות ל־15 דקות, מזהי התקנות פיזיות נפרדים | ״הגרסה הכי חדשה״ תקפה רק בקרב המסלולים המאומתים שנבדקו; כשל או חסר מידע חייבים להישאר גלויים |\n| איסוף חלופות T04 | `collect_candidates` ב־`backend/unified_updates.py`: בדיקת Homebrew גם כש־outdated=false, חלופות MacPorts ממיפוי מוכר, Pixi ל־CLI ממופים, תקציב זמן ל־solver וסיבות חסימה | לא כל תוכנה ניתנת למעבר; Cask, ספריות ושירותים לא מקבלים פרופיל מעבר מומצא |\n| Homebrew | עדכוני Formula עם preflight בינארי ובקרת fallback; זיהוי revision גם בלי דגל outdated | עדכון Cask במסלול ההחלטות המאוחד מסומן כלא מאומת |\n| MacPorts | עדכוני port, preflight של archives/גרסאות, מעבר Homebrew→MacPorts עבור פרופילים מאומתים, בדיקות שימוש | נדרשות בדיקות קבלה מלאות של הגרף, PATH, recovery והתקנות אמת |\n| Pixi מנוהל | גילוי osx-64 ו־lock/hash/closure, עדכון של כלי שכבר בבעלות Pixi, אימות conda-meta ופקודות | אין תמיכה אוטומטית בכלי שרירותי שאינו במיפוי/פרופיל |\n| מעבר Homebrew→Pixi | **מנוע עסקה כתוב**, עם preflight קריאה בלבד, פרופילים קבועים ל־`jq` ול־`pandoc`, גיבוי, פקודות smoke פונקציונליות, רישום בעלות ושחזור | **מחובר כעת למנגנון הבחירה ברמת הקוד**: רק `jq`/`pandoc` עם פרופיל ומסמך עסקה תואמים יכולים לקבל `ready`; לא בוצע מעבר אמיתי ואין עדיין אישור להפצת מוצר |\n| בטיחות ותפעול | journal, lock, request-id/idempotency, אימות תוכניות לפני ביצוע, rollback/resume, טיפול בתוכנית שפג תוקפה | נתיבי legacy ותרחישי קריסה/התאוששות עדיין מחייבים סקירה ובדיקות נוספות |\n| ממשק והפצה | מסלולי selected/all/one מאוחדים בחלקם, הודעות/חסמים, Bundle 004, סקריפט `--checks` ו־`--full` | אשף legacy ומסלולים עוקפים עדיין קיימים; `--full` כתוב אך לא עבר קבלה במחשב המשתמש |\n\n## מה אומת בפועל\n\n- [CI #39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017) על `555ae7b`: עבר בהצלחה.\n- בריצה זו עברו **63 בדיקות Python ממוקדות**: 19 unified, 15 selection, 3 MacPorts, 9 Pixi, 9 migration engine ו־8 profiles.\n- עברו בדיקת JS ייעודית לתוכניות שפג תוקפן, בדיקות תחביר Python/JavaScript, `unified-check` קריאה בלבד מול **37 קבצים**, ו־packaging smoke.\n- שתי ריצות ביניים מוקדמות של T04 נכשלו; בהמשך נרשמו תיקוני fixtures/regex/revisions והריצה האחרונה עברה. אין להסיק מכך שתרחישי תקלה שלא נבדקו עברו.\n- **לא** אומתו בדיקות Python המלאות, HTTP/Electron מקצה לקצה, התקנות/הסרות חבילות אמת, שחזור מלא של Bundle 004 או בדיקת קבלה על Mac Intel.\n\n## פערים פתוחים — לא לסמן T03/T04/T07 כהושלמו\n\n1. **שלבים 2–3 הושלמו ברמת סקירה וקוד ממוקד:** נסקרו החוזים וחוברה בחירה/אימות Pixi עבור `jq`/`pandoc` בלבד. הבדיקות הממוקדות אינן קבלה מלאה.\n2. **שלב 4 — ביצוע ושחזור (T03/T04):** לכסות במסלולי fault-injection מקצה לקצה את בקשת העדכון המאוחדת, backup, smoke, הסרת מקור רק לאחר אימות, ownership, כשל חלקי, restart, resume/rollback ומניעת דריסת שינוי עצמאי. יש לבחון את תזמוני התקנת היעד ואת השגיאות לאורך הנתיב לפני כל קבלה אמיתית.\n4. **שלב 5 — גילוי והשוואה (T04):** כיסוי fixtures של גרסאות, שלושה ספקים, חוסר מידע וסקירה של מיפויים ידועים; לא להרחיב שרירותית לכל חבילה.\n5. **שלבים 6–7 — API/UI (T07):** לבדוק ולסגור bypass של legacy, להסיר אישור מעבר כפול, לטפל ב־409/ניתוק, טקסטים ותרגומים.\n6. **שלב 8 — בדיקות:** מקרי כשל, HTTP/Electron, רגרסיות ובדיקות משתמש מלאות.\n7. **שלב 9 — גנרטור ומסירה:** עקביות קבצים מול Bundle 004, replay/restore מוגנים, אריזה וחתימות.\n8. **שלב 10 — ביקורת מסכמת:** סקירת שינויי קוד, תיעוד מדויק של מה נבדק, ללא release/merge מוקדם.\n\nT05 (ספקים עצמאיים) ו־T06 (תיקוני חבילות ספציפיות, למשל LLVM) הן משימות המשך, לא הצדקה להרחיב את T04 ללא פרופיל בטוח.\n\n## כללי מסירה ושחזור מצב\n\n- ה־CI הממוקד בודק קוד; אינו אישור לשינויי חבילות ב־Mac. המשתמש יריץ `--checks` ואת בדיקת הקבלה `--full` **רק לאחר שמימוש הקוד והבדיקות הדרושות מוכנים** ובאישור מפורש למוטציות.\n- כל שינוי נשמר בענף הפיתוח עם קומיט ותוצאות בדיקות; אין למזג ל־`main`, להתקין חבילות, להסיר התקנות, לשנות PATH או להוציא release בזמן שלבי הקוד.\n- אם השיחה נקטעת, יש לקרוא ראשית את ה־HEAD ואת המסמך הזה, להימנע ממימוש חוזר של צעדים שכבר קיימים, ולהתחיל בשלב הבא הפתוח בלבד.\n- מסמכי בסיס 1.3.3 נשמרים להקשר היסטורי; הם אינם משנים את מצב קוד 1.3.4.\n\n[תוכנית T04](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md) · [משימות ושלבי המשך](MAC_MANAGER_TASKS.md) · [תוכנית היסוד](INTEL_UPDATE_IMPLEMENTATION_PLAN.md) · [מטרת המוצר](PRODUCT_GOAL.md)\n\n## תוצאת שלב 2 — סקירת חיבור Pixi (20.10.2026)\n\n**סקירת קוד הושלמה; מימוש החיבור עדיין פתוח.** [דוח סקירה מפורט ומפת תיקון](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md#שלב-2--דוח-סקירת-חוזים-ובטיחות-לקראת-חיבור-homebrewpixi).\n\nהסקירה מצאה שלושה חסמים שחייבים להיפתר לפני הצגת Homebrew→Pixi כ־`ready`: (1) `_pixi_bridge` חוסם ביצוע ואינו קושר תוכנית עסקה; (2) `unified_updates.execute` מאמת migration עם ברירת מחדל MacPorts גם כאשר היעד Pixi; (3) `compute_snapshot(False)` עלול לאבד סיווג T02 שנוצר ב־supplemental scan ולהכשיל אישור. בנוסף נדרשות בדיקות התאמת lock/closure, תוכנית העסקה, שינויי מצב ושחזור לאחר כשל.\n\n**שלב 3 הבא:** לתקן קודם את תנאי הסף ואת הניתוב/הסיווג, ורק אחר כך לאפשר `ready` לפרופילי `jq`/`pandoc` שנבדקו. אין לשנות מדיניות עבור כלי אחר, ואין להסיר התקנות אמיתיות בלי בדיקת קבלה מפורשת.\n\n## שלב 3 — חיבור בחירת Homebrew→Pixi לקוד (20.10.2026)\n\n**הושלם ברמת קוד ובדיקות ממוקדות; אין אישור שימוש אמיתי במחשב.** השינויים נשמרו בקומיטים `f2543f0`, `60f8b58`, `244b763`, `08b63e2`, `69d28e4`, `d5a1427`, `ff48877`.\n\n- **P0-C:** `installation_evidence.reusable_cached_classification` משמר T02 מסריקה מלאה גם לכלי שהופיע רק במיפוי supplementary, אך רק עם מזהה התקנה פיזית תואם, גרסה מדויקת, audit מאומת, fingerprint זהה וחותמת זמן עד 15 דקות; סיווג מיושן/משתנה נופל ל־`unclassified`.\n- **P0-A/P1-E:** `unified_updates._pixi_bridge` דורש `migration_profiles.pixi_get` עבור `jq`/`pandoc`, מסנן סיווג T02 חסר, מבצע `pixi_provider.discover` ואז preflight של `migration_engine.plan(provider=\"pixi\", pixi_candidate=...)`. רק לאחר מכן הוא מצרף `migration_plan_id`, `migration_fingerprint`, `profile_id/version` ומסמן executable. `update_selection.select` חוסם migration ללא מזהי תוכנית מהותיים.\n- **P0-B/P1-D:** `unified_updates._revalidate_migration` מאמת provider, זהות מקור, גרסה גולמית כולל revision, פרופיל, מזהה/תוקף תוכנית, generation ומאפייני lock/closure; `execute` מנתב לפי ספק היעד, ולא לפי ברירת מחדל MacPorts. `migration_engine.approve` מבצע גילוי Pixi מחדש ומשווה fingerprint כדי **לדחות** שינוי בגרסה/lock/closure לפני מוטציה.\n- נוספו בדיקות חיוביות ושליליות: Homebrew עדכני מול Pixi מאומת חדש יותר; פרופיל חסר; preflight שנכשל; מזהי migration חסרים או זרים; lock ששונה; routing Pixi לעומת MacPorts; revision ומקור שונה; שחזור סיווג T02 עם ראיות חסרות.\n- כל קובצי הקוד/הבדיקות ששונו הוטמעו גם בגנרטור Bundle 004, והשלב נותר בענף העבודה בלבד.\n\n**המשך (שלב 4):** בדיקות failure/restore אמיתיות ב־fixtures, ניסויי restart/partial-uninstall, בדיקות HTTP/renderer ופתרון בעיות התאוששות לפני הפעלת מעבר על Mac Intel. T03/T04/T07 נשארות פתוחות עד בדיקות קבלה.\n"
+
+# Safe, exact source-level refinement over the original guarded bundle patch.
+UNIFIED_STALE_APP_EDITS = [["function unifiedReady(pkg) {\n  return pkg?.update_decision?.status === 'ready';\n}","function ensureFreshUnifiedPlan() {\n  if (!unifiedPlanExpired(snapshot)) return true;\n  showMessage(i18n.lang === 'he'\n    ? 'תוכנית העדכון פגה או אינה זמינה. יש לבצע בדיקת עדכונים חדשה.'\n    : 'The update plan expired or is unavailable. Run a new update check.', true);\n  applyActionAvailability();\n  return false;\n}\nfunction unifiedReady(pkg) {\n  return !unifiedPlanExpired(snapshot) && pkg?.update_decision?.status === 'ready';\n}"],["function unifiedPayload(packages) {\n  if (!snapshot?.unified_plan_id) return null;","function unifiedPayload(packages) {\n  if (unifiedPlanExpired(snapshot)) throw new Error('Update plan expired; run a new check');\n  if (!snapshot?.unified_plan_id) return null;"],["function applyActionAvailability() {\n  const allowed = isBrewPathConfigured();","function applyActionAvailability() {\n  const allowed = isBrewPathConfigured();\n  const planExpired = unifiedPlanExpired(snapshot);"],["  updateAllBtn.disabled = busyLoading || operationRunning || !allowed ||","  updateAllBtn.disabled = busyLoading || operationRunning || !allowed || planExpired ||"],["    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed ||","    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired ||"],["    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed ||","    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired ||"],["    checkbox.disabled = busyLoading || operationRunning || !allowed;","    checkbox.disabled = busyLoading || operationRunning || !allowed || planExpired;"],["    btn.disabled = busyLoading || operationRunning || !allowed;","    btn.disabled = busyLoading || operationRunning || !allowed || planExpired;"],["async function updateOne(name, kind, sourceBtn = null, row = null) {\n  if (!ensureBrewConfiguredForActions()) return;","async function updateOne(name, kind, sourceBtn = null, row = null) {\n  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;"],["async function updateSelected() {\n  if (!ensureBrewConfiguredForActions()) return;","async function updateSelected() {\n  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;"],["async function updateAll() {\n  if (!ensureBrewConfiguredForActions()) return;","async function updateAll() {\n  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;"]]
+
+def _unified_stale_app_edit(content, reverse=False):
+    pairs = reversed(UNIFIED_STALE_APP_EDITS) if reverse else UNIFIED_STALE_APP_EDITS
+    for before, after in pairs:
+        original, replacement = (after, before) if reverse else (before, after)
+        if content.count(replacement) == 1 and content.count(original) == 0:
+            continue
+        if content.count(original) != 1:
+            raise RuntimeError('Stale plan app patch has an unexpected source layout')
+        content = content.replace(original, replacement, 1)
+    return content
+
+UNIFIED_STALE_UI_TESTS = r''''use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname, '../renderer/mac-manager.js'), 'utf8');
+const sandbox = { Date, i18n: { lang: 'he' } };
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox, { filename: 'mac-manager.js' });
+const expired = (state, now) => sandbox.unifiedPlanExpired(state, now);
+assert.equal(expired({}, 1500000), false, 'initial scan is not a stale plan');
+assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 1000 }, 999999), false);
+assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 1000 }, 1000000), true);
+assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 2000, unified_plan_stale: true }, 0), true);
+assert.equal(expired({ unified_plan_id: 'abc' }, 0), true, 'missing expiration fails closed');
+assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 'bogus' }, 0), true);
+assert.match(sandbox.unifiedReasonLabel('plan_expired'), /תוכנית העדכון/);
+assert.match(sandbox.unifiedReasonLabel('pixi_migration_transaction_unavailable'), /Pixi/);
+sandbox.i18n.lang = 'en';
+assert.match(sandbox.unifiedReasonLabel('plan_expired'), /expired/);
+console.log('Stale Intel plan UI helpers: passed');
+'''
+
+UNIFIED_MACPORTS_TESTS = r'''import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import macports_provider as mp
+
+
+class MacPortsVersionFixtures(unittest.TestCase):
+    def test_separates_upstream_and_packaging_revision(self):
+        self.assertEqual(mp.version_parts("1.8.1_0"), ("1.8.1", 0))
+        self.assertEqual(mp.version_parts("1.8.2_12"), ("1.8.2", 12))
+        self.assertEqual(mp.version_parts("2.3.0"), ("2.3.0", 0))
+        self.assertEqual(mp.version_parts("2.0rc1"), ("2.0rc1", 0))
+
+    def test_active_port_metadata_supports_numeric_selection(self):
+        class Service:
+            def run_cmd(self, argv, **kwargs):
+                text = (" jq @1.8.1_0 (active)\n" if "installed" in argv
+                        else "jq @1.8.1_0 < 1.8.2_1\n")
+                return SimpleNamespace(code=0, stdout=text, stderr="")
+        with tempfile.TemporaryDirectory() as temp:
+            port = Path(temp) / "port"
+            port.write_text("not executed")
+            with patch.object(mp, "PORT", str(port)):
+                packages = mp.inventory(Service())
+            self.assertEqual(len(packages), 1)
+            row = packages[0]
+            self.assertEqual((row["installed_upstream_version"], row["installed_revision"]),
+                             ("1.8.1", 0))
+            self.assertEqual((row["latest_upstream_version"], row["latest_revision"]),
+                             ("1.8.2", 1))
+            self.assertTrue(row["outdated"])
+
+    def test_malformed_suffix_does_not_invent_numeric_version(self):
+        from update_selection import compare_upstream
+        upstream, _ = mp.version_parts("2.0_rc")
+        self.assertIsNone(compare_upstream(upstream, "1.9"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_RECOVERY = Path(os.environ.get(
+    'MAC_MANAGER_UNIFIED_RECOVERY',
+    str(Path.home() / '.local/share/brew-update-manager/recovery/unified-intel-1.3.4')
+))
+
+def _unified_patched_outputs():
+    outputs = {}
+    for relative, record in UNIFIED_PATCH_DATA.items():
+        data = (ROOT / relative).read_bytes()
+        current = hashlib.sha1(('blob %d\0' % len(data)).encode() + data).hexdigest()
+        if (relative == 'backend/installation_evidence.py' and
+                data.decode('utf-8') == UNIFIED_MODIFIED_FILES[relative]):
+            outputs[relative] = UNIFIED_MODIFIED_FILES[relative]
+            continue
+        if current == record['target']:
+            outputs[relative] = data.decode('utf-8')
+            continue
+        if relative == 'renderer/app.js':
+            original = _unified_stale_app_edit(data.decode('utf-8'), reverse=True)
+            payload = original.encode('utf-8')
+            old_sha = hashlib.sha1(('blob %d\0' % len(payload)).encode() + payload).hexdigest()
+            if old_sha == record['target']:
+                outputs[relative] = original
+                continue
+        if current != record['origin']:
+            raise RuntimeError('Protected bundle refuses independent edit: ' + relative)
+        lines = data.decode('utf-8').splitlines(keepends=True)
+        for start, count, replacement in reversed(record['hunks']):
+            lines[start:start + count] = replacement
+        result = ''.join(lines)
+        encoded = result.encode('utf-8')
+        after = hashlib.sha1(('blob %d\0' % len(encoded)).encode() + encoded).hexdigest()
+        if after != record['target']:
+            raise RuntimeError('Generated patch target mismatch: ' + relative)
+        outputs[relative] = result
+    return outputs
+
+
+def unified_foundation_outputs():
+    outputs = {
+        "docs/UNIFIED_IMPLEMENTATION_STATUS.md": UNIFIED_STATUS_DOC,
+        "docs/T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md": UNIFIED_T04_PLAN,
+        "docs/PRODUCT_GOAL.md": UNIFIED_PRODUCT_GOAL_CURRENT,
+        "docs/INTEL_UPDATE_IMPLEMENTATION_PLAN.md": UNIFIED_PLAN_CURRENT,
+        "backend/update_selection.py": UNIFIED_FOUNDATION_BACKEND_UPDATE_SELECTION_PY,
+        "backend/pixi_provider.py": UNIFIED_PIXI_PROVIDER,
+        "backend/unified_updates.py": UNIFIED_UPDATES,
+        "backend/migration_profiles.py": UNIFIED_PROFILE_CODE,
+        "backend/migration_engine.py": UNIFIED_ENGINE,
+        "tests/test_migration_engine.py": UNIFIED_ENGINE_TESTS,
+        "tests/test_migration_profiles.py": UNIFIED_PROFILE_TESTS,
+        "backend/routing_activation.py": UNIFIED_ROUTING,
+        "tests/test_routing_activation.py": UNIFIED_ROUTING_TESTS,
+        "tests/test_unified_updates.py": UNIFIED_UPDATES_TESTS,
+        "tests/test_macports_provider.py": UNIFIED_MACPORTS_TESTS,
+        "tests/stale-plan-ui.cjs": UNIFIED_STALE_UI_TESTS,
+        "tests/test_pixi_provider.py": UNIFIED_PIXI_TESTS,
+        "backend/provider_ownership.py": UNIFIED_FOUNDATION_BACKEND_PROVIDER_OWNERSHIP_PY,
+        "backend/operation_lock.py": UNIFIED_FOUNDATION_BACKEND_OPERATION_LOCK_PY,
+        "tests/test_update_selection.py": UNIFIED_FOUNDATION_TESTS_TEST_UPDATE_SELECTION_PY,
+        "tests/test_provider_ownership.py": UNIFIED_FOUNDATION_TESTS_TEST_PROVIDER_OWNERSHIP_PY,
+        "tests/test_operation_lock.py": UNIFIED_FOUNDATION_TESTS_TEST_OPERATION_LOCK_PY,
+        **_unified_patched_outputs(),
+        **UNIFIED_MODIFIED_FILES,
+    }
+    outputs["renderer/app.js"] = _unified_stale_app_edit(outputs["renderer/app.js"])
+    return outputs
+
+def _unified_atomic_bytes(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.unified-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
+def unified_pack_or_install(mode):
+    """User-only packaging/install: reuse a matching full code report, no test rerun.
+
+    This is deliberately separate from --full: it replaces the app only,
+    without approving or mutating any managed packages.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'unified_intel_verifier', ROOT / 'tools/verify-migration.py')
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    report = verifier.Report(mode)
+    try:
+        verifier.prerequisites(report)
+        wanted = verifier.signature()
+        matching = verifier.matching_code_report(wanted)
+        if matching is None:
+            raise RuntimeError('Matching complete code check report required before packaging')
+        report.data['checks_report'] = str(matching)
+        report.data['code_checks'] = 'pass'
+        report.save()
+        if mode == 'unified-pack':
+            verifier.package_application(report, wanted)
+            report.data['result'] = 'pass'
+            report.data['exit_code'] = 0
+            report.save()
+            print('Intel package checked; no application or package installation changed.')
+            return
+        if mode != 'unified-install':
+            raise RuntimeError('Unsupported unified bundle mode')
+        # Do not invoke packaging here; verify the artifact already exists.
+        info = verifier.metadata(verifier.BUILT)
+        if str(info.get('CFBundleShortVersionString')) != verifier.VERSION:
+            raise RuntimeError('Built application version does not match source')
+        backend = verifier.BUILT / 'Contents/Resources/app.asar.unpacked/backend'
+        if not backend.is_dir():
+            raise RuntimeError('Packaged backend missing')
+        for relative, sha256 in wanted.items():
+            if relative.startswith('backend/'):
+                path = backend / relative.removeprefix('backend/')
+                if not path.is_file() or verifier.sha(path) != sha256:
+                    raise RuntimeError('Code changed since packaging: ' + relative)
+        product = {'version': verifier.VERSION,
+                   'backend_code_sha256': verifier.backend_digest(backend),
+                   'build_id': 'unified-intel-1.3.4'}
+        live = verifier.find_service()
+        verifier.check_idle(live)
+        old_pid = live[1]['pid'] if live else None
+        verifier.install_packaged(report, live)
+        verifier.command(['/usr/bin/open', str(verifier.APPLICATION)], report,
+                         'open-installed-app', timeout=30)
+        verifier.wait_for_health(report, product, previous_pid=old_pid)
+        report.data['packaged_app'] = 'pass'
+        report.data['result'] = 'pass'
+        report.data['exit_code'] = 0
+        report.save()
+        print('1.3.4 installed and process verified; NO managed packages were changed.')
+    except BaseException as error:
+        report.data.update(result='blocked', error=str(error), exit_code=2)
+        report.save()
+        raise
+
+def unified_foundation_main(mode):
+    """Protected, no-package-mutation bundle for independently testable foundations."""
+    if mode not in ('unified-check', 'unified-apply', 'unified-restore',
+                    'unified-pack', 'unified-install'):
+        raise ValueError('Unknown unified bundle operation')
+    if mode in ('unified-pack', 'unified-install'):
+        unified_foundation_main('unified-check')
+        return unified_pack_or_install(mode)
+    outputs = {relative: content.encode('utf-8')
+               for relative, content in unified_foundation_outputs().items()}
+    manifest_path = UNIFIED_RECOVERY / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
+    if manifest and set(manifest.get('files', {})) != set(outputs):
+        raise RuntimeError('Bundle manifest does not match the generator output set')
+    prepared = []
+    for relative, desired in outputs.items():
+        path = ROOT / relative
+        before = path.read_bytes() if path.is_file() else None
+        current_hash = digest(before) if before is not None else None
+        after_hash = digest(desired)
+        if manifest:
+            record = manifest['files'][relative]
+            if record['after'] != after_hash or current_hash != after_hash:
+                raise RuntimeError('Protected bundle refuses independent edits: ' + relative)
+            backup = UNIFIED_RECOVERY / 'before' / relative
+            if record['before'] is not None and (
+                    not backup.is_file() or digest(backup.read_bytes()) != record['before']):
+                raise RuntimeError('Protected backup missing or changed: ' + relative)
+        elif before is not None and before != desired:
+            expected = UNIFIED_EXISTING_BLOBS.get(relative)
+            blob_sha = hashlib.sha1(('blob %d\0' % len(before)).encode() + before).hexdigest()
+            if not expected or blob_sha != expected:
+                raise RuntimeError('Existing file differs from trusted baseline: ' + relative)
+        prepared.append((relative, path, before, desired))
+    if mode == 'unified-check':
+        print('Bundle 004 foundation checked without writes: ' + str(len(outputs)) + ' files.')
+        return
+    if mode == 'unified-restore':
+        if not manifest:
+            raise RuntimeError('Bundle 004 has no manifest to restore')
+        for relative, path, _, _ in prepared:
+            old = manifest['files'][relative]['before']
+            if old is None:
+                path.unlink()
+            else:
+                _unified_atomic_bytes(path, (UNIFIED_RECOVERY / 'before' / relative).read_bytes())
+        manifest_path.rename(UNIFIED_RECOVERY / ('restored-' + str(time.time_ns()) + '.json'))
+        print('Bundle 004 foundation restored exactly.')
+        return
+    if manifest:
+        print('Bundle 004 foundation already applied; no files changed.')
+        return
+    # All files and baselines have been checked before the first write.
+    records = {}
+    for relative, path, before, desired in prepared:
+        records[relative] = {'before': digest(before) if before is not None else None,
+                             'after': digest(desired)}
+        if before is not None:
+            _unified_atomic_bytes(UNIFIED_RECOVERY / 'before' / relative, before)
+    _unified_atomic_bytes(UNIFIED_RECOVERY / 'generator-before.py', Path(__file__).read_bytes())
+    _unified_atomic_bytes(manifest_path, (json.dumps({
+        'schema_version': 1, 'stage': 'foundation_only',
+        'files': records, 'generator_sha256': digest(Path(__file__).read_bytes())
+    }, sort_keys=True, indent=2) + '\n').encode())
+    for relative, path, before, desired in prepared:
+        if before != desired:
+            _unified_atomic_bytes(path, desired)
+    print('Bundle 004 foundations recorded; no package installs/updates/removals.')
+
 if __name__=='__main__':
     try:
-        if len(sys.argv)==2 and sys.argv[1].startswith('intel-plan-'):intel_plan_documents(sys.argv[1])
+        if len(sys.argv)==2 and sys.argv[1].startswith('unified-'):unified_foundation_main(sys.argv[1])
+        elif len(sys.argv)==2 and sys.argv[1].startswith('intel-plan-'):intel_plan_documents(sys.argv[1])
         elif sys.argv[1:]==['checks-runner-apply']:checks_runner_apply()
         elif len(sys.argv)==2 and sys.argv[1].startswith('direction-docs-'):direction_documentation(sys.argv[1])
         elif len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])

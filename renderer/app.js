@@ -412,20 +412,21 @@ function isBrewPathConfigured() {
 
 function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
+  const planExpired = unifiedPlanExpired(snapshot);
   const selectedCount = selectedPackagesFromSnapshot().length;
-  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason).length;
+  const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))).length;
   const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;
   const checkBlockedByBusy = !!busyLoading && !isUpdateOperationRunning();
 
   checkNowBtn.disabled = checkBlockedByBusy || !allowed;
-  updateAllBtn.disabled = busyLoading || operationRunning || !allowed;
+  updateAllBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || (!!snapshot?.unified_plan_id && !snapshot?.update_decisions?.some(d => d.status === 'ready'));
 
   if (updateSelectedBtn) {
-    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || selectedCount === 0;
+    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || selectedCount === 0;
   }
 
   if (selectVisibleOutdatedBtn) {
-    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || visibleOutdatedCount === 0;
+    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || visibleOutdatedCount === 0;
   }
 
   if (clearSelectionBtn) {
@@ -433,11 +434,11 @@ function applyActionAvailability() {
   }
 
   document.querySelectorAll('.row-update-btn').forEach((btn) => {
-    btn.disabled = busyLoading || operationRunning || !allowed;
+    btn.disabled = busyLoading || operationRunning || !allowed || planExpired;
   });
 
   document.querySelectorAll('.row-select-checkbox').forEach((checkbox) => {
-    checkbox.disabled = busyLoading || operationRunning || !allowed;
+    checkbox.disabled = busyLoading || operationRunning || !allowed || planExpired;
   });
 }
 
@@ -1623,16 +1624,44 @@ function packageSelectionKey(name, kind) {
 }
 
 function packageSelectionKeyFromPkg(pkg) {
-  return packageSelectionKey(pkg?.name, pkg?.kind);
+  return String(pkg?.update_decision?.source_installation_id || pkg?.installation_id || packageSelectionKey(pkg?.name, pkg?.kind));
+}
+function ensureFreshUnifiedPlan() {
+  if (!unifiedPlanExpired(snapshot)) return true;
+  showMessage(i18n.lang === 'he'
+    ? 'תוכנית העדכון פגה או אינה זמינה. יש לבצע בדיקת עדכונים חדשה.'
+    : 'The update plan expired or is unavailable. Run a new update check.', true);
+  applyActionAvailability();
+  return false;
+}
+function unifiedReady(pkg) {
+  return !unifiedPlanExpired(snapshot) && pkg?.update_decision?.status === 'ready';
+}
+function unifiedPayload(packages) {
+  if (unifiedPlanExpired(snapshot)) throw new Error('Update plan expired; run a new check');
+  if (!snapshot?.unified_plan_id) return null;
+  if (packages.some(p => !unifiedReady(p))) throw new Error(
+    i18n.lang === 'he' ? 'החבילה חסומה. יש לבצע בדיקה חדשה.' : 'Package is blocked. Run another check.');
+  if (!globalThis.crypto?.randomUUID) throw new Error('Secure request identifiers are unavailable');
+  return {
+    request_id: globalThis.crypto.randomUUID().replaceAll('-', ''),
+    plan_id: snapshot.unified_plan_id,
+    decisions: packages.map(p => ({
+      decision_id: p.update_decision.decision_id,
+      material_fingerprint: p.update_decision.material_fingerprint,
+    })),
+  };
 }
 
 function selectedPackagesFromSnapshot() {
   const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   return pkgs
-    .filter((pkg) => !pkg?.excluded && !pkg?.update_block_reason && pkg?.outdated && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))
+    .filter((pkg) => !pkg?.excluded && !pkg?.update_block_reason && pkg?.outdated && (!snapshot?.unified_plan_id || unifiedReady(pkg)) && selectedPackageKeys.has(packageSelectionKeyFromPkg(pkg)))
     .map((pkg) => ({
       name: String(pkg?.name || '').trim(),
       kind: packageKindValue(pkg),
+      installation_id: pkg?.installation_id,
+      update_decision: pkg?.update_decision,
     }))
     .filter((pkg) => pkg.name && (pkg.kind === 'formula' || pkg.kind === 'cask' || pkg.kind === 'port' || pkg.kind === 'tool'));
 }
@@ -1641,7 +1670,7 @@ function pruneSelectedPackages() {
   const pkgs = Array.isArray(snapshot?.packages) ? snapshot.packages : [];
   const validKeys = new Set(
     pkgs
-      .filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason)
+      .filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg)))
       .map((pkg) => packageSelectionKeyFromPkg(pkg))
       .filter(Boolean),
   );
@@ -2290,6 +2319,15 @@ function renderTable() {
     if (pkg.excluded) tdStatus.textContent = i18n.t('policy.excludedStatus');
     else if (pkg.update_block_reason) tdStatus.textContent = i18n.t('policy.deferredStatus');
 
+    if (pkg.update_decision) {
+      const d = pkg.update_decision;
+      const info = document.createElement('div');
+      info.className = 'small muted'; info.dir = 'auto';
+      info.textContent = (d.current_provider === d.target_provider ? d.target_provider
+        : d.current_provider + ' → ' + d.target_provider) + ' · ' + d.status
+        + ' · ' + (d.reason_codes || []).join(', ');
+      tdStatus.appendChild(info);
+    }
     if (pkg.alternative_status) {
       const alternative = document.createElement('div'); alternative.className='small muted';
       alternative.textContent = macAlternativeLabel(pkg.alternative_status);
@@ -2298,7 +2336,7 @@ function renderTable() {
       tdStatus.appendChild(alternative);
     }
     const tdSelect = document.createElement('td');
-    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason) {
+    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))) {
       const wrap = document.createElement('label');
       wrap.className = 'row-select-wrap';
 
@@ -2320,11 +2358,11 @@ function renderTable() {
     }
 
     const tdAction = document.createElement('td');
-    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason) {
+    if (pkg.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))) {
       const btn = document.createElement('button');
       btn.className = 'row-update-btn';
       btn.textContent = i18n.t('buttons.update');
-      btn.addEventListener('click', () => updateOne(pkg.name, pkg.kind, btn));
+      btn.addEventListener('click', () => updateOne(pkg.name, pkg.kind, btn, pkg));
       tdAction.appendChild(btn);
     } else {
       tdAction.innerHTML = `<span class="muted small">${i18n.t('common.dash')}</span>`;
@@ -2486,9 +2524,10 @@ async function checkNow() {
   }
 }
 
-async function updateOne(name, kind, sourceBtn = null) {
-  if (!ensureBrewConfiguredForActions()) return;
-  if (!confirm(i18n.t('confirm.updateOne', { name, kind: kindLabel(kind) }))) return;
+async function updateOne(name, kind, sourceBtn = null, row = null) {
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
+  const request = row && snapshot?.unified_plan_id ? unifiedPayload([row]) : null;
+  if (!request && !confirm(i18n.t('confirm.updateOne', { name, kind: kindLabel(kind) }))) return;
 
   if (sourceBtn) {
     sourceBtn.textContent = i18n.t('buttons.updating');
@@ -2503,13 +2542,13 @@ async function updateOne(name, kind, sourceBtn = null) {
   startProgressPolling();
 
   try {
-    const res = operationResponse = await window.brewApp.updateOne(name, kind);
+    const res = operationResponse = await window.brewApp.updateOne(name, kind, request);
     snapshot = res.snapshot;
     renderCards(snapshot);
     renderTable();
     updatedAtEl.textContent = i18n.t('updatedAt', { date: formatDate(snapshot.updated_at) });
 
-    if (res?.result?.ok) {
+    if (res?.result?.ok || (request && res?.ok)) {
       let messageText = i18n.t('message.updateOneSuccess', { name });
       if (res?.inventory_refresh_error) {
         messageText = `${messageText}\n${i18n.t('message.inventoryRefreshWarning', {
@@ -2545,7 +2584,7 @@ async function updateOne(name, kind, sourceBtn = null) {
 }
 
 async function updateSelected() {
-  if (!ensureBrewConfiguredForActions()) return;
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
 
   const selected = selectedPackagesFromSnapshot();
   if (!selected.length) {
@@ -2553,7 +2592,10 @@ async function updateSelected() {
     return;
   }
 
-  if (!confirm(i18n.t('confirm.updateSelected', { count: i18n.formatNumber(selected.length) }))) return;
+  const selectedRows = (snapshot?.packages || []).filter(pkg =>
+    selected.some(item => item.installation_id === pkg.installation_id));
+  const request = snapshot?.unified_plan_id ? unifiedPayload(selectedRows) : null;
+  if (!request && !confirm(i18n.t('confirm.updateSelected', { count: i18n.formatNumber(selected.length) }))) return;
 
   if (updateSelectedBtn) {
     updateSelectedBtn.textContent = i18n.t('buttons.updating');
@@ -2568,7 +2610,7 @@ async function updateSelected() {
   startProgressPolling();
 
   try {
-    const res = operationResponse = await window.brewApp.updateSelected(selected);
+    const res = operationResponse = await window.brewApp.updateSelected(request || selected);
     snapshot = res.snapshot;
     pruneSelectedPackages();
     renderCards(snapshot);
@@ -2630,8 +2672,10 @@ ${i18n.t('message.inventoryRefreshWarning', {
 }
 
 async function updateAll() {
-  if (!ensureBrewConfiguredForActions()) return;
-  if (!confirm(i18n.t('confirm.updateAll'))) return;
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
+  const request = snapshot?.unified_plan_id ? unifiedPayload(
+    (snapshot?.packages || []).filter(unifiedReady)) : null;
+  if (!request && !confirm(i18n.t('confirm.updateAll'))) return;
 
   updateAllBtn.textContent = i18n.t('buttons.updating');
 
@@ -2643,7 +2687,7 @@ async function updateAll() {
   let operationResponse = null;
   startProgressPolling();
   try {
-    const res = operationResponse = await window.brewApp.updateAll();
+    const res = operationResponse = await window.brewApp.updateAll(request);
     snapshot = res.snapshot;
     renderCards(snapshot);
     renderTable();

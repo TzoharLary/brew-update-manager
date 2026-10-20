@@ -35,7 +35,20 @@ jobs:
           node --check electron/preload.js
 
       - name: Python syntax check
-        run: python3 -m py_compile backend/brew-updates-service.py
+        run: |
+          python3 -m compileall -q backend tools tests
+          python3 -m py_compile tools/implement-mac-manager.py tools/verify-migration.py
+
+      - name: Focused cached-plan regression checks
+        run: |
+          python3 -m unittest discover -s tests -p 'test_unified_updates.py'
+          python3 -m unittest discover -s tests -p 'test_update_selection.py'
+          python3 -m unittest discover -s tests -p 'test_macports_provider.py'
+          python3 -m unittest discover -s tests -p 'test_pixi_provider.py'
+          python3 -m unittest discover -s tests -p 'test_migration_engine.py'
+          python3 -m unittest discover -s tests -p 'test_migration_profiles.py'
+          node tests/stale-plan-ui.cjs
+          python3 tools/implement-mac-manager.py unified-check
 
       - name: Packaging smoke check
         run: npm run pack

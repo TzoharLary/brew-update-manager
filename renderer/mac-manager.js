@@ -20,6 +20,40 @@ function macAlternativeLabel(status) {
   };
   return (labels[status]||[status,status])[he?0:1];
 }
+function unifiedPlanExpired(state, nowMillis = Date.now()) {
+  if (!state?.unified_plan_id) return false;
+  if (state.unified_plan_stale === true) return true;
+  const expiry = Number(state.unified_plan_expires_at);
+  return !Number.isFinite(expiry) || expiry <= 0 || nowMillis >= expiry * 1000;
+}
+function unifiedReasonLabel(code) {
+  const he=i18n.lang==='he';
+  const known={
+    newest_verified_compatible:['העדכון הבינארי החדש ביותר שאומת','Latest verified compatible binary'],
+    partial_provider_comparison:['השוואת הספקים חלקית','Provider comparison is incomplete'],
+    discovery_incomplete:['מידע על חלק מהספקים חסר','Some providers could not be verified'],
+    excluded_package:['חבילה מוחרגת','Excluded package'],
+    no_executable_binary_route:['אין מסלול בינארי בטוח לביצוע','No executable binary route'],
+    recovery_required:['נדרש שחזור עסקה','Transaction recovery required'],
+    plan_expired:['תוכנית העדכון פגה — נדרשת בדיקה חדשה','Update plan expired — run a new check'],
+    migration_profile_missing:['אין פרופיל מעבר בטוח לחבילה','No safe migration profile for this package'],
+    fresh_classification_required:['נדרש סיווג התקנה עצמאי ומאומת','Fresh standalone classification required'],
+    pixi_migration_transaction_unavailable:['מעבר אוטומטי ל־Pixi אינו נתמך עדיין','Automatic migration to Pixi is not yet supported'],
+    pixi_scan_budget_exhausted:['תם זמן בדיקת החלופות של Pixi','Pixi alternative scan time budget exhausted'],
+    migration_source_provider_unsupported:['מעבר מספק זה אינו נתמך עדיין','Migration from this provider is not yet supported'],
+    cask_binary_adapter_not_verified:['עדכון Cask טרם אומת במסלול הבינארי','Cask binary update route is not yet verified'],
+    comparison_unknown:['לא ניתן להשוות את הגרסאות בוודאות','Version comparison is uncertain'],
+    downgrade_forbidden:['אין לבצע ירידה בגרסה','Downgrade is not permitted'],
+    not_newer:['אין גרסה חדשה יותר','No newer version'],
+    execution_unsupported:['מסלול ההתקנה אינו נתמך לביצוע','Installation route is not executable'],
+    provider_unverified:['ספק העדכון לא אומת','Provider is not verified'],
+    binary_closure_unverified:['לא אומתו כל התלויות הבינאריות','Binary dependencies are not fully verified'],
+    homebrew_catalog_unavailable:['נתוני Homebrew אינם זמינים','Homebrew catalog is unavailable'],
+    ownership_unreadable:['אי אפשר לאמת בעלות','Ownership registry cannot be verified'],
+    already_current:['אין עדכון מאומת','No verified update'],
+  };
+  return (known[code]||[he?'נימוק טכני בפרטים':'Technical reason in details',he?'נימוק טכני בפרטים':'Technical reason in details'])[he?0:1];
+}
 function renderMacManager() {
   let panel=document.getElementById('macManagerPanel');
   if (!panel) {
@@ -30,8 +64,26 @@ function renderMacManager() {
   const title=document.createElement('summary');
   title.textContent=(he?'עדכונים חסומים וחלופות':'Blocked updates and alternatives')+` (${snapshot?.migrations?.length||0})`;
   panel.appendChild(title);
+  if (unifiedPlanExpired(snapshot)) {
+    const warning=document.createElement('p');
+    warning.textContent=he?'תוכנית העדכון אינה בתוקף. כדי לעדכן חבילות יש לבצע בדיקה חדשה.':'The update plan is no longer valid. Run a new check before updating packages.';
+    warning.setAttribute('role','status');
+    panel.appendChild(warning);
+    const rescan=document.createElement('button');
+    rescan.textContent=he?'בדוק עדכונים מחדש':'Check for updates again';
+    rescan.disabled=!!busyLoading||!!lastKnownOperationRunning;
+    rescan.onclick=()=>checkNow();
+    panel.appendChild(rescan);
+  }
   const hint=document.createElement('p');
-  hint.textContent=he?'החלופות נבדקות אוטומטית עם ״התחל בדיקה״. מעבר למנהל אחר דורש בדיקת שימוש ואישור נפרד.':'Alternatives are checked automatically by Start Check. Changing managers requires a consumer review and separate approval.';
+  hint.textContent=he?'עדכון חבילה יוצג רק עם נתיב בינארי מאומת. פעולות מעבר שאינן מוכנות חסומות.':'An update is executable only with a verified binary route. Unfinished migration paths remain blocked.';
+  for (const decision of snapshot?.update_decisions||[]) {
+    if (decision.status==='current') continue;
+    const line=document.createElement('p');
+    const route=decision.current_provider===decision.target_provider?decision.current_provider:`${decision.current_provider} → ${decision.target_provider}`;
+    line.textContent=`${decision.logical_id}: ${decision.installed_version||'—'} → ${decision.target_version||'—'} · ${route} · ${decision.status} · ${(decision.reason_codes||[]).map(unifiedReasonLabel).join(' · ')}`;
+    panel.appendChild(line);
+  }
   panel.appendChild(hint);
   const labels={fresh:he?'עדכני':'current',refreshed:he?'רוענן אוטומטית':'refreshed automatically',stale:he?'ירוענן בבדיקה הבאה':'will refresh on next check',awaiting_authorization:he?'הרענון ממתין להזדהות; לחץ התחל בדיקה':'refresh awaits authorization; press Start Check',refresh_failed:he?'הרענון נכשל או לא אושר; התחל בדיקה ינסה שוב':'refresh failed or was declined; Start Check will retry',not_installed:he?'MacPorts אינו מותקן':'MacPorts is not installed'};
   for(const [name,provider] of Object.entries(snapshot?.providers||{})) {
@@ -43,6 +95,58 @@ function renderMacManager() {
   }
   if(['running','needs_attention'].includes(snapshot?.migration_journal?.status)) {
     const warning=document.createElement('p');warning.textContent=he?'מעבר קודם דורש בדיקה לפני המשך.':'A previous migration needs review before continuing.';panel.appendChild(warning);
+  }
+  for (const pending of snapshot?.pending_recovery || []) {
+    const item=document.createElement('div');
+    item.style.marginBlock='12px';
+    const description=document.createElement('p');
+    description.textContent=(he?'נדרש טיפול בעסקה: ':'Recovery required: ')+
+      (pending.logical_id||'—')+' · '+(pending.stage||'—');
+    item.appendChild(description);
+    for (const action of ['resume','rollback']) {
+      const button=document.createElement('button');
+      button.textContent=action==='resume'?(he?'סקירת המשך':'Review resume'):
+        (he?'סקירת שחזור':'Review rollback');
+      button.disabled=!!busyLoading||!!lastKnownOperationRunning;
+      button.onclick=async()=>{
+        button.disabled=true;
+        try {
+          const response=await window.brewApp.migrationRecoveryPlan(pending.transaction_id,action);
+          const plan=response.plan;
+          if (!plan || !plan.id) throw new Error('Recovery plan unavailable');
+          const review=document.createElement('p');
+          review.textContent=JSON.stringify(plan.preview||{},null,2);
+          review.style.whiteSpace='pre-wrap';
+          item.appendChild(review);
+          const approve=document.createElement('button');
+          approve.textContent=he?'אשר את פעולת ההתאוששות':'Approve this recovery';
+          approve.onclick=async()=>{
+            approve.disabled=true;
+            setLoading(true,'message.loadingState');
+            beginOperationRequest();
+            const generation=operationRequestGeneration;
+            let result=null;
+            startProgressPolling();
+            try {
+              result=await window.brewApp.migrationApprove(plan.id);
+              await loadState({showLoader:false});
+            } catch(error) {
+              showMessage(error.message,true);
+            } finally {
+              await finishOperationRequest(result,generation);
+              setLoading(false,'message.loadingState');
+            }
+          };
+          item.appendChild(approve);
+        } catch(error) {
+          showMessage(error.message,true);
+        } finally {
+          button.disabled=false;
+        }
+      };
+      item.appendChild(button);
+    }
+    panel.appendChild(item);
   }
   for(const offer of snapshot?.migrations||[]) {
     const row=document.createElement('details');row.style.marginBlock='10px';
@@ -88,7 +192,7 @@ function renderMacManager() {
     for(const [label,values] of [[he?'מידע חסר':'Missing evidence',classification.gaps],[he?'קובצי ראיות':'Evidence files',classification.evidence_refs]]) {
       if(values?.length) {const evidence=document.createElement('details');const title=document.createElement('summary');title.textContent=label;const text=document.createElement('p');text.textContent=values.join(' · ');evidence.append(title,text);row.appendChild(evidence);}
     }
-    if(offer.status==='binary_available') {
+    if(!snapshot?.unified_plan_id && offer.status==='binary_available') {
       if(offer.below_homebrew_target) {
         const version=document.createElement('p');
         version.textContent=he?`זו גרסה חדשה מהמותקנת אצלך. יעד Homebrew הוא ${offer.homebrew_target}; אין בכך הוכחה שזו הגרסה האחרונה הנתמכת ב־Intel.`:`This is newer than your installed version. Homebrew targets ${offer.homebrew_target}; this does not prove it is the last Intel-supported release.`;
