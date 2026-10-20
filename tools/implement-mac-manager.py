@@ -8453,14 +8453,77 @@ def _unified_atomic_bytes(path, data):
         if os.path.lexists(temporary):
             os.unlink(temporary)
 
+
+def unified_pack_or_install(mode):
+    """User-only packaging/install: reuse a matching full code report, no test rerun.
+
+    This is deliberately separate from --full: it replaces the app only,
+    without approving or mutating any managed packages.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'unified_intel_verifier', ROOT / 'tools/verify-migration.py')
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    report = verifier.Report(mode)
+    try:
+        verifier.prerequisites(report)
+        wanted = verifier.signature()
+        matching = verifier.matching_code_report(wanted)
+        if matching is None:
+            raise RuntimeError('Matching complete code check report required before packaging')
+        report.data['checks_report'] = str(matching)
+        report.data['code_checks'] = 'pass'
+        report.save()
+        if mode == 'unified-pack':
+            verifier.package_application(report, wanted)
+            report.data['result'] = 'pass'
+            report.data['exit_code'] = 0
+            report.save()
+            print('Intel package checked; no application or package installation changed.')
+            return
+        if mode != 'unified-install':
+            raise RuntimeError('Unsupported unified bundle mode')
+        # Do not invoke packaging here; verify the artifact already exists.
+        info = verifier.metadata(verifier.BUILT)
+        if str(info.get('CFBundleShortVersionString')) != verifier.VERSION:
+            raise RuntimeError('Built application version does not match source')
+        backend = verifier.BUILT / 'Contents/Resources/app.asar.unpacked/backend'
+        if not backend.is_dir():
+            raise RuntimeError('Packaged backend missing')
+        for relative, sha256 in wanted.items():
+            if relative.startswith('backend/'):
+                path = backend / relative.removeprefix('backend/')
+                if not path.is_file() or verifier.sha(path) != sha256:
+                    raise RuntimeError('Code changed since packaging: ' + relative)
+        product = {'version': verifier.VERSION,
+                   'backend_code_sha256': verifier.backend_digest(backend),
+                   'build_id': 'unified-intel-1.3.4'}
+        live = verifier.find_service()
+        verifier.check_idle(live)
+        old_pid = live[1]['pid'] if live else None
+        verifier.install_packaged(report, live)
+        verifier.command(['/usr/bin/open', str(verifier.APPLICATION)], report,
+                         'open-installed-app', timeout=30)
+        verifier.wait_for_health(report, product, previous_pid=old_pid)
+        report.data['packaged_app'] = 'pass'
+        report.data['result'] = 'pass'
+        report.data['exit_code'] = 0
+        report.save()
+        print('1.3.4 installed and process verified; NO managed packages were changed.')
+    except BaseException as error:
+        report.data.update(result='blocked', error=str(error), exit_code=2)
+        report.save()
+        raise
+
 def unified_foundation_main(mode):
     """Protected, no-package-mutation bundle for independently testable foundations."""
     if mode not in ('unified-check', 'unified-apply', 'unified-restore',
                     'unified-pack', 'unified-install'):
         raise ValueError('Unknown unified bundle operation')
     if mode in ('unified-pack', 'unified-install'):
-        raise RuntimeError('Bundle 004 foundation is not the completed product; '
-                           'pack/install are deliberately blocked pending all phases and checks')
+        unified_foundation_main('unified-check')
+        return unified_pack_or_install(mode)
     outputs = {relative: content.encode('utf-8')
                for relative, content in unified_foundation_outputs().items()}
     manifest_path = UNIFIED_RECOVERY / 'manifest.json'
