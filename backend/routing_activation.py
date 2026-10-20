@@ -128,7 +128,7 @@ def generate(root, transaction_id, phase, commands):
 
 
 def activate(root, logical_id, transaction_id, source_commands, target_commands,
-             *, owned_shims=None):
+             *, owned_shims=None, progress=None):
     """Stage source/target wrappers and publish with one active-pointer switch.
 
     Existing shims are validated *before* any write. Unrelated shims are never
@@ -143,6 +143,10 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
     before_pointer = os.readlink(active) if active.is_symlink() else None
     source = generate(root, transaction_id, "source", source_commands)
     target = generate(root, transaction_id, "target", target_commands)
+    if progress:
+        progress({"state": "generations_ready", "active": str(active),
+                  "source": str(source), "target": str(target),
+                  "previous_pointer": before_pointer, "shims": {}})
     staged = {}
     written = {}
     try:
@@ -163,6 +167,14 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
             _atomic_bytes(shim, content)
             written[name] = {"prior": prior.hex() if prior is not None else None,
                              "after_sha256": hashlib.sha256(content).hexdigest()}
+            if progress:
+                progress({"state": "shim_written", "active": str(active),
+                          "source": str(source), "target": str(target),
+                          "previous_pointer": before_pointer, "shims": dict(written)})
+        if progress:
+            progress({"state": "pointer_switch_pending", "active": str(active),
+                      "source": str(source), "target": str(target),
+                      "previous_pointer": before_pointer, "shims": dict(written)})
         _atomic_link(active, target)
         return {"active": str(active), "source": str(source), "target": str(target),
                 "previous_pointer": before_pointer, "shims": written,

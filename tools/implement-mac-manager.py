@@ -7333,7 +7333,7 @@ def generate(root, transaction_id, phase, commands):
 
 
 def activate(root, logical_id, transaction_id, source_commands, target_commands,
-             *, owned_shims=None):
+             *, owned_shims=None, progress=None):
     """Stage source/target wrappers and publish with one active-pointer switch.
 
     Existing shims are validated *before* any write. Unrelated shims are never
@@ -7348,6 +7348,10 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
     before_pointer = os.readlink(active) if active.is_symlink() else None
     source = generate(root, transaction_id, "source", source_commands)
     target = generate(root, transaction_id, "target", target_commands)
+    if progress:
+        progress({"state": "generations_ready", "active": str(active),
+                  "source": str(source), "target": str(target),
+                  "previous_pointer": before_pointer, "shims": {}})
     staged = {}
     written = {}
     try:
@@ -7368,6 +7372,14 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
             _atomic_bytes(shim, content)
             written[name] = {"prior": prior.hex() if prior is not None else None,
                              "after_sha256": hashlib.sha256(content).hexdigest()}
+            if progress:
+                progress({"state": "shim_written", "active": str(active),
+                          "source": str(source), "target": str(target),
+                          "previous_pointer": before_pointer, "shims": dict(written)})
+        if progress:
+            progress({"state": "pointer_switch_pending", "active": str(active),
+                      "source": str(source), "target": str(target),
+                      "previous_pointer": before_pointer, "shims": dict(written)})
         _atomic_link(active, target)
         return {"active": str(active), "source": str(source), "target": str(target),
                 "previous_pointer": before_pointer, "shims": written,
@@ -7918,8 +7930,12 @@ def _target_ready(s, plan):
         raise MigrationConflict("target_installation_missing")
     expected = plan["target"]["version"]
     observed = root["installed_version"]
-    if compare_upstream(observed.split("_")[0], expected) != 0:
-        raise MigrationConflict("target_version_mismatch")
+    expected_revision = str(plan["target"].get("revision") or "0")
+    wanted = expected + ("_" + expected_revision if expected_revision != "0" else "")
+    if (observed != wanted or root.get("installed_variants", "") !=
+            next((n.get("variants", "") for n in plan["target"]["graph"]
+                  if n["name"] == profile.ports[0]), "")):
+        raise MigrationConflict("target_version_or_variant_mismatch")
     smoke = profiles.smoke(s, profile, expected)
     return smoke
 
@@ -7964,6 +7980,7 @@ def _compensate(s, journal, directory):
         backup, _ = _verify_backup(journal)
         if os.path.lexists(source):
             raise MigrationConflict("source_path_changed_independently")
+        source.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(backup, source, symlinks=True, copy_function=shutil.copy2)
         if _manifest(source) != _manifest(backup):
             raise MigrationConflict("restored_source_hash_mismatch")
@@ -7998,10 +8015,15 @@ def _run(s, journal, directory, *, resume=False):
         if not journal.get("activation"):
             _source_still_safe(s, plan_data)
             _phase(journal, directory, "activate", "started")
+            def routing_progress(state):
+                journal["activation_pending"] = state
+                _write(directory / "journal.json", journal)
             journal["activation"] = routing.activate(
                 s.TOOLS_ROOT, profile.name, journal["transaction_id"],
                 plan_data["source"]["commands"], plan_data["target"]["commands"],
-                owned_shims=plan_data.get("owned_shims"))
+                owned_shims=plan_data.get("owned_shims"),
+                progress=routing_progress)
+            journal.pop("activation_pending", None)
             _phase(journal, directory, "activate", "finished")
         _phase(journal, directory, "cleanup", "started")
         source_keg = Path(plan_data["source"]["keg"])
@@ -8047,9 +8069,16 @@ def _run(s, journal, directory, *, resume=False):
         # Before cleanup, compensate only ownership-controlled route files.
         if journal.get("stage") in ("backup", "install", "verify", "activate"):
             try:
-                if journal.get("activation"):
-                    routing.restore(s.TOOLS_ROOT, journal["activation"])
+                activation = journal.get("activation")
+                if not activation:
+                    pending = journal.get("activation_pending") or {}
+                    if pending.get("state") == "pointer_switch_pending":
+                        activation = pending
+                if activation:
+                    routing.restore(s.TOOLS_ROOT, activation)
                     journal["activation_rolled_back"] = True
+                elif journal.get("activation_pending"):
+                    raise MigrationConflict("activation_interrupted_needs_manual_recovery")
                 journal["status"] = "rolled_back"
             except BaseException as rollback:
                 journal["compensation_error"] = str(rollback)
