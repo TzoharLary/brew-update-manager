@@ -9,7 +9,7 @@ Read [the product goal](PRODUCT_GOAL.md) for the user's current requirements and
 decisions replace earlier designs requiring a separate approval for each migration
 or full test runs by the coding agent before handing the user a test script.
 
-## Current development source — 1.3.4, HEAD 555ae7b (2026-10-20)
+## Current development source — 1.3.4, Stage 3 (2026-10-20)
 
 This section supersedes older 1.3.3 runtime descriptions below; the installed Mac
 application has **not** been inspected or changed as part of this source review.
@@ -19,10 +19,12 @@ application has **not** been inspected or changed as part of this source review.
   Revisions are compared only within the same provider. Unknown/missing T02 evidence
   or time-limited Pixi discovery leaves an explicit blocker rather than guessing.
 - Managed Pixi updates remain separate from cross-provider migration.
-- `migration_engine.py` implements a Homebrew-to-Pixi transaction path gated to
-  fixed `jq`/`pandoc` profiles with preflight, functional smoke, ownership and
-  compensation; **`unified_updates._pixi_bridge` still advertises these migrations
-  as not executable**, so cross-provider Pixi update-button selection is not complete.
+- The Homebrew→Pixi transaction engine is connected to the selector for **only**
+  fixed `jq`/`pandoc` profiles with current T02 evidence and verified, persisted
+  migration plans. Selection requires plan ID/fingerprint. Execution checks exact
+  provider, source package revision, locked closure and generation; final approval
+  re-discovers Pixi and fails closed on drift. This is tested in focused fixtures,
+  **not** live Intel Mac acceptance. All other Pixi migration profiles stay blocked.
 - Existing Homebrew→MacPorts profile migration and recovery code remains guarded;
   legacy update routes and old per-migration UI still require review.
 - Current focused [CI 39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017)
@@ -144,4 +146,4 @@ See [unified implementation status](UNIFIED_IMPLEMENTATION_STATUS.md). The insta
 
 ## Current 1.3.4 development branch (2026-10-20)
 
-Historical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Mapped provider discovery and a fixed-profile Pixi migration engine were subsequently added in T04. The Pixi selection bridge, legacy bypass paths, failure suites and native Mac acceptance remain open. No release or local install.
+Historical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Mapped provider discovery and a fixed-profile Pixi migration engine were subsequently added in T04. The fixed-profile Pixi selection bridge is now coded; legacy bypass paths, failure/recovery suites and native Mac acceptance remain open. No release or local install.
