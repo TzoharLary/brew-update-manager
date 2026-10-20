@@ -107,3 +107,8 @@ backup and manifest under `recovery/documentation-direction-2026-10-20/`.
 Restore refuses subsequent independent edits. Existing bundles keep their old
 manifests; their hash checks may correctly reject these newer documentation
 files. Adapt the next implementation/verification bundle to the current baseline.
+
+
+## Branch 1.3.4 — implementation in progress
+
+See [unified implementation status](UNIFIED_IMPLEMENTATION_STATUS.md). The installed 1.3.3 application is unchanged; source and fixtures on the feature branch have not passed user acceptance.
