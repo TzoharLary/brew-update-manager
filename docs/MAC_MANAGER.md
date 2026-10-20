@@ -1,61 +1,108 @@
-# Mac Update Manager
+# Mac Update Manager — implementation and product direction
 
-Homebrew formulae/casks, MacPorts active ports and existing isolated tool installs
-share one inventory. `kind=port` unambiguously identifies MacPorts in the existing
-selection API; legacy formula/cask requests remain Homebrew identities.
+Updated 2026-10-20. Source version: 1.3.3. This documentation-only review did not
+query a live service or rerun product tests. The installed build and package state
+must not be inferred from package.json alone.
 
-MacPorts executes only binary installs/upgrades. Every action resolves exact
-runtime archives on the current OS/architecture and checks archive plus signature
-availability. MacPorts verifies downloaded signatures. Missing archives, unknown
-variants and uncertain metadata block the action. A scan uses the local catalog;
-the explicit MacPorts refresh button requests macOS admin authorization to sync.
+Read [the product goal](PRODUCT_GOAL.md) for the user's current requirements and
+[the task record](MAC_MANAGER_TASKS.md) for status and acceptance criteria. Those
+decisions replace earlier designs requiring a separate approval for each migration
+or full test runs by the coding agent before handing the user a test script.
 
-POST /api/migrations/plan {name} returns a 15-minute, exact-graph approval plan.
-POST /api/migrations/approve {id} revalidates and executes terminal-notifier only.
-Other mapped tools require project/consumer migration; update-all never migrates.
-POST /api/macports/sync refreshes the catalog with administrator authorization.
-All operations share the existing exclusive-operation lock and cancellation state.
+## Required user flow — not yet complete
 
-The application keeps its existing dedicated notification helper and notification
-permission identity. MacPorts owns the terminal-notifier CLI; its default bundle
-ID is not substituted for the application's already authorized delivery helper.
-Retrying a failed verification reuses an exact, already installed MacPorts port.
+Start Check discovers updates and compares supported providers for native Intel
+macOS. Select the newest suitable upstream version with a ready binary runtime
+closure. Retain the existing owner on an otherwise equal route. Homebrew, MacPorts
+and Pixi participate as their execution routes are implemented and verified.
 
-The app ID, legacy data/profile paths, updater repository, notification group and
-launch-agent identity remain stable. The visible product name is Mac Update Manager.
-ngrok stays excluded. User settings, data and unmanaged paths are preserved.
+Show installed/target versions, current/executing provider and the reason. A source
+provider change is visible before the user clicks Update selected/all. That click
+authorizes the displayed actions; there is no separate per-package migration
+wizard. macOS may still require administrator credentials. Revalidate before any
+change; a materially changed proposal returns for updated selection.
 
-Run tools/implement-mac-manager.py check|apply|verify|pack|install|pilot|restore.
-All source changes are embedded in that script. Its recovery manifest preserves
-the exact previous dirty files, and restore refuses files edited after application.
-The install and pilot stages require successful verification in the same process.
-No system package or service is migrated by apply/verify/pack.
+After successful migration, persist provider ownership and discover future versions
+from that provider even without the Homebrew copy. Unknown metadata is unverified,
+not absent. Unsupported migration blocks the affected package with a reason.
+Never silently build from source, downgrade, or discard exclusions and user data.
 
-Root operations create receipts and logs in root-owned /private/tmp/mac-manager.*
-directories. A canceled admin prompt fails without installation. Cancellation of
-an active root port command uses a separate macOS authorization to stop its tree.
-Incomplete migration journals remain visible for review; they never auto-resume.
+## Existing inventory and update paths
 
+Homebrew formulae/casks, active MacPorts ports and existing isolated tools share
+an inventory. `kind=port` identifies MacPorts in the selection API; legacy
+formula/cask requests remain Homebrew identities. Existing Pixi-managed tools
+do not establish general Pixi alternative discovery or migration support.
 
-## 1.2.4 check progress
+MacPorts preflight resolves runtime archives for the current OS/architecture and
+checks archive/signature availability. Installation uses MacPorts' binary mode
+and signature verification. Availability alone does not prove a working migration.
+Catalog refresh and cache handling exist; provider freshness and error behavior
+still need regression coverage when integrated into the common selection policy.
 
-Each combined scan resets old update results and reports Homebrew, MacPorts, and route checking separately. Cancellation stops tracked commands and preserves the previous complete snapshot. Provider errors remain visible as partial results; failure of both providers is reported as an error. Finished operations show no current item.
+Combined scans report provider stages and preserve partial errors. Version 1.3.2
+introduced final progress in operation responses, retained terminal results,
+protection against old responses and unverified status after communication loss.
+Inventory evidence separates manager versions, active keg, receipt, PATH and
+upstream/revision. Only explicitly configured commands, initially LLVM clang,
+are probed. Evidence conflicts block affected decisions.
 
+T02 classifies candidate roles using receipts, reverse dependencies, files,
+interfaces, services and bounded linkage checks. Private projects are not scanned.
+Evidence is stored in `migration-evidence` under the application data directory.
+A standalone classification does not itself authorize execution.
 
-## 1.3 automatic alternative checks
+## Existing migration APIs — internal/legacy path
 
-Start Check refreshes the MacPorts catalog when its last verified sync or local index is older than 24 hours. Foreground scans request macOS authorization only when needed; scheduled checks report awaiting authorization and never open an unattended prompt. Failed or declined refresh keeps local inventory visible as unverified. All mapped Homebrew binary blockers are checked together, including full runtime closures. Shared exact archives are checked once; available results expire after six hours and missing observations after thirty minutes. Unknown network results are not reused. Availability is not installation/signature verification or migration approval. Only the supported terminal-notifier pilot can execute a reviewed migration; other available alternatives explicitly require consumer migration plans. Unknown mappings are displayed as unverified, not absent. Regular update actions never migrate packages.
+- `POST /api/migrations/plan {name}` creates a proposal.
+- `POST /api/migrations/approve {id}` executes a supported proposal.
+- `POST /api/migrations/recovery-plan {transaction_id, action}` creates a recovery
+  proposal; the current engine does not execute resume/rollback through approve.
+- `POST /api/macports/sync` requests catalog refresh with macOS authorization.
 
+The old terminal-notifier implementation remains separate. The 1.3.3 additions
+delegate other names to `migration_engine.py`; `migration_profiles.py` defines
+terminal-notifier and include-what-you-use profiles. This is partial groundwork,
+not a completed common transaction engine. Current update-all does not perform
+general cross-provider migrations. See [the T03 review](T03_VALIDATION.md).
 
-## 1.3.1 installed-version baseline
+The current engine writes plans and transactions under `DATA_DIR/migrations/`
+and a route record under `TOOLS_ROOT/migrations/routes.json`. A written route
+does not prove shims were activated or future provider upgrades are integrated.
+Do not put MacPorts ownership into the legacy installed.json tool registry and
+thereby manufacture a duplicate installed tool.
 
-Alternative updates compare the mapped MacPorts upstream component versions with the actual Homebrew installation, not with Homebrew latest. All mapped components must avoid a downgrade and at least one must be newer. A version below Homebrew latest can qualify after complete binary closure checks; it is never described as the last Intel-supported release without upstream evidence. Equal upstream versions and unknown comparisons remain distinct from updates. Cached recommendations are invalidated on policy or installed-version changes. Every approved migration repeats the same policy with a fresh inventory. The primary action is labeled Update all / עדכן הכול.
+The existing notification helper, permission identity, app/data/profile identity,
+launch agent, exclusions (including ngrok), settings and history must remain stable.
 
+## Validation and delivery
 
-## 1.3.2 operation results and installation evidence
+The coding agent implements code/tests and performs only focused lightweight
+checks appropriate to the edit. The user runs the full suite and acceptance
+script; inspect its saved report and avoid rerunning unchanged suites needlessly.
+Full unrun checks must be reported as pending. Isolated checks must not mutate
+real packages; real acceptance shows the actions and asks for one overall approval.
 
-Operation responses include a final progress copy captured before the operation lock is released. Completed, partial, canceled and failed reports remain visible independently of the busy overlay. Unreachable service status is unverified, never inferred success.
+`tools/verify-migration.py` currently has `--checks` and an IWYU-only acceptance
+mode. It is not yet the complete script for the required product flow. Its
+limitations and the distinction between historical runs and future validation
+are recorded in T03_VALIDATION.md. Do not recommend a real migration until its
+preflight, activation, rollback and acceptance gaps are resolved.
 
-Homebrew inventory reconciles manager metadata with active opt links and local receipts, including retained Cellar installations omitted by brew info. Upstream version, package revision, inactive receipt gaps and PATH command resolution stay separate. Only the explicit LLVM clang probe is executed. Evidence conflicts block the affected installation.
+[The 1.3.2 validation report](T01_T02_VALIDATION.md) preserves historical evidence;
+it does not certify later edits. Local delivery only; no push or release is implied.
 
-Full checks collect local migration classifications independently of binary availability. Installed receipt reverse dependencies, exported interfaces, formula service definitions, registered services, options and bounded Mach-O linkage checks determine service/shared-environment/standalone-candidate/insufficient-information roles. Private projects are not searched. Classification evidence is retained under migration-evidence in the application data directory. A classification never enables migration: only the existing terminal-notifier pilot remains executable. Old classifications are unclassified until fresh evidence is available.
+## Generator and recovery
+
+Product, tests and documentation are generated through
+`tools/implement-mac-manager.py`; edit that script with apply_patch and run terminal
+commands interactively. Preserve dirty work. Never replay legacy apply or
+document-tasks over a newer bundle, reset README, or overwrite recovery manifests
+to silence a precondition failure.
+
+The 2026-10-20 direction update uses `direction-docs-check`, `direction-docs-apply`
+and `direction-docs-restore`. These touch documentation only, with a separate
+backup and manifest under `recovery/documentation-direction-2026-10-20/`.
+Restore refuses subsequent independent edits. Existing bundles keep their old
+manifests; their hash checks may correctly reject these newer documentation
+files. Adapt the next implementation/verification bundle to the current baseline.

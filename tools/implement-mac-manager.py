@@ -4388,9 +4388,496 @@ def t03_main(mode):
  elif mode=='t03-restore':t03_restore()
  else:raise RuntimeError('Unknown bundle 003 mode')
 
+DIRECTION_DOCUMENTS = {
+    'docs/PRODUCT_GOAL.md': '''# מטרת המוצר והחלטות העבודה
+
+עודכן: 20.10.2026, בעקבות הבהרת המשתמש. זהו מקור ההחלטות למימוש הבא.
+מסמך זה מתאר את היעד; מצב המימוש נמצא ב־[מסמך המשימות](MAC_MANAGER_TASKS.md).
+אם תכנון קודם דורש אישור מעבר נפרד לכל חבילה או בדיקות מלאות בידי הסוכן,
+ההחלטות במסמך זה מחליפות אותו.
+
+## חוויית השימוש הנדרשת
+
+1. המשתמש לוחץ ״התחל בדיקה״.
+2. המערכת מזהה התקנות ועדכונים ובודקת את הספקים הרלוונטיים.
+3. לכל חבילה היא בוחרת מסלול עם חבילה מוכנה וכל תלויותיה, המתאים לגרסת
+   macOS ול־Mac Intel, עם הגרסה העדכנית ביותר מבין המסלולים הנתמכים שנבדקו.
+4. התוצאות מציגות גרסה מותקנת, גרסת יעד, ספק נוכחי, ספק מבצע וסיבה לבחירה.
+   מעבר ספק מתוכנן מוצג כחלק מהעדכון לפני הלחיצה.
+5. המשתמש בוחר הכול או חלק ולוחץ ״עדכן הכול״ או ״עדכן נבחרים״.
+   הלחיצה מאשרת את הפעולות המוצגות, כולל המעברים; אין אשף או אישור נוסף
+   לכל חבילה. דרישת סיסמת מנהל מערכת של macOS עשויה להישאר כשנחוצה.
+6. המערכת מתקינה, מאמתת ומסכמת מה עודכן, מה דולג ומה נכשל, עם הסיבה.
+7. מעבר מוצלח נשמר: בסריקה הבאה ובפתיחה מחדש החבילה מזוהה אצל הספק החדש,
+   והעדכון הבא נבדק מולו, גם כשעותק Homebrew כבר אינו קיים.
+
+## מדיניות הבחירה
+
+- היעד הנוכחי הוא Mac Intel אמיתי. אין להרחיב קבלה ל־Apple Silicon/Rosetta
+  כחלק מהעבודה הזאת. המנגנון כללי למחשבי Intel, בלי רשימת התקנות של משתמש
+  מסוים, גרסאות קבועות או נתיבי משתמש מקובעים.
+- Homebrew, MacPorts ו־Pixi הם ספקים רצויים. קיימת תמיכה חלקית בלבד כיום;
+  אין להציג יעד מוצר כאילו כל הספקים כבר תומכים במעבר כל חבילה.
+- מסלול דורש התאמת זהות החבילה, ארכיטקטורה, מערכת, גרסה וכל תלויות ההרצה.
+  זמינות קובץ בלבד אינה מספיקה. אין נפילה לבנייה מקוד מקור.
+- מבין מסלולים שניתן לבצע ולבדוק, לבחור בגרסת upstream החדשה המתאימה
+  ביותר; לא לדרוש התאמה ליעד Homebrew כשאינו מסופק בינארית. אין ירידה בגרסה.
+  revisions נבדקים בתוך ספק; אין להשוות מספרי אריזה בין ספקים כגרסאות תוכנה.
+- בשוויון גרסה והתאמה, לשמר את הספק שכבר מנהל את ההתקנה כדי למנוע מעברים
+  מיותרים. כשאין לו מסלול מתאים או כשיש חלופה חדשה מתאימה, לבדוק חלופות מחדש.
+- רישום ספק חדש מתבצע אחרי אימות הצלחה, ומייצג בעלות; הגרסה והעדכניות
+  ממשיכות להגיע מהמלאי והקטלוג החיים של הספק, ולא מרשומה שמורה בלבד.
+- כשל תקשורת או מידע חסר יוצגו כלא מאומתים, ולא כ״אין חבילה״.
+- מסלול לא נתמך או תלויים/שירותים שלא טופלו יחסמו רק את החבילה המושפעת,
+  עם סיבה ברורה. פישוט הממשק אינו הרשאה להסיר התקנה בלי אימות ושחזור.
+- לשמר החרגות, ובפרט ngrok, הגדרות, תזמון, היסטוריה וזהות הרשאת ההתראות.
+  אין לסרוק פרויקטים פרטיים או לחסום רק בשל אפשרות לסקריפט פרטי.
+
+## משמעות הפיילוטים
+
+`terminal-notifier` ו־`include-what-you-use` הם מקרי בדיקה טכניים למעבר.
+הם אינם המטרה העסקית ואינם תפריט שהמשתמש צריך ללמוד. הצלחתם אינה הוכחה
+למעבר ספריות, שירותים או כל חבילה אחרת. לא מחליפים פיילוט או מעבירים חבילה
+אמיתית בזמן פיתוח תיעוד או קוד בלי ההרשאה המתאימה.
+
+## חלוקת העבודה בבדיקות
+
+- הסוכן מממש קוד, כותב בדיקות ומרכז אותן בסקריפט. במהלך הפיתוח מבצע רק
+  אימות קצר וממוקד הנדרש לשינוי, כגון תחביר, תקינות קישורים או בדיקה נקודתית.
+- המשתמש מריץ בפקודה אחת את חבילת הבדיקות המלאה: Python, HTTP, ממשק,
+  רגרסיות, אריזה/קבלה לפי השינוי, ודוח שמור. אין להריץ את כולן מראש ואז
+  למסור למשתמש סקריפט שחוזר על אותה עבודה, בלי בקשה מפורשת ממנו.
+- בדיקות מבודדות אינן משנות חבילות או הגדרות אמיתיות. פעולה אמיתית בסקריפט
+  דורשת הצגת הפעולות ואישור כולל אחד. ההפרדה היא שלב בטיחות בסקריפט הקבלה,
+  ואינה דרישה לאישורי מעבר נוספים בממשק העדכון הרגיל.
+- הדוח יבדיל בין בדיקות קוד, סימולציה ואימות במחשב, ויתעד גרסאות וחתימות,
+  כשל, דילוג או מצב לא מאומת. דילוג אינו PASS; ניתוק אינו הוכחת הצלחה או כשל.
+- קוראים את הדוח ומתקנים כשלים ממוקדים. אין להריץ מחדש הכול כשאותו קוד כבר
+  נבדק, אלא אם שינוי או כשל מצדיקים זאת. עלות הטוקנים הקודמת לא נמדדה.
+- מסירה ללא ריצת המשתמש תסומן ״מימוש נמסר; בדיקות מלאות טרם הורצו״.
+  אין לטעון שהמטרה הושגה לפני דוח שמוכיח את תנאי הקבלה הרלוונטיים.
+
+## גבול המצב הנוכחי
+
+גרסת המקור היא 1.3.3. קיימים מלאי משולב, מסלולי עדכון, סיווג מועמדות
+ותשתית מעבר חלקית. עדיין צריך לחבר בחירת ספק, מעבר ושמירת בעלות למסלול
+״עדכן נבחרים/הכול״ ולחבר Pixi לגילוי ולבחירה הכלליים.
+הסקריפט הקיים `tools/verify-migration.py` מוגבל לפיילוט T03; הוא אינו
+בדיקת הקבלה הכוללת ליעד המתואר כאן. פירוט ב־[דוח T03](T03_VALIDATION.md).
+''',
+    'docs/MAC_MANAGER_TASKS.md': '''# מנהל עדכוני Mac — משימות והמשך עבודה
+
+עודכן: 20.10.2026 לאחר הבהרת המטרה וחלוקת הבדיקות עם המשתמש.
+גרסת המקור: 1.3.3 לפי package.json. בעדכון תיעוד זה לא נבדקה אפליקציה חיה
+ולא הורצו בדיקות מוצר. תוצאות קודמות הן תוצאות היסטוריות בלבד.
+
+## המטרה המחייבת
+
+בדיקה אחת → בחירת ספק אוטומטית לפי חבילה מוכנה וגרסה מתאימה ל־Mac Intel →
+בחירת חבילות → לחיצה על עדכון → ביצוע ושמירת הספק החדש לאחר מעבר מוצלח.
+המעבר הוא חלק מהעדכון המוצג למשתמש, בלי אישור נוסף לכל חבילה.
+
+[מטרת המוצר והחלטות העבודה](PRODUCT_GOAL.md) היא המסמך המחייב.
+[תיעוד המימוש](MAC_MANAGER.md) מתאר את הקוד הקיים והפערים מול המטרה.
+אין לפרש קיום קובץ או API כהשלמת מעבר אמיתי, שחזור או חוויית העדכון הרצויה.
+
+## תמונת מצב
+
+| משימה | מצב | מה הוכח ומה חסר |
+| --- | --- | --- |
+| T01 — אמינות מצב ומלאי | הושלמה לפי דוח 1.3.2 | חיווי סופי, טיפול בתשובות ישנות, receipts וקגים; תיקון LLVM עצמו פתוח ב־T06 |
+| T02 — סיווג מועמדות | הושלמה לפי דוח 1.3.2 | כלי/ספרייה/שירות/חסר מידע עם ראיות; סיווג אינו היתר ביצוע |
+| T03 — מעבר ובעלות מתמשכת | מומשה חלקית, פתוחה | נוספו מנוע ופרופילים ב־1.3.3; הפעלה, שחזור, רגרסיות ומעבר אמיתי אינם מוכחים במלואם |
+| T04 — Pixi ובחירת ספקים | פתוחה | סביבות פרטניות קיימות; גילוי ובחירה כלליים עוד נדרשים |
+| T05 — מסלולים רשמיים | המשך, עדיפות נמוכה | רק אחרי מסלול Homebrew/MacPorts/Pixi הרגיל; אין להרחיב עכשיו ללא צורך |
+| T06 — חבילות חסומות | פתוחה | ממצאים היסטוריים לאימות; תיקון נפרד לכל חסם מבוסס |
+| T07 — עדכון אחיד ובדיקות בפקודה | פתוחה, עדיפות מיידית עם T03/T04 | אין עדיין זרימה כללית מוכחת של בחירת ספק, עדכון ושמירת בעלות |
+
+## החלטות עבודה
+
+- Intel, חבילות בינאריות וכל תלויותיהן; בלי נפילה לבניית מקור או ירידה בגרסה.
+- Homebrew, MacPorts, Pixi לפי התאמה. בשוויון לשמר ספק; לבחור גרסה חדשה
+  מתאימה ממסלול נתמך ולבדוק מחדש חלופה כשהספק הקיים אינו נותן מענה.
+- לחיצת עדכון מאשרת את הפעולות המוצגות, כולל מעבר ספק. דרישת הרשאת macOS
+  כשנחוצה אינה אישור מעבר נוסף שהאפליקציה צריכה להמציא.
+- לשמור ngrok מוחרג, הגדרות, היסטוריה, תזמון וזהות התראות. לא לחפש פרויקטים
+  פרטיים; אפשרות לסקריפט פרטי אינה חסם. תלויים מתועדים ושירותים דורשים טיפול.
+- כל שינוי מוצר, בדיקות ותיעוד מופק דרך `tools/implement-mac-manager.py`;
+  את הסקריפט עורכים ב־apply_patch. כל פקודות הטרמינל בסשן אינטראקטיבי.
+- לשמר את העבודה הלא מחויבת והגיבויים. אין להפעיל apply/document-tasks ישנים
+  כדי לתקן תיעוד, ואין לאפס README או מניפסט קודם בגלל כשל תנאי קדם.
+- הסוכן יבצע אימות קצר וממוקד בלבד; המשתמש יריץ את הבדיקות המלאות בסקריפט.
+  הוראה זו מחליפה את החלוקה הישנה שבה הסוכן הריץ הכול והמשתמש רק פיילוט.
+
+## T01 — אמינות מצב הפעולה והמלאי
+
+**מניע:** למנוע ״ממתין״ או טעינה אחרי סיום, והחלטות על בסיס גרסה שאינה פעילה.
+**מצב:** הושלמה לפי [ראיות 1.3.2](T01_T02_VALIDATION.md), 20.10.2026.
+
+- [x] תוצאה סופית שאינה נמחקת ב־finally, ברענון או בשינוי שפה.
+- [x] סיכום עדכונים, כשל, ביטול ודילוגים, לרבות אפס התקנות והכול נדחה.
+- [x] התייחסות לתשובות ישנות, ניתוק ובדיקה במקביל לעדכון.
+- [x] הפרדת גרסה מדווחת, קג פעיל, receipt, נתיב פקודה ו־revision.
+
+**המשך:** לשמר ברגרסיות. אין להסיק מדוח 1.3.2 שקוד 1.3.3 כולו נבדק.
+תיקון clang/LLVM שהתגלה אינו כלול בסגירת T01.
+
+## T02 — סיווג מועמדות למעבר
+
+**מניע:** לדעת מה אפשר להעביר ככלי עצמאי ומה דורש טיפול בתלויים/שירותים.
+**מצב:** הושלמה לפי [ראיות 1.3.2](T01_T02_VALIDATION.md), 20.10.2026.
+
+- [x] איסוף ראיות מקומי ותלויים, בלי חיפוש בפרויקטים פרטיים.
+- [x] סיווג עצמאי / ספרייה או סביבה משותפת / שירות / חסר מידע.
+- [x] נימוק, פער מידע וראיות, בנפרד מזמינות בינארית ומיכולת ביצוע.
+
+**המשך:** להשתמש באותו איסוף לפני ביצוע; סיווג שמור אינו תחליף לאימות עדכני.
+
+## T03 — השלמת המעבר ושמירת הספק
+
+**מניע:** חלופה שמופיעה ברשימה צריכה להפוך לעדכון עובד, עם בעלות עקבית.
+**מצב:** תשתית חלקית קיימת; [סקירת הפערים](T03_VALIDATION.md). פתוחה.
+
+- [x] נוספו migration_engine.py ו־migration_profiles.py, תוכניות ויומני עסקה.
+- [x] נוסף מסלול קוד ל־IWYU לצד פיילוט ההתראות הישן; אין בכך הוכחת קבלה.
+- [ ] לאמת נתונים עדכניים מאיסוף T02 משותף, שינוי תוכנית, החרגות ונעילה בין תהליכים.
+- [ ] להשלים גיבוי מאומת, ביטול, המשך ו־rollback אמיתיים בלי דריסת שינוי עצמאי.
+- [ ] להשלים הפעלת פקודות, בעלות על shims ובדיקת PATH ושימוש לפני הסרת מקור.
+- [ ] להשלים רישום ספק רק אחרי הצלחה, ללא רשומת tool כפולה מול מלאי MacPorts.
+- [ ] לגלות עדכונים עתידיים דרך הספק החדש ולהריץ בדיקת שימוש אחרי עדכונו.
+- [ ] לשמר helper וזהות התראות קיימים; אין להעביר LLVM כחלק מפיילוט IWYU.
+- [ ] לחבר את המעבר לביצוע העדכונים הנבחרים ב־T07, ללא אשף אישור נוסף.
+
+**תנאי השלמה:** דוח המשתמש מוכיח מעבר נתמך, אימות שימוש, גיבוי ושחזור מבוקר,
+ומלאי ועדכון מהספק החדש אחרי פתיחה מחדש. בדיקות כשל מבודדות עוברות.
+הפיילוטים הם ראיות הנדסיות בלבד; הם אינם הגדרת המוצר או משימה שהמשתמש צריך לנהל.
+
+## T04 — גילוי Pixi ובחירת ספק אוטומטית
+
+**מניע:** לבחור מסלול Intel מתאים מכל הספקים הנתמכים, מעבר למיפויי MacPorts.
+**מצב:** פתוחה; Ansible/Pandoc במסלולים קיימים אינם הוכחה למנגנון הכללי.
+
+- [ ] להגדיר מודל הצעה משותף: זהות תוכנה, בעלים נוכחי, ספק מבצע, גרסאות,
+  התאמה למערכת, סגירת תלויות, זמינות בינארית, יכולת ביצוע ונימוק בחירה.
+- [ ] לחבר Homebrew bottles, MacPorts archives ו־Pixi osx-64 למודל זה;
+  לפתור תלויות ולאמת קבצים ומטא־נתונים, תוך שמירת כשל ספק כמידע חלקי.
+- [ ] לבחור את הגרסה המתאימה החדשה ביותר מבין המסלולים שניתנים לביצוע;
+  בשוויון לשמר בעלים, בלי downgrade ובלי השוואת revisions בין ספקים.
+- [ ] לחבר ביצוע Pixi למנגנון המעבר ולשמור סביבות ונתיבים קיימים.
+- [ ] לשמור בעלות ולבדוק עדכון עתידי גם כשאין עותק Homebrew.
+
+**תנאי השלמה:** סריקה רגילה מציגה בחירה ונימוק; עדכון נבחר מתבצע בספק שנבחר,
+ונשמר לאחר פתיחה מחדש. חבילה חסומה לא מפילה חבילות עם מסלול תקין.
+
+## T05 — ספקים רשמיים עצמאיים
+
+**מניע:** לתת מענה עתידי כשמנהלי החבילות אינם מספקים מסלול Intel מתאים.
+**מצב:** פתוחה, אחרי זרימת העדכון המרכזית; אין הרחבת מימוש אוטומטית במסגרת T03.
+
+- [ ] לבדוק מסלול רשמי רק לחבילה שנדרש עבורה פתרון; Nmap הוא ממצא היסטורי.
+- [ ] להגדיר גילוי גרסה, אימות קובץ, התקנה, שימוש, בעלות ועדכון עתידי.
+
+**תנאי השלמה:** מסלול נתמך שנבדק מקצה לקצה; קישור הורדה אינו מסלול שהושלם.
+
+## T06 — טיפול בחסמים קיימים
+
+**מניע:** לטפל במקרים שהמנגנון הכללי עדיין אינו יכול לבצע ולהציג סיבה מדויקת.
+**מצב:** פתוחה. הממצאים הבאים היסטוריים ודורשים אימות לפני שינוי התקנות.
+
+- [ ] LLVM: בדוח 1.3.2 הקג הפעיל 22.1.5, עותק 23.1.3_2 ללא receipt,
+  ו־clang נכשל בגלל Z3 חסר. תיקון נפרד; לא להחליף ספריות ABI באופן שרירותי.
+- [ ] Poppler/Pixi: תועד פתרון תלויות osx-64, לא התקנה או בדיקת שימוש.
+- [ ] libunistring: לבחון מחדש חסם משותף לחבילות שנמצאו, בלי ערבוב ספקי ספריות.
+- [ ] לאמת זמינות ומיפויים של nmap, socat, libtensorflow, merve ו־whisper.cpp.
+- [ ] לספריות ושירותים להכין טיפול בתלויים, ABI, הגדרות ונתונים לפני ביצוע.
+
+**תנאי השלמה:** לכל מקרה עדכני יש פעולה שהוכחה או חסם מתוארך ופעולה הבאה.
+אין חובה מלאכותית למצוא עדכון לכל התקנה או להעביר ספרייה במסלול כלי עצמאי.
+
+## T07 — עדכון נבחרים/הכול וסקריפט בדיקות אחד
+
+**מניע:** המשתמש מפעיל בדיקה ועדכון; המערכת מטפלת בבחירת ספק ובמעבר.
+**מצב:** פתוחה. כפתור ״עדכן הכול״ הקיים אינו מממש עדיין את הזרימה הכללית.
+
+- [ ] להציג ברשימה אחידה מקור, יעד, ספק מבצע, סיבת בחירה ומעבר מתוכנן.
+- [ ] להעביר את כל החבילות הנבחרות לאותו מתכנן וביצוע, גם כשנדרש מעבר ספק.
+- [ ] הלחיצה על עדכון מאשרת את הפעולות המוצגות; לבטל דרישת אישור מעבר נפרד.
+  שינוי מהותי מאז התצוגה יוחזר לסקירת הבחירה המעודכנת לפני שינוי התקנות.
+- [ ] להציג חסם רק לחבילה המושפעת, ולשמר תוצאה סופית, ביטול ושתי שפות.
+- [ ] להכין פקודה אחת לבדיקות המלאות שהמשתמש מריץ: בדיקות קוד מבודדות,
+  HTTP, ממשק ורגרסיות; ואימות אמיתי לאחר הצגת הפעולות ואישור כולל אחד.
+- [ ] לשמור דוח וחתימות, להפריד סימולציה ואימות מחשב, ולא לסמן דילוג כעובר.
+- [ ] לקשור דוח לתוכן שנבדק; לבנות/להתקין רק בהתאם למצב בדיקות מוכח,
+  לשמור אפליקציה והגדרות קודמות, ולא להחליף בזמן פעולה פעילה.
+
+**תנאי השלמה:** דוח המשתמש מוכיח בדיקה → בחירה → עדכון במספר ספקים → סיכום →
+פתיחה מחדש ועדכון אצל הספק הנכון. לשמר החרגות, היסטוריה וזהות התראות.
+הסקריפט הנוכחי של IWYU אינו בדיקת קבלה כזו; אין למסור את פקודתו כהשלמת היעד.
+
+## סדר העבודה הבא
+
+1. להגדיר מודל הצעה ובחירה ובעלות משותף (T04/T03), תוך שימוש בקוד שכבר קיים.
+2. להשלים הפעלה ושחזור במנוע לפני הסרת מקור אמיתית (T03).
+3. לחבר את הבחירה והמעבר לכפתורי עדכן נבחרים/הכול (T07), ואז להשלים ספק Pixi (T04).
+4. להכין את הבדיקות והסקריפט יחד עם המימוש; הסוכן מבצע אימות ממוקד בלבד.
+5. למסור למשתמש פקודה אחת, לקרוא את הדוח ולטפל בכשלים; לסגור משימות לפי הראיות.
+6. לקדם חסמים T06 לפי צורך. T05 בהמשך. לא להחליף מטרה בפיילוט נוסף.
+
+## ראיות והמשך בשיחה אחרת
+
+- [דוח T01/T02](T01_T02_VALIDATION.md): בדיקות 1.3.2 ותוצאות 239 התקנות
+  ו־28 מועמדות מהסריקה שתועדה. אלה אינם נתוני מלאי חיים.
+- [דוח T03](T03_VALIDATION.md): מה נוסף ב־1.3.3, מה טרם הוכח ומגבלות הסקריפט.
+- [מלאי 19.10.2026](audit-2026-10-19/README.md) ודוחות binary-preflight,
+  macports-binary-coverage: תמונות מצב היסטוריות, לא החלטות ביצוע נוכחיות.
+- נתוני האפליקציה: `~/Library/Application Support/Homebrew Update Manager/`.
+- גיבויים ודוחות: `~/.local/share/brew-update-manager/recovery/`.
+
+בשיחה הבאה לקרוא PRODUCT_GOAL.md, מסמך זה ו־MAC_MANAGER.md, הוראות AGENTS
+ומצב Git. לשמר שינויים קיימים; לא להפעיל חבילות ישנות מעל הקבצים הנוכחיים.
+לקרוא את דוח המשתמש כשישנו ולהמשיך מהפער המוכח, ללא בדיקות מלאות חוזרות.
+אין לבצע מעבר אמיתי בזמן פיתוח. מסירה מקומית בלבד, בלי push/release.
+
+עדכון התיעוד הנוכחי מופק בפקודת `direction-docs-apply` של הגנרטור, עם גיבוי
+ומניפסט נפרדים תחת `recovery/documentation-direction-2026-10-20/`.
+הוא אינו משנה מניפסטי bundles 001/002/003. בדיקות ישנות שדורשות hash התיעוד
+המקורי עשויות לעצור בצדק; יש להתאים חבילת מימוש חדשה, לא לעקוף את ההגנה.
+''',
+    'docs/MAC_MANAGER.md': '''# Mac Update Manager — implementation and product direction
+
+Updated 2026-10-20. Source version: 1.3.3. This documentation-only review did not
+query a live service or rerun product tests. The installed build and package state
+must not be inferred from package.json alone.
+
+Read [the product goal](PRODUCT_GOAL.md) for the user's current requirements and
+[the task record](MAC_MANAGER_TASKS.md) for status and acceptance criteria. Those
+decisions replace earlier designs requiring a separate approval for each migration
+or full test runs by the coding agent before handing the user a test script.
+
+## Required user flow — not yet complete
+
+Start Check discovers updates and compares supported providers for native Intel
+macOS. Select the newest suitable upstream version with a ready binary runtime
+closure. Retain the existing owner on an otherwise equal route. Homebrew, MacPorts
+and Pixi participate as their execution routes are implemented and verified.
+
+Show installed/target versions, current/executing provider and the reason. A source
+provider change is visible before the user clicks Update selected/all. That click
+authorizes the displayed actions; there is no separate per-package migration
+wizard. macOS may still require administrator credentials. Revalidate before any
+change; a materially changed proposal returns for updated selection.
+
+After successful migration, persist provider ownership and discover future versions
+from that provider even without the Homebrew copy. Unknown metadata is unverified,
+not absent. Unsupported migration blocks the affected package with a reason.
+Never silently build from source, downgrade, or discard exclusions and user data.
+
+## Existing inventory and update paths
+
+Homebrew formulae/casks, active MacPorts ports and existing isolated tools share
+an inventory. `kind=port` identifies MacPorts in the selection API; legacy
+formula/cask requests remain Homebrew identities. Existing Pixi-managed tools
+do not establish general Pixi alternative discovery or migration support.
+
+MacPorts preflight resolves runtime archives for the current OS/architecture and
+checks archive/signature availability. Installation uses MacPorts' binary mode
+and signature verification. Availability alone does not prove a working migration.
+Catalog refresh and cache handling exist; provider freshness and error behavior
+still need regression coverage when integrated into the common selection policy.
+
+Combined scans report provider stages and preserve partial errors. Version 1.3.2
+introduced final progress in operation responses, retained terminal results,
+protection against old responses and unverified status after communication loss.
+Inventory evidence separates manager versions, active keg, receipt, PATH and
+upstream/revision. Only explicitly configured commands, initially LLVM clang,
+are probed. Evidence conflicts block affected decisions.
+
+T02 classifies candidate roles using receipts, reverse dependencies, files,
+interfaces, services and bounded linkage checks. Private projects are not scanned.
+Evidence is stored in `migration-evidence` under the application data directory.
+A standalone classification does not itself authorize execution.
+
+## Existing migration APIs — internal/legacy path
+
+- `POST /api/migrations/plan {name}` creates a proposal.
+- `POST /api/migrations/approve {id}` executes a supported proposal.
+- `POST /api/migrations/recovery-plan {transaction_id, action}` creates a recovery
+  proposal; the current engine does not execute resume/rollback through approve.
+- `POST /api/macports/sync` requests catalog refresh with macOS authorization.
+
+The old terminal-notifier implementation remains separate. The 1.3.3 additions
+delegate other names to `migration_engine.py`; `migration_profiles.py` defines
+terminal-notifier and include-what-you-use profiles. This is partial groundwork,
+not a completed common transaction engine. Current update-all does not perform
+general cross-provider migrations. See [the T03 review](T03_VALIDATION.md).
+
+The current engine writes plans and transactions under `DATA_DIR/migrations/`
+and a route record under `TOOLS_ROOT/migrations/routes.json`. A written route
+does not prove shims were activated or future provider upgrades are integrated.
+Do not put MacPorts ownership into the legacy installed.json tool registry and
+thereby manufacture a duplicate installed tool.
+
+The existing notification helper, permission identity, app/data/profile identity,
+launch agent, exclusions (including ngrok), settings and history must remain stable.
+
+## Validation and delivery
+
+The coding agent implements code/tests and performs only focused lightweight
+checks appropriate to the edit. The user runs the full suite and acceptance
+script; inspect its saved report and avoid rerunning unchanged suites needlessly.
+Full unrun checks must be reported as pending. Isolated checks must not mutate
+real packages; real acceptance shows the actions and asks for one overall approval.
+
+`tools/verify-migration.py` currently has `--checks` and an IWYU-only acceptance
+mode. It is not yet the complete script for the required product flow. Its
+limitations and the distinction between historical runs and future validation
+are recorded in T03_VALIDATION.md. Do not recommend a real migration until its
+preflight, activation, rollback and acceptance gaps are resolved.
+
+[The 1.3.2 validation report](T01_T02_VALIDATION.md) preserves historical evidence;
+it does not certify later edits. Local delivery only; no push or release is implied.
+
+## Generator and recovery
+
+Product, tests and documentation are generated through
+`tools/implement-mac-manager.py`; edit that script with apply_patch and run terminal
+commands interactively. Preserve dirty work. Never replay legacy apply or
+document-tasks over a newer bundle, reset README, or overwrite recovery manifests
+to silence a precondition failure.
+
+The 2026-10-20 direction update uses `direction-docs-check`, `direction-docs-apply`
+and `direction-docs-restore`. These touch documentation only, with a separate
+backup and manifest under `recovery/documentation-direction-2026-10-20/`.
+Restore refuses subsequent independent edits. Existing bundles keep their old
+manifests; their hash checks may correctly reject these newer documentation
+files. Adapt the next implementation/verification bundle to the current baseline.
+''',
+    'docs/T03_VALIDATION.md': '''# T03 — מצב המימוש, ראיות ופערים
+
+עודכן: 20.10.2026 בעקבות הבהרת המשתמש וקריאת הקוד. גרסת המקור: 1.3.3.
+**סטטוס: מומש חלקית; פתוח. אין דוח קבלה למעבר IWYU ברשומת המסירה הקודמת.**
+לא בוצע מעבר אמיתי במסגרת הפיתוח לפי הרשומה הקודמת. בעדכון התיעוד הזה
+לא הורצו בדיקות מוצר ולא נבדק מצב חבילות חי.
+
+## מה קיים
+
+- נוספו `backend/migration_engine.py` ו־`backend/migration_profiles.py`.
+- קיימים מסלול תוכנית ואישור, תוכניות עם schema ופקיעת תוקף, גיבוי קג,
+  התקנת MacPorts, בדיקות שימוש בסיסיות, רישום ניתוב ויומן עסקה.
+- מוגדרים שני פרופילים: terminal-notifier ו־include-what-you-use.
+  בפועל terminal-notifier ממשיך למסלול הישן ב־mac_manager.py.
+- נוסף endpoint לתוכנית recovery וסקריפט `tools/verify-migration.py`.
+- במסירה הקודמת דווח שהורצו בדיקות מבודדות ונארזה/הותקנה 1.3.3.
+  דיווח זה אינו הוכחת עמידה בכל סעיפי התוכנית או בדיקת קבלה אמיתית.
+
+## פערים שנראים בקוד — לא תוצאות הרצת כשל
+
+- `migration_engine.approve` דוחה פעולות recovery; יצירת recovery-plan
+  אינה המשך או rollback. חריגה מסומנת needs_attention ללא פיצוי מלא.
+- שלב activate כותב routes.json אך אינו מפרסם את פקודות הפרופיל דרך
+  ניתוב/shims מנוהלים. postcheck חוזר לנתיבי היעד המפורשים, ולכן אינו
+  מוכיח שהפקודות הרגילות נפתרות ליעד אחרי הסרת Homebrew.
+- הגיבוי בודק hash של receipt בלבד; טרם הושלם אימות כל קובצי הקג,
+  הקישורים, מצב ההפעלה ושחזור שאינו דורס שינוי מאוחר.
+- התכנון קורא סיווג שמור מ־state. נדרש איסוף עדכני משותף ל־T02,
+  השוואת שינויים מהותיים בלבד, מניעת עסקאות כפולות ונעילה בין תהליכים.
+- בדיקות IWYU אינן מממשות את כל חוזה הקבלה: אין הזנת פלט הניתוח
+  ל־fix_includes ב־stdin ואין דרישה מלאה ל־diff ולקוד היציאה הצפוי;
+  נדרשת גם בדיקת התאמת Clang והפעלת שלוש הפקודות בנתיב הרגיל.
+- טרם הושלם חיבור רישום הספק למלאי ולעדכון הבא עם בדיקת שימוש לאחר שדרוג.
+- חיווי capabilities או גרסה ב־health אינו הוכחת recovery פעיל או זהות
+  קוד שנלכדה בתחילת תהליך; בקוד הקיים hash השירות נקרא מהדיסק בבקשת health.
+- אין עדיין זרימה כללית של בחירת ספק ועדכון נבחרים/הכול הכוללת מעבר.
+
+הפערים מחייבים מימוש ואימות לפני הסרת מקור אמיתית. אין להסיק מכך שכל
+התרחישים נכשלו בהרצה; זו סקירת קוד ממוקדת, לא בדיקת קבלה חדשה.
+
+## הסקריפט שנמסר ומגבלותיו
+
+`tools/verify-migration.py --checks` מפנה ל־`t03-verify` בגנרטור:
+בדיקות Python, תחביר, HTTP, שני תרחישי Electron ו־git diff --check.
+זהו המסלול המבודד הקיים; בעדכון התיעוד הזה הוא לא הורץ.
+
+`--acceptance --pilot include-what-you-use` הוא מסלול קבלה ייעודי לפיילוט:
+בדיקת health בסיסית, תוכנית דרך API, YES, ביצוע, לכידת state וניסיון
+פתיחה מחדש. הוא אינו מריץ את כל הבדיקות או מממש את כל שלבי תוכנית הקבלה,
+לרבות התאמת חתימות מלאה, גיבוי מצב בסיס, ממשק בשתי שפות ואימות שימוש מחדש.
+לכן אין להציג את הפקודה כפתרון הקבלה המלא ואין להמליץ לבצע מעבר לפני השלמת הפערים.
+
+הסקריפט שומר summary.json ו־summary.md תחת
+`~/.local/share/brew-update-manager/recovery/t03-1.3.3/`.
+לאחר עדכון תיעוד עצמאי, `t03-verify` עלול לעצור בשל hash ישן של מסמך
+ב־bundle 003. זו הגנת שחזור צפויה; אין לאפס קבצים או לשנות מניפסט ישן.
+הסקריפט והחבילה הבאים צריכים להכיר בבסיס הנוכחי.
+
+## תנאי הסגירה המעודכנים
+
+לפי [מטרת המוצר](PRODUCT_GOAL.md), העבודה שנותרה משלבת T03, T04 ו־T07:
+בחירת ספק אוטומטית, מעבר כחלק מלחיצת העדכון ורישום בעלות מתמשך.
+המשתמש יריץ את חבילת הבדיקות המלאה בפקודה אחת; הסוכן יבצע אימות ממוקד
+בלבד ויטפל בדוח. אין צורך באישור מעבר נפרד לכל חבילה בממשק הרגיל.
+
+סגירה דורשת הוכחת שימוש, מקור שהוסר במסלול מבוקר עם גיבוי, התנהגות כשל
+ושחזור, מלאי ללא כפילות, ועדכון אצל הספק החדש אחרי פתיחה מחדש. שתי חבילות
+הפיילוט הן מקרי בדיקה בלבד. אין לסמן את היעד הכללי כהושלם על בסיס פיילוט יחיד.
+''',
+}
+
+DIRECTION_RECOVERY = Path.home() / '.local/share/brew-update-manager/recovery/documentation-direction-2026-10-20'
+
+def direction_documentation(mode):
+    """Apply only reviewed docs; keep old bundle manifests and later edits intact."""
+    manifest_path = DIRECTION_RECOVERY / 'manifest.json'
+    if not manifest_path.is_file():
+        raise RuntimeError('Missing exact pre-edit documentation backup')
+    manifest = json.loads(manifest_path.read_text())
+    restoring = mode == 'direction-docs-restore'
+    if mode not in ('direction-docs-check', 'direction-docs-apply', 'direction-docs-restore'):
+        raise ValueError('Unknown documentation mode')
+    changes = []
+    for rel, content in DIRECTION_DOCUMENTS.items():
+        record = manifest['files'][rel]
+        path = ROOT / rel
+        current = path.read_bytes() if path.exists() else None
+        current_hash = digest(current) if current is not None else None
+        after = content.encode()
+        after_hash = digest(after)
+        if record.get('after') not in (None, after_hash):
+            raise RuntimeError('Documentation generator changed since application: ' + rel)
+        if current_hash not in (record['before'], after_hash):
+            raise RuntimeError('Documentation refuses independent edit: ' + rel)
+        before_path = DIRECTION_RECOVERY / 'before' / rel
+        original = before_path.read_bytes() if record['before'] is not None else None
+        if original is not None and digest(original) != record['before']:
+            raise RuntimeError('Documentation backup hash mismatch: ' + rel)
+        desired = original if restoring else after
+        if current != desired:
+            changes.append((path, desired))
+        record['after'] = after_hash
+    if mode == 'direction-docs-check':
+        print('Documentation check: ' + str(len(changes)) + ' files would change; no files written.')
+        return
+    manifest['generator_after_sha256'] = digest(Path(__file__).read_bytes())
+    manifest['status'] = 'restored' if restoring else 'applied'
+    # Save the intended hashes before writing any generated document.
+    manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+    for path, desired in changes:
+        if desired is None:
+            path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.direction-docs-')
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(desired)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    print('Documentation ' + manifest['status'] + ': ' + str(len(changes)) + ' files changed; backup: ' + str(DIRECTION_RECOVERY))
+
 if __name__=='__main__':
     try:
-        if len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])
+        if len(sys.argv)==2 and sys.argv[1].startswith('direction-docs-'):direction_documentation(sys.argv[1])
+        elif len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])
         elif len(sys.argv)==2 and sys.argv[1].startswith('t03-'):t03_main(sys.argv[1])
         else:main()
     except Exception as error:
