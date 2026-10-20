@@ -6878,6 +6878,17 @@ def collect_candidates(s, snapshot):
                 candidate["profile_id"] = row["name"] if row["name"] in (
                     "terminal-notifier", "include-what-you-use") else None
                 candidate["profile_version"] = 1 if candidate["profile_id"] else None
+                if candidate["availability"] == "verified" and candidate["profile_id"]:
+                    try:
+                        import migration_engine
+                        migration = migration_engine.plan(s, row["name"])
+                        candidate.update(migration_plan_id=migration["id"],
+                                         migration_fingerprint=migration["fingerprint"],
+                                         execution_supported=True, blockers=[])
+                    except Exception as error:
+                        if isinstance(error, getattr(s, "OperationCancelledError", ())):
+                            raise
+                        candidate["blockers"] = ["migration_preflight_failed: " + str(error)[-200:]]
                 candidates.append(candidate)
         elif provider == "macports" and row.get("kind") == "port" and row.get("outdated"):
             candidates.append(_ports(s, row, [row["name"]], "update"))
@@ -6986,7 +6997,9 @@ def validate_request(s, body, *, all_ready=False):
         if decision["status"] != "ready":
             raise PlanError("decision_not_ready")
         if decision["action"] == "migrate":
-            raise PlanError("migration_execution_not_yet_integrated")
+            candidate = decision["selected_candidate"] or {}
+            if not candidate.get("migration_plan_id") or not candidate.get("migration_fingerprint"):
+                raise PlanError("migration_route_unverified")
         items.append(decision)
     if all_ready and set(identifiers) != {
         d["decision_id"] for d in plan["decisions"] if d["status"] == "ready"}:
@@ -7043,6 +7056,11 @@ def execute(s, body, *, all_ready=False):
             raise PlanError("plan_changed")
         if (item.get("provider") or "homebrew") != decision["current_provider"]:
             raise PlanError("plan_changed")
+        if decision["action"] == "migrate":
+            import migration_engine
+            _, fingerprint = migration_engine._material(s, decision["logical_id"])
+            if fingerprint != decision["selected_candidate"]["migration_fingerprint"]:
+                raise PlanError("plan_changed")
     journal = {"schema_version": 1, "request_id": request_id, "plan_id": plan["id"],
                "request_hash": signature, "status": "running", "results": [],
                "started_at": s.now_iso()}
@@ -7052,11 +7070,27 @@ def execute(s, body, *, all_ready=False):
             s.raise_if_cancel_requested()
             source = rows[decision["source_installation_id"]]
             provider = decision["target_provider"]
-            if provider != decision["current_provider"]:
-                raise PlanError("review_required")
             candidate = decision["selected_candidate"]
+            if decision["action"] == "migrate":
+                import migration_engine
+                _, fingerprint = migration_engine._material(s, decision["logical_id"])
+                if fingerprint != candidate["migration_fingerprint"]:
+                    raise PlanError("plan_changed")
+                transaction = migration_engine.approve(
+                    s, candidate["migration_plan_id"], request_id=request_id)
+                outcome = {
+                    "ok": transaction.get("status") == "completed",
+                    "name": source["name"], "kind": source["kind"],
+                    "provider": provider, "action": "migrate",
+                    "transaction_id": transaction["transaction_id"],
+                    "code": 0 if transaction.get("status") == "completed" else 1,
+                    "stdout": "Source removed and new provider verified",
+                    "stderr": "",
+                }
+            elif provider != decision["current_provider"]:
+                raise PlanError("review_required")
             # Fail closed on changed binary closure; no silent source fallback.
-            if provider == "homebrew":
+            elif provider == "homebrew":
                 catalog, installed = None, None
                 from update_engine import Engine
                 engine = Engine(s)
@@ -7095,6 +7129,8 @@ def execute(s, body, *, all_ready=False):
         journal["result"] = {
             "ok": refresh_error is None, "results": journal["results"],
             "updated_count": sum(bool(r.get("ok")) for r in journal["results"]),
+            "migrated_count": sum(bool(r.get("ok")) and r.get("action") == "migrate"
+                                  for r in journal["results"]),
             "failed_count": sum(not bool(r.get("ok")) for r in journal["results"]),
             "attempted_count": len(journal["results"]),
             "deferred_count": 0, "skipped_count": 0, "remaining_count": 0,
