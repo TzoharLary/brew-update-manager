@@ -353,8 +353,9 @@ class Plans(unittest.TestCase):
             self.assertFalse(candidates[0]["execution_supported"])
             decision, = sel.select([row], candidates)
             self.assertNotEqual(decision["status"], "ready")
-            self.assertIn("pixi_migration_transaction_unavailable",
-                          decision["alternatives"][0]["reason_codes"])
+            self.assertTrue(any(
+                reason.startswith("pixi_migration_preflight_failed:")
+                for reason in decision["alternatives"][0]["reason_codes"]))
 
     def test_blocked_pixi_does_not_hide_working_homebrew(self):
         from unittest.mock import patch
