@@ -61,5 +61,31 @@ class Plans(unittest.TestCase):
                          "homebrew:formula:jq")
 
 
+    def test_pixi_user_workspace_cannot_be_upgraded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from unittest.mock import patch
+            service = FakeService(temp)
+            service.TOOLS_ROOT = Path(temp)
+            service.DATA_DIR = Path(temp)
+            row = {"name": "jq", "provider": "pixi", "kind": "tool",
+                   "installed_version": "1.2", "installation_id": "pixi:jq"}
+            with patch.object(u.update_routes, "read_records",
+                              return_value={"jq": {"provider": "pixi",
+                                                    "prefix": "/tmp/unmanaged-user-pixi"}}):
+                candidate = u._pixi(service, row)
+            self.assertFalse(candidate["execution_supported"])
+            self.assertIn("user_environment_not_managed", candidate["blockers"])
+
+    def test_pixi_missing_owner_blocks_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from unittest.mock import patch
+            service = FakeService(temp)
+            row = {"name": "jq", "provider": "pixi", "kind": "tool",
+                   "installed_version": "1.2", "installation_id": "pixi:jq"}
+            with patch.object(u.update_routes, "read_records", return_value={}):
+                candidate = u._pixi(service, row)
+            self.assertIn("pixi_ownership_unverified", candidate["blockers"])
+
+
 if __name__ == "__main__":
     unittest.main()

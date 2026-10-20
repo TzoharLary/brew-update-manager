@@ -134,6 +134,71 @@ def _ports(s, row, roots, action):
     return candidate
 
 
+
+def _pixi(s, row):
+    """Only app-owned Pixi tools can receive an in-place provider update."""
+    candidate = _base_candidate(row, "pixi", "update", version=None)
+    name = row.get("name")
+    if name not in update_routes.PIXI_TOOLS:
+        candidate["blockers"] = ["unmapped_pixi_tool"]
+        return candidate
+    managed = update_routes.read_records(s.TOOLS_ROOT).get(name, {})
+    if managed.get("provider") != "pixi":
+        candidate["blockers"] = ["pixi_ownership_unverified"]
+        return candidate
+    import pixi_provider
+    prefix = Path(managed.get("prefix") or "/nonexistent")
+    allowed = Path(s.TOOLS_ROOT) / "environments" / name
+    if not prefix.resolve().is_relative_to(allowed.resolve()):
+        candidate["blockers"] = ["user_environment_not_managed"]
+        return candidate
+    try:
+        evidence = pixi_provider.installed_record(
+            prefix, update_routes.PIXI_TOOLS[name][0], row["installed_version"])
+        if evidence.get("version") != managed.get("version"):
+            raise pixi_provider.PixiUnavailable("managed_pixi_version_mismatch")
+        route = pixi_provider.discover(s, name)
+        candidate.update(route, schema_version=1, logical_id=name,
+                         source_installation_id=_ids(row), action="update",
+                         profile_id=name, profile_version=1, blockers=[],
+                         checked_at=time.time())
+    except Exception as error:
+        if isinstance(error, getattr(s, "OperationCancelledError", ())):
+            raise
+        candidate["blockers"] = ["pixi_discovery_unverified:" + str(error)[-200:]]
+    return candidate
+
+
+def _pixi_update(s, source, candidate):
+    """Install an immutable managed Pixi generation and check its live metadata."""
+    import pixi_provider
+    name = source["name"]
+    fresh = _pixi(s, source)
+    for key in ("upstream_version", "lock_sha256", "closure", "manifest", "lock"):
+        if not fresh.get("execution_supported") or fresh.get(key) != candidate.get(key):
+            raise PlanError("plan_changed")
+    directory = (Path(s.TOOLS_ROOT) / "environments" / name /
+                 ("generation-" + uuid.uuid4().hex))
+    prefix = pixi_provider.install_locked(s, candidate, directory)
+    mapped, commands, probe = update_routes.PIXI_TOOLS[name]
+    pixi_provider.installed_record(prefix, mapped, candidate["upstream_version"])
+    binaries = {command: prefix / "bin" / command for command in commands}
+    if not all(p.is_file() for p in binaries.values()):
+        raise PlanError("pixi_missing_mandatory_commands")
+    environment = {"CONDA_PREFIX": str(prefix), "PATH": str(prefix / "bin") + ":/usr/bin:/bin"}
+    check = s.run_cmd([str(prefix / "bin" / probe[0]), *probe[1:]],
+                      timeout=90, cancellable=True, env_override=environment)
+    if check.code:
+        raise PlanError("pixi_smoke_failed", check.stderr or check.stdout)
+    record = update_routes.activate(
+        s.TOOLS_ROOT, name, "pixi", directory, prefix,
+        candidate["upstream_version"], commands, check.stdout + check.stderr)
+    return {"ok": True, "name": name, "kind": "tool",
+            "code": 0, "provider": "pixi", "action": "update",
+            "installed_version": record["version"],
+            "stdout": "Exact locked Pixi generation installed and verified",
+            "stderr": ""}
+
 def collect_candidates(s, snapshot):
     """Run only during an explicit check. Cached state GET never scans providers."""
     rows = snapshot.get("packages", [])
@@ -179,10 +244,7 @@ def collect_candidates(s, snapshot):
         elif provider == "macports" and row.get("kind") == "port" and row.get("outdated"):
             candidates.append(_ports(s, row, [row["name"]], "update"))
         elif provider == "pixi" and row.get("kind") == "tool":
-            # Do not mistake cached Homebrew latest_version for a Pixi catalog result.
-            candidate = _base_candidate(row, "pixi", "update", version=None)
-            candidate["blockers"] = ["pixi_discovery_required"]
-            candidates.append(candidate)
+            candidates.append(_pixi(s, row))
     return candidates
 
 
@@ -398,6 +460,8 @@ def execute(s, body, *, all_ready=False):
                     latest["closure"] != candidate["closure"]):
                     raise PlanError("plan_changed")
                 outcome = macports_provider.upgrade(s, source)
+            elif provider == "pixi":
+                outcome = _pixi_update(s, source, candidate)
             else:
                 raise PlanError("provider_route_unavailable")
             journal["results"].append(outcome)
