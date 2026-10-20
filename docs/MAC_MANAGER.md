@@ -9,6 +9,32 @@ Read [the product goal](PRODUCT_GOAL.md) for the user's current requirements and
 decisions replace earlier designs requiring a separate approval for each migration
 or full test runs by the coding agent before handing the user a test script.
 
+## Current development source — 1.3.4, HEAD 555ae7b (2026-10-20)
+
+This section supersedes older 1.3.3 runtime descriptions below; the installed Mac
+application has **not** been inspected or changed as part of this source review.
+
+- Unified, fingerprinted decisions last 15 minutes and use physical installation identities.
+- Normal checks now discover **mapped** alternatives even with `brew.outdated=false`.
+  Revisions are compared only within the same provider. Unknown/missing T02 evidence
+  or time-limited Pixi discovery leaves an explicit blocker rather than guessing.
+- Managed Pixi updates remain separate from cross-provider migration.
+- `migration_engine.py` implements a Homebrew-to-Pixi transaction path gated to
+  fixed `jq`/`pandoc` profiles with preflight, functional smoke, ownership and
+  compensation; **`unified_updates._pixi_bridge` still advertises these migrations
+  as not executable**, so cross-provider Pixi update-button selection is not complete.
+- Existing Homebrew→MacPorts profile migration and recovery code remains guarded;
+  legacy update routes and old per-migration UI still require review.
+- Current focused [CI 39458648017](https://github.com/TzoharLary/brew-update-manager/actions/runs/39458648017)
+  passed 63 targeted Python tests, JS stale-plan test, 37-file no-write bundle
+  check, source syntax and packaging smoke. It did **not** run full HTTP/Electron,
+  crash/recovery or live Intel Mac acceptance.
+- `tools/verify-migration.py --checks/--full` is present in source, but `--full`
+  is potentially mutating and **must not** be run as a release acceptance step yet.
+
+See [implementation status](UNIFIED_IMPLEMENTATION_STATUS.md), [T04 execution
+plan](T04_PROVIDER_DISCOVERY_EXECUTION_PLAN.md) and [task sequence](MAC_MANAGER_TASKS.md).
+
 ## Required user flow — not yet complete
 
 Start Check discovers updates and compares supported providers for native Intel
@@ -57,7 +83,8 @@ A standalone classification does not itself authorize execution.
 - `POST /api/migrations/plan {name}` creates a proposal.
 - `POST /api/migrations/approve {id}` executes a supported proposal.
 - `POST /api/migrations/recovery-plan {transaction_id, action}` creates a recovery
-  proposal; the current engine does not execute resume/rollback through approve.
+  proposal; **historical 1.3.3 note:** recovery approval was not then wired.
+  Current 1.3.4 recovery behavior is described in the status document.
 - `POST /api/macports/sync` requests catalog refresh with macOS authorization.
 
 The old terminal-notifier implementation remains separate. The 1.3.3 additions
@@ -85,7 +112,8 @@ real packages; real acceptance shows the actions and asks for one overall approv
 
 `tools/verify-migration.py --checks` now calls `verify-current-code.py` directly,
 independent of old bundle manifests, and saves per-step logs and a summary.
-The full suite awaits the user run. The helper also has an IWYU-only acceptance mode. It is not yet the complete script for the required product flow. Its
+The full suite awaits the user run. The 1.3.4 `--full` code exists but is not
+accepted for live use. The former IWYU-only helper description below is historical. Its
 limitations and the distinction between historical runs and future validation
 are recorded in T03_VALIDATION.md. Do not recommend a real migration until its
 preflight, activation, rollback and acceptance gaps are resolved.
@@ -116,4 +144,4 @@ See [unified implementation status](UNIFIED_IMPLEMENTATION_STATUS.md). The insta
 
 ## Current 1.3.4 development branch (2026-10-20)
 
-Historical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Full provider discovery, removal of legacy bypass paths, failure suites and native Mac acceptance remain open. No release or local install.
+Historical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Mapped provider discovery and a fixed-profile Pixi migration engine were subsequently added in T04. The Pixi selection bridge, legacy bypass paths, failure suites and native Mac acceptance remain open. No release or local install.
