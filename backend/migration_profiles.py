@@ -27,6 +27,52 @@ PROFILES = {
         ("include-what-you-use", "iwyu_tool.py", "fix_includes.py"), ("--version",)),
 }
 
+
+# Only simple, fixed CLI contracts can become transactional Pixi migrations.
+# Mapping in PIXI_TOOLS alone is not an authorization to remove Homebrew.
+PIXI_MIGRATION_PROFILES = {
+    "jq": Profile("jq", (), ("jq",), ("--version",), provider="pixi"),
+    "pandoc": Profile("pandoc", (), ("pandoc",), ("--version",), provider="pixi"),
+}
+
+
+def pixi_get(name):
+    return PIXI_MIGRATION_PROFILES.get(name)
+
+
+def smoke_pixi(s, profile, prefix, target):
+    """Executable and functional probes for a fixed, app-owned Pixi generation."""
+    if not isinstance(profile, Profile) or profile.provider != "pixi":
+        raise ValueError("Unsupported Pixi migration profile")
+    prefix = Path(prefix)
+    commands = {cmd: prefix / "bin" / cmd for cmd in profile.commands}
+    if not commands or any(not path.is_file() or not os.access(path, os.X_OK)
+                           for path in commands.values()):
+        raise RuntimeError("Pixi mandatory command is missing or not executable")
+    env = {"CONDA_PREFIX": str(prefix), "PATH": str(prefix / "bin") + ":/usr/bin:/bin"}
+    result = s.run_cmd([str(commands[profile.commands[0]]), *profile.version_args],
+                       timeout=30, cancellable=True, env_override=env)
+    report = {"version": _check(result, "Pixi version")}
+    if not version_matches(result.stdout + result.stderr, target):
+        raise RuntimeError("Pixi target version mismatch")
+    if profile.name == "jq":
+        probe = s.run_cmd([str(commands["jq"]), "-n", "{verified:true}"],
+                          timeout=90, cancellable=True, env_override=env)
+        report["functional"] = _check(probe, "jq functional smoke")
+        if json.loads(probe.stdout) != {"verified": True}:
+            raise RuntimeError("jq functional output mismatch")
+    elif profile.name == "pandoc":
+        probe = s.run_cmd([str(commands["pandoc"]), "--from=markdown", "--to=html"],
+                          timeout=90, cancellable=True, env_override=env,
+                          input_data="*probe*\\n")
+        report["functional"] = _check(probe, "pandoc functional smoke")
+        if "<em>probe</em>" not in probe.stdout:
+            raise RuntimeError("pandoc functional output mismatch")
+    else:
+        raise RuntimeError("Pixi smoke profile not implemented")
+    return report
+
+
 def get(name):
     return PROFILES.get(name)
 
