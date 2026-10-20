@@ -279,8 +279,10 @@ def collect_candidates(s, snapshot, *, pixi_scan_budget_seconds=180):
                 entry = catalog.get(name)
                 current = row.get("installed_upstream_version") or row.get("installed_version")
                 version = entry.get("stable_version") if isinstance(entry, dict) else None
-                comparison = (update_selection.compare_upstream(str(version), str(current))
-                              if version is not None else None)
+                comparison = (update_selection.compare_same_provider_package(
+                    str(current), row.get("installed_revision"),
+                    str(version), entry.get("revision", 0), row.get("outdated", False))
+                    if version is not None else None)
                 # No closure inspection is needed if a known stable upstream
                 # cannot be an update; other mapped providers are still probed.
                 if row.get("outdated") or comparison is None or comparison > 0:

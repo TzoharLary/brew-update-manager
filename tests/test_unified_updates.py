@@ -61,6 +61,26 @@ class Plans(unittest.TestCase):
                          "homebrew:formula:jq")
 
 
+    def test_homebrew_revision_update_discovered_when_outdated_flag_is_false(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "example-portless", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.2_1", "installed_upstream_version": "1.2",
+                   "installed_revision": 1, "outdated": False}
+            ready = dict(u._base_candidate(row, "homebrew", "update"),
+                         availability="verified", upstream_version="1.2",
+                         revision=2, execution_supported=True,
+                         closure_verified=True, blockers=[])
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"example-portless": {"stable_version": "1.2", "revision": 2}}, {})), \
+                 patch.object(u, "_homebrew", return_value=ready) as probe:
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            probe.assert_called_once()
+            decision, = sel.select([row], candidates)
+            self.assertEqual(decision["status"], "ready")
+
     def test_cross_provider_discovery_when_brew_is_current(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
