@@ -147,6 +147,11 @@ def _candidate_issues(row, candidate):
             issues.append("migration_classification_blocked")
         if not candidate.get("profile_id") or not isinstance(candidate.get("profile_version"), int):
             issues.append("migration_profile_missing")
+        if (not isinstance(candidate.get("migration_plan_id"), str)
+                or re.fullmatch(r"[a-f0-9]{32}", candidate["migration_plan_id"]) is None
+                or not isinstance(candidate.get("migration_fingerprint"), str)
+                or re.fullmatch(r"[a-f0-9]{64}", candidate["migration_fingerprint"]) is None):
+            issues.append("migration_transaction_plan_missing")
     if candidate.get("blockers"):
         issues.extend(str(x) for x in candidate["blockers"])
     current_version = (row.get("installed_upstream_version") or row.get("upstream_version")

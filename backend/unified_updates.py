@@ -226,24 +226,50 @@ def _unavailable_bridge(row, provider, target_names, reason):
 
 
 def _pixi_bridge(s, row, *, timeout=60):
-    """Discover an exact Intel route, without inventing a missing migration."""
-    candidate = _unavailable_bridge(
-        row, "pixi", [update_routes.PIXI_TOOLS[row["name"]][0]],
-        "pixi_migration_transaction_unavailable")
+    """Bind a verified Intel route to a fixed-profile migration transaction."""
+    name = row["name"]
+    mapped = update_routes.PIXI_TOOLS[name][0]
+    candidate = _unavailable_bridge(row, "pixi", [mapped],
+                                    "pixi_migration_transaction_unavailable")
+    profile = migration_profiles.pixi_get(name)
+    if not profile or profile.provider != "pixi":
+        candidate["blockers"] = ["pixi_migration_profile_missing"]
+        return candidate
+    if (row.get("kind") != "formula" or
+            (row.get("provider") or "homebrew") != "homebrew" or
+            not _standalone_classified(row)):
+        candidate["blockers"] = ["fresh_classification_required"]
+        return candidate
     import pixi_provider
     try:
-        verified = pixi_provider.discover(s, row["name"], max_seconds=timeout)
-        candidate.update(verified, schema_version=1, logical_id=row["name"],
+        verified = pixi_provider.discover(s, name, max_seconds=timeout)
+        candidate.update(verified, schema_version=1, logical_id=name,
                          source_installation_id=_ids(row), action="migrate",
-                         execution_supported=False, profile_id=None, profile_version=None,
+                         execution_supported=False, profile_id=profile.name,
+                         profile_version=profile.version,
                          blockers=["pixi_migration_transaction_unavailable"],
                          checked_at=time.time())
+        import migration_engine
+        plan = migration_engine.plan(
+            s, name, provider="pixi", classification=row["classification"],
+            pixi_candidate=verified)
+        if (plan["target"]["provider"] != "pixi"
+                or plan["target"]["candidate"]["lock_sha256"] != verified.get("lock_sha256")
+                or plan["target"]["candidate"]["closure"] != verified.get("closure")
+                or plan["target"]["version"] != verified.get("upstream_version")
+                or plan["profile"] != profile.name
+                or plan["profile_version"] != profile.version):
+            raise PlanError("pixi_migration_plan_mismatch")
+        candidate.update(migration_plan_id=plan["id"],
+                         migration_fingerprint=plan["fingerprint"],
+                         execution_supported=True, blockers=[])
     except Exception as error:
         if isinstance(error, getattr(s, "OperationCancelledError", ())):
             raise
-        candidate["blockers"].append("pixi_discovery_unverified:" + str(error)[-180:])
+        candidate["execution_supported"] = False
+        code = getattr(error, "code", None) or type(error).__name__
+        candidate["blockers"] = ["pixi_migration_preflight_failed:" + str(code)[-160:]]
     return candidate
-
 
 def collect_candidates(s, snapshot, *, pixi_scan_budget_seconds=180):
     """Collect all *mapped* provider alternatives, regardless of brew.outdated.
@@ -494,6 +520,55 @@ def _canonical_request(plan_id, items):
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _revalidate_migration(s, decision):
+    """Reject a proposal unless the exact displayed provider transaction matches."""
+    import migration_engine
+    candidate = decision.get("selected_candidate") or {}
+    provider = decision.get("target_provider")
+    if (provider not in ("macports", "pixi")
+            or candidate.get("provider") != provider):
+        raise PlanError("migration_route_unverified")
+    try:
+        plan = migration_engine._load_plan(s, candidate["migration_plan_id"])
+        source, target = plan["source"], plan["target"]
+        if (plan.get("action") != "migrate"
+                or plan.get("fingerprint") != candidate.get("migration_fingerprint")
+                or plan.get("profile") != decision["logical_id"]
+                or plan.get("profile") != candidate.get("profile_id")
+                or plan.get("profile_version") != candidate.get("profile_version")
+                or source.get("installation_id") != decision["source_installation_id"]
+                or source.get("provider") != decision["current_provider"]
+                or source.get("version") != decision["installed_version"]
+                or target.get("provider") != provider
+                or target.get("version") != candidate.get("upstream_version")):
+            raise PlanError("plan_changed")
+        if provider == "pixi":
+            expected = target.get("candidate") or {}
+            keys = ("provider", "availability", "execution_supported",
+                    "closure_verified", "upstream_version", "package_version",
+                    "revision", "provider_names", "system", "closure",
+                    "manifest", "lock", "lock_sha256")
+            if any(candidate.get(k) != expected.get(k) for k in keys):
+                raise PlanError("plan_changed")
+            if target.get("mapped_name") != candidate.get("provider_names", [None])[0]:
+                raise PlanError("plan_changed")
+            pinned, generation = expected, target.get("generation_id")
+        else:
+            if candidate.get("provider_names") != target.get("ports"):
+                raise PlanError("plan_changed")
+            pinned, generation = None, None
+        _, fingerprint = migration_engine._material(
+            s, decision["logical_id"], provider=provider,
+            pixi_candidate=pinned, planned_generation=generation)
+        if fingerprint != plan["fingerprint"]:
+            raise PlanError("plan_changed")
+        return plan
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        if isinstance(error, PlanError):
+            raise
+        raise PlanError("plan_changed") from error
+
+
 def execute(s, body, *, all_ready=False):
     """Idempotent, fail-closed execution of approved same-provider routes only.
 
@@ -533,10 +608,7 @@ def execute(s, body, *, all_ready=False):
         if (item.get("provider") or "homebrew") != decision["current_provider"]:
             raise PlanError("plan_changed")
         if decision["action"] == "migrate":
-            import migration_engine
-            _, fingerprint = migration_engine._material(s, decision["logical_id"])
-            if fingerprint != decision["selected_candidate"]["migration_fingerprint"]:
-                raise PlanError("plan_changed")
+            _revalidate_migration(s, decision)
     journal = {"schema_version": 1, "request_id": request_id, "plan_id": plan["id"],
                "request_hash": signature, "status": "running", "results": [],
                "started_at": s.now_iso()}
@@ -549,9 +621,7 @@ def execute(s, body, *, all_ready=False):
             candidate = decision["selected_candidate"]
             if decision["action"] == "migrate":
                 import migration_engine
-                _, fingerprint = migration_engine._material(s, decision["logical_id"])
-                if fingerprint != candidate["migration_fingerprint"]:
-                    raise PlanError("plan_changed")
+                _revalidate_migration(s, decision)
                 transaction = migration_engine.approve(
                     s, candidate["migration_plan_id"], request_id=request_id)
                 outcome = {

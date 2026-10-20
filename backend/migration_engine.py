@@ -315,7 +315,7 @@ def _load_plan(s, plan_id):
     record = _read(s, _plan_path(s, plan_id))
     if not record or record.get("schema_version") != SCHEMA:
         raise MigrationConflict("migration_plan_not_found")
-    if record["expires_at"] < time.time():
+    if record["expires_at"] <= time.time():
         raise MigrationConflict("migration_plan_expired")
     return record
 
@@ -652,6 +652,8 @@ def approve(s, plan_id, request_id=None):
     if old.get("action") != "migrate":
         raise MigrationConflict("unsupported_migration_action")
     target_provider = old["target"]["provider"]
+    # Pixi re-discovers the route here, rather than trusting a saved lock.
+    # The fixed generation ID permits exact material-fingerprint comparison.
     fresh, fingerprint = _material(
         s, old["profile"], provider=target_provider,
         planned_generation=old["target"].get("generation_id"))
