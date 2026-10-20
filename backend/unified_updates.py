@@ -447,14 +447,11 @@ def execute(s, body, *, all_ready=False):
                 renewed = _homebrew(s, source, catalog, installed, s.load_settings())
                 if not renewed.get("closure_verified") or renewed.get("closure") != candidate.get("closure"):
                     raise PlanError("plan_changed")
-                result = s.run_cmd([s.brew_bin(), "upgrade", "--force-bottle", source["name"]],
-                                   timeout=s.load_settings().get("upgrade_timeout_seconds") or None,
-                                   cancellable=True,
-                                   env_override=engine.brew_env)
-                outcome = {"ok": result.code == 0, "name": source["name"],
-                           "kind": source["kind"], "provider": provider,
-                           "code": result.code, "stdout": result.stdout[-3000:],
-                           "stderr": result.stderr[-3000:]}
+                # Delegate to the same source-fallback detector and binary-only
+                # preflight used by legacy updates; do not start a second
+                # Homebrew installer without those safeguards.
+                outcome = s.run_upgrade(source["name"], source["kind"])
+                outcome["provider"] = "homebrew"
             elif provider == "macports":
                 latest = _ports(s, source, candidate["provider_names"], "update")
                 if (not latest["execution_supported"] or
