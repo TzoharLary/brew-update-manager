@@ -15,6 +15,7 @@ assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 2000, un
 assert.equal(expired({ unified_plan_id: 'abc' }, 0), true, 'missing expiration fails closed');
 assert.equal(expired({ unified_plan_id: 'abc', unified_plan_expires_at: 'bogus' }, 0), true);
 assert.match(sandbox.unifiedReasonLabel('plan_expired'), /תוכנית העדכון/);
+assert.match(sandbox.unifiedReasonLabel('pixi_migration_transaction_unavailable'), /Pixi/);
 sandbox.i18n.lang = 'en';
 assert.match(sandbox.unifiedReasonLabel('plan_expired'), /expired/);
 console.log('Stale Intel plan UI helpers: passed');

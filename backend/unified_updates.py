@@ -202,6 +202,14 @@ def _pixi_update(s, source, candidate):
             "stdout": "Exact locked Pixi generation installed and verified",
             "stderr": ""}
 
+def _standalone_classified(row):
+    cls = row.get("classification") or {}
+    return (cls.get("category") == "standalone_candidate"
+            and not cls.get("gaps") and not cls.get("consumers")
+            and not cls.get("shared_roles") and cls.get("role") not in (
+                "service", "shared", "library"))
+
+
 def _load_homebrew_catalog(s):
     from update_engine import Engine
     engine = Engine(s)
@@ -237,7 +245,7 @@ def _pixi_bridge(s, row, *, timeout=60):
     return candidate
 
 
-def collect_candidates(s, snapshot):
+def collect_candidates(s, snapshot, *, pixi_scan_budget_seconds=180):
     """Collect all *mapped* provider alternatives, regardless of brew.outdated.
 
     Classifications originate in the common T02 inventory scan. A missing
@@ -246,6 +254,9 @@ def collect_candidates(s, snapshot):
     rows = snapshot.get("packages", [])
     mapping = json.loads((Path(__file__).with_name("macports-map.json")).read_text())
     candidates = []
+    # Bounding aggregate solver work prevents many mapped applications from
+    # turning a normal check into an unbounded series of Pixi searches.
+    pixi_deadline = time.monotonic() + max(0, pixi_scan_budget_seconds)
     settings = s.load_settings()
     try:
         catalog, installed = _load_homebrew_catalog(s)
@@ -284,7 +295,7 @@ def collect_candidates(s, snapshot):
                 if not profile or profile.provider != "macports":
                     candidates.append(_unavailable_bridge(
                         row, "macports", roots, "migration_profile_missing"))
-                elif classification.get("category") != "standalone_candidate":
+                elif not _standalone_classified(row):
                     candidates.append(_unavailable_bridge(
                         row, "macports", roots, "fresh_classification_required"))
                 else:
@@ -307,12 +318,17 @@ def collect_candidates(s, snapshot):
                     candidates.append(offer)
             if name in update_routes.PIXI_TOOLS:
                 classification = row.get("classification") or {}
-                if classification.get("category") != "standalone_candidate":
+                if not _standalone_classified(row):
                     candidates.append(_unavailable_bridge(
                         row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
                         "fresh_classification_required"))
+                elif (remaining := pixi_deadline - time.monotonic()) < 10:
+                    candidates.append(_unavailable_bridge(
+                        row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                        "pixi_scan_budget_exhausted"))
+                    row["discovery_complete"] = False
                 else:
-                    candidate = _pixi_bridge(s, row)
+                    candidate = _pixi_bridge(s, row, timeout=min(60, remaining))
                     candidates.append(candidate)
                     if candidate.get("availability") != "verified":
                         row["discovery_complete"] = False
@@ -320,12 +336,20 @@ def collect_candidates(s, snapshot):
             candidates.append(_unavailable_bridge(
                 row, "homebrew", [name], "cask_binary_adapter_not_verified"))
         elif provider == "macports" and row.get("kind") == "port":
+            if name in update_routes.PIXI_TOOLS:
+                candidates.append(_unavailable_bridge(
+                    row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                    "migration_source_provider_unsupported"))
             if row.get("outdated"):
                 candidate = _ports(s, row, [name], "update")
                 candidates.append(candidate)
                 if candidate.get("availability") != "verified":
                     row["discovery_complete"] = False
         elif provider == "pixi" and row.get("kind") == "tool":
+            if catalog is not None and name in catalog:
+                candidates.append(_unavailable_bridge(
+                    row, "homebrew", [name],
+                    "migration_source_provider_unsupported"))
             candidate = _pixi(s, row)
             candidates.append(candidate)
             if candidate.get("availability") != "verified":

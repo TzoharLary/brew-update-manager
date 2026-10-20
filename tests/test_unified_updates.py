@@ -99,6 +99,59 @@ class Plans(unittest.TestCase):
             self.assertFalse(candidates[0]["execution_supported"])
             self.assertIn("migration_profile_missing", candidates[0]["blockers"])
 
+    def test_pixi_total_time_budget_blocks_without_network(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", side_effect=AssertionError("must not contact Pixi")):
+                candidates = u.collect_candidates(
+                    service, {"packages": [row]}, pixi_scan_budget_seconds=0)
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("pixi_scan_budget_exhausted", candidates[0]["blockers"])
+            self.assertFalse(row["discovery_complete"])
+
+    def test_incomplete_t02_blocks_pixi_without_discovery(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": ["service_registry_unavailable"]}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", side_effect=AssertionError("not standalone")):
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("fresh_classification_required", candidates[0]["blockers"])
+
+    def test_macports_source_has_blocked_pixi_bridge_and_can_still_update(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            service = FakeService(temp)
+            service.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "tesseract", "kind": "port", "provider": "macports",
+                   "installed_version": "5.3", "installed_upstream_version": "5.3",
+                   "outdated": True}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(None, None)), \
+                 patch.object(u, "_ports", return_value=dict(
+                     u._base_candidate(row, "macports", "update"),
+                     availability="verified", upstream_version="5.4",
+                     closure_verified=True, execution_supported=True, blockers=[])):
+                candidates = u.collect_candidates(service, {"packages": [row]})
+            self.assertEqual(len(candidates), 2)
+            chosen, = sel.select([row], candidates)
+            self.assertEqual(chosen["target_provider"], "macports")
+            self.assertIn("migration_source_provider_unsupported",
+                          candidates[0]["blockers"])
+
     def test_empty_port_mapping_has_no_phantom_port_candidate(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
