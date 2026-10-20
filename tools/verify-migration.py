@@ -271,6 +271,12 @@ def is_alive(pid):
 
 def install_packaged(report, service):
     check_idle(service)
+    if APPLICATION.exists() and service is None:
+        check = subprocess.run(["/usr/bin/osascript", "-e",
+                                'application id "' + APP_ID + '" is running'],
+                               capture_output=True, text=True, timeout=15)
+        if check.returncode or check.stdout.strip().lower() != "false":
+            raise Blocked("Existing application status is unknown or it is still running")
     backup_user_state(report, service)
     if APPLICATION.exists():
         metadata(APPLICATION)
