@@ -5785,9 +5785,736 @@ T03/T04/T07 נשארות פתוחות. הפקודה --full במסמך היא י�
             os.replace(temporary, path)
     print(f'Plan documentation {manifest["status"]}: {len(changes)} files changed.')
 
+
+# Bundle 004 foundation: keep generated sources together with the generator.
+UNIFIED_FOUNDATION_BACKEND_UPDATE_SELECTION_PY = r'''"""Conservative, side-effect-free Intel provider decision contracts.
+
+A candidate is never executable merely because its version looks newer. The
+adapter must attest to a verified binary closure and an executable profile.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+import uuid
+
+SCHEMA_VERSION = 1
+TTL_SECONDS = 15 * 60
+_PROVIDER_ORDER = {"homebrew": 0, "macports": 1, "pixi": 2}
+_STABLE = re.compile(r"v?([0-9]+(?:\.[0-9]+)*)\Z")
+
+
+def normalize_upstream(value):
+    """Return a numeric tuple; ambiguous suffixes/prereleases are UNKNOWN."""
+    if not isinstance(value, str):
+        return None
+    match = _STABLE.fullmatch(value.strip())
+    return tuple(int(part) for part in match.group(1).split(".")) if match else None
+
+
+def compare_upstream(left, right):
+    """Compare upstream versions, or return None rather than guessing."""
+    a, b = normalize_upstream(left), normalize_upstream(right)
+    if a is None or b is None:
+        return None
+    width = max(len(a), len(b))
+    a, b = a + (0,) * (width - len(a)), b + (0,) * (width - len(b))
+    return (a > b) - (a < b)
+
+
+def compare_same_provider_package(current_version, current_revision,
+                                  target_version, target_revision,
+                                  provider_reports_outdated=False):
+    """Upstream order first; packaging revisions only within one provider."""
+    result = compare_upstream(target_version, current_version)
+    if result is None or result != 0:
+        return result
+    if current_revision is not None and target_revision is not None:
+        try:
+            a, b = int(target_revision), int(current_revision)
+        except (TypeError, ValueError):
+            return None
+        return (a > b) - (a < b)
+    return 1 if provider_reports_outdated is True else 0
+
+
+def _installation_id(row):
+    known = row.get("installation_id")
+    if known:
+        return known
+    provider = row.get("provider", "homebrew")
+    name = row.get("provider_name") or row.get("name")
+    kind = row.get("kind", "formula")
+    if not name or provider not in _PROVIDER_ORDER:
+        return None
+    if provider == "homebrew" and kind in ("formula", "cask"):
+        return f"homebrew:{kind}:{name}"
+    if provider == "macports" and kind == "port":
+        return f"macports:{name}"
+    if provider == "pixi" and kind == "tool":
+        return f"pixi:{name}"
+    return None
+
+
+def _material(value):
+    """Remove volatile observations from the fingerprint, recursively."""
+    volatile = {"checked_at", "created_at", "expires_at", "plan_id",
+                "decision_id", "evidence_path", "evidence_refs", "observed_at"}
+    if isinstance(value, dict):
+        return {k: _material(v) for k, v in sorted(value.items())
+                if k not in volatile}
+    if isinstance(value, list):
+        return [_material(item) for item in value]
+    return value
+
+
+def material_fingerprint(source, candidate, ownership=None):
+    data = {"source": _material(source), "candidate": _material(candidate),
+            "ownership": _material(ownership or {})}
+    raw = json.dumps(data, sort_keys=True, ensure_ascii=False,
+                     separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _migration_allowed(row):
+    cls = row.get("classification") or {}
+    if cls.get("category") != "standalone_candidate":
+        return False
+    if cls.get("gaps") or cls.get("consumers") or cls.get("shared_roles"):
+        return False
+    if cls.get("role") in ("service", "shared", "library"):
+        return False
+    return (row.get("provider") or "homebrew") == "homebrew" and row.get("kind") == "formula"
+
+
+def _candidate_issues(row, candidate):
+    issues = []
+    source_id = _installation_id(row)
+    provider = candidate.get("provider")
+    action = candidate.get("action")
+    if not source_id or candidate.get("source_installation_id") != source_id:
+        issues.append("identity_mismatch")
+    if candidate.get("logical_id") != (row.get("logical_id") or row.get("name")):
+        issues.append("logical_identity_mismatch")
+    if provider not in _PROVIDER_ORDER:
+        issues.append("unknown_provider")
+    if candidate.get("schema_version") != SCHEMA_VERSION:
+        issues.append("unsupported_candidate_schema")
+    if candidate.get("availability") != "verified":
+        issues.append("provider_unverified")
+    if candidate.get("execution_supported") is not True:
+        issues.append("execution_unsupported")
+    sysinfo = candidate.get("system") or {}
+    if sysinfo.get("os") != "macos" or sysinfo.get("arch") != "x86_64":
+        issues.append("unsupported_platform")
+    if candidate.get("closure_verified") is not True:
+        issues.append("binary_closure_unverified")
+    closure = candidate.get("closure")
+    if not isinstance(closure, list):
+        issues.append("binary_closure_unverified")
+    else:
+        for node in closure:
+            if not isinstance(node, dict) or node.get("arch") not in ("x86_64", "osx-64", "noarch"):
+                issues.append("invalid_binary_closure")
+                break
+            if not (node.get("archive_id") or node.get("url")):
+                issues.append("invalid_binary_closure")
+                break
+    if not isinstance(candidate.get("provider_names"), list) or not candidate["provider_names"]:
+        issues.append("target_identity_missing")
+    if action not in ("update", "migrate"):
+        issues.append("unsupported_action")
+    current_provider = row.get("provider") or "homebrew"
+    if provider != current_provider and action != "migrate":
+        issues.append("provider_switch_requires_migration")
+    if provider == current_provider and action != "update":
+        issues.append("same_provider_not_migration")
+    if action == "migrate":
+        if not _migration_allowed(row):
+            issues.append("migration_classification_blocked")
+        if not candidate.get("profile_id") or not isinstance(candidate.get("profile_version"), int):
+            issues.append("migration_profile_missing")
+    if candidate.get("blockers"):
+        issues.extend(str(x) for x in candidate["blockers"])
+    current_version = row.get("upstream_version") or row.get("installed_version")
+    cmp = (compare_same_provider_package(
+        current_version, row.get("revision"),
+        candidate.get("upstream_version"), candidate.get("revision"),
+        candidate.get("provider_outdated", False))
+        if provider == current_provider
+        else compare_upstream(candidate.get("upstream_version"), current_version))
+    if cmp is None:
+        issues.append("comparison_unknown")
+    elif cmp < 0:
+        issues.append("downgrade_forbidden")
+    elif cmp == 0:
+        issues.append("not_newer")
+    return list(dict.fromkeys(issues))
+
+
+def select(installed, candidates, ownership=None, *, plan_id=None, created_at=None):
+    """Return one JSON-compatible decision per physical installation."""
+    ownership = ownership or {}
+    plan_id = plan_id or uuid.uuid4().hex
+    created = time.time() if created_at is None else created_at
+    results = []
+    for row in installed:
+        installation_id = _installation_id(row)
+        logical_id = row.get("logical_id") or row.get("name")
+        provider = row.get("provider") or "homebrew"
+        current = row.get("upstream_version") or row.get("installed_version")
+        relevant = [c for c in candidates
+                    if c.get("source_installation_id") == installation_id]
+        excluded = row.get("excluded") or logical_id == "ngrok" or row.get("name") == "ngrok"
+        alternatives = []
+        eligible = []
+        incomplete = not row.get("discovery_complete", False)
+        for candidate in relevant:
+            issues = ["excluded_package"] if excluded else _candidate_issues(row, candidate)
+            alternative = dict(candidate)
+            alternative["reason_codes"] = issues
+            alternatives.append(alternative)
+            if "provider_unverified" in issues or "comparison_unknown" in issues:
+                incomplete = True
+            if not issues:
+                eligible.append(candidate)
+        def preference(c):
+            version = normalize_upstream(c["upstream_version"])
+            # Version tuple comparison must pad zeros for 1.2 vs 1.2.0.
+            padded = version + (0,) * (20 - len(version)) if len(version) < 20 else version
+            return (padded, int(c.get("revision") or 0)
+                    if c["provider"] == provider else 0,
+                    int(c["provider"] == provider),
+                    -_PROVIDER_ORDER[c["provider"]])
+        selected = max(eligible, key=preference) if eligible else None
+        if selected:
+            status = "ready"
+            action = selected["action"]
+            reasons = ["partial_provider_comparison"] if incomplete else ["newest_verified_compatible"]
+        elif excluded:
+            status, action, reasons = "blocked", "none", ["excluded_package"]
+        elif incomplete:
+            status, action, reasons = "unverified", "none", ["discovery_incomplete"]
+        elif any(a["reason_codes"] for a in alternatives):
+            blocking = [a for a in alternatives if "not_newer" not in a["reason_codes"]]
+            status, action, reasons = ("blocked", "none", ["no_executable_binary_route"]) if blocking else ("current", "none", ["already_current"])
+        else:
+            status, action, reasons = "current", "none", ["already_current"]
+        source_ownership = (ownership.get(installation_id) or {}
+                            if isinstance(ownership, dict) else {})
+        result = {
+            "decision_id": uuid.uuid4().hex, "plan_id": plan_id,
+            "logical_id": logical_id, "source_installation_id": installation_id,
+            "current_provider": provider,
+            "target_provider": selected["provider"] if selected else provider,
+            "installed_version": current,
+            "target_version": selected.get("upstream_version") if selected else None,
+            "action": action, "status": status, "selected_candidate": selected,
+            "alternatives": alternatives, "reason_codes": reasons, "blockers": [],
+            "created_at": created, "expires_at": created + TTL_SECONDS,
+            "material_fingerprint": material_fingerprint(row, selected, source_ownership),
+        }
+        if row.get("needs_recovery"):
+            result.update(status="needs_recovery", action="none",
+                          selected_candidate=None, reason_codes=["recovery_required"])
+        results.append(result)
+    return results
+'''
+
+UNIFIED_FOUNDATION_BACKEND_PROVIDER_OWNERSHIP_PY = r'''"""Durable provider ownership: overlay verified physical inventory only.
+
+Legacy routes are preserved as unverifiable until their exact target is checked.
+No port installation is ever represented as a synthetic tool.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
+import time
+
+SCHEMA_VERSION = 1
+
+
+def atomic_write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(value, sort_keys=True, ensure_ascii=False,
+                       indent=2) + "\n").encode("utf-8")
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + "-")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temp):
+            os.unlink(temp)
+
+
+def load_routes(root):
+    path = Path(root) / "migrations" / "routes.json"
+    if not path.exists():
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": None}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": f"ownership_unreadable: {exc}"}
+    if not isinstance(raw, dict):
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": "ownership_invalid"}
+    if "schema_version" not in raw:
+        return {"schema_version": SCHEMA_VERSION, "routes": [],
+                "legacy": [{"logical_id": k, "record": v, "verified": False}
+                           for k, v in raw.items()],
+                "error": None}
+    if raw.get("schema_version") != SCHEMA_VERSION or not isinstance(raw.get("routes"), list):
+        return {"schema_version": SCHEMA_VERSION, "routes": [], "legacy": [],
+                "error": "ownership_schema_unsupported"}
+    return {"schema_version": SCHEMA_VERSION, "routes": raw["routes"],
+            "legacy": raw.get("legacy", []), "error": None}
+
+
+def _installation_id(row):
+    if row.get("installation_id"):
+        return row["installation_id"]
+    if row.get("provider") == "macports" and row.get("kind") == "port":
+        return "macports:" + row["name"]
+    if row.get("provider") == "pixi" and row.get("kind") == "tool":
+        return "pixi:" + row["name"]
+    if row.get("provider") in (None, "homebrew") and row.get("kind") in ("formula", "cask"):
+        return "homebrew:" + row["kind"] + ":" + row["name"]
+    return None
+
+
+def merge_inventory(installed, registry):
+    """Never fabricate an installation; attach routes only to observed targets."""
+    physical = {key: row for row in installed if (key := _installation_id(row))}
+    results = [dict(row) for row in installed]
+    by_id = {key: i for i, row in enumerate(results)
+             if (key := _installation_id(row))}
+    issues = []
+    if registry.get("error"):
+        issues.append(registry["error"])
+    for route in registry.get("routes", []):
+        if not isinstance(route, dict):
+            issues.append("ownership_record_invalid")
+            continue
+        target_id = route.get("target_installation_id")
+        if target_id not in physical:
+            issues.append("ownership_target_missing:" + str(target_id))
+            continue
+        if route.get("status") != "committed":
+            issues.append("ownership_not_committed:" + str(target_id))
+            continue
+        at = by_id[target_id]
+        results[at]["ownership_route"] = route
+        results[at]["logical_id"] = route.get("logical_id") or results[at].get("logical_id")
+        # Keep physical provider and kind; never relabel a MacPorts port as tool.
+    for legacy in registry.get("legacy", []):
+        issues.append("legacy_ownership_unverified:" + str(legacy.get("logical_id")))
+    return results, issues
+
+
+def commit_route(root, route, journal_path, installed):
+    """Journal changes to route registry; refuses unobserved or ambiguous targets."""
+    root = Path(root)
+    target = route.get("target_installation_id")
+    observed = [row for row in installed if _installation_id(row) == target]
+    if len(observed) != 1 or not route.get("transaction_id"):
+        raise ValueError("Route ownership requires one verified physical target")
+    if route.get("status") != "committed" or not route.get("logical_id"):
+        raise ValueError("Uncommitted route cannot become durable ownership")
+    journal_path = Path(journal_path)
+    if not journal_path.is_file():
+        raise ValueError("Recovery journal must exist before ownership is written")
+    registry = load_routes(root)
+    if registry["error"]:
+        raise ValueError(registry["error"])
+    entries = [x for x in registry["routes"]
+               if x.get("source_installation_id") != route.get("source_installation_id")]
+    previous = next((x for x in registry["routes"]
+                     if x.get("source_installation_id") == route.get("source_installation_id")), None)
+    route = dict(route, generation=int((previous or {}).get("generation") or 0) + 1,
+                 verified_at=route.get("verified_at") or time.time())
+    entries.append(route)
+    target_state = dict(registry, routes=entries)
+    digest = hashlib.sha256(json.dumps(target_state, sort_keys=True,
+                                     default=str).encode()).hexdigest()
+    journal = json.loads(journal_path.read_text())
+    journal["ownership_pending_sha256"] = digest
+    atomic_write_json(journal_path, journal)
+    atomic_write_json(root / "migrations" / "routes.json", target_state)
+    journal["ownership_committed_sha256"] = digest
+    atomic_write_json(journal_path, journal)
+    return route
+'''
+
+UNIFIED_FOUNDATION_BACKEND_OPERATION_LOCK_PY = r'''"""Cross-process lock for mutations sharing a TOOLS_ROOT, not a DATA_DIR."""
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import threading
+import time
+
+_HELD = set()
+_GUARD = threading.RLock()
+
+
+class OperationBusy(RuntimeError):
+    pass
+
+
+class OperationLock:
+    def __init__(self, tools_root, operation_id):
+        self.path = (Path(tools_root) / "migrations" / "operation.lock").resolve()
+        self.operation_id = str(operation_id)
+        self.fd = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with _GUARD:
+            if self.path in _HELD:
+                raise OperationBusy("Nested or concurrent mutation lock")
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError) as exc:
+                os.close(fd)
+                raise OperationBusy("Another operation holds the package mutation lock") from exc
+            _HELD.add(self.path)
+            self.fd = fd
+            payload = json.dumps({"pid": os.getpid(), "operation_id": self.operation_id,
+                                  "acquired_at": time.time()}).encode()
+            try:
+                os.ftruncate(fd, 0)
+                os.write(fd, payload)
+                os.fsync(fd)
+            except BaseException:
+                self.__exit__(None, None, None)
+                raise
+            return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.fd is None:
+            return False
+        with _GUARD:
+            fd, self.fd = self.fd, None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+                _HELD.discard(self.path)
+        return False
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_UPDATE_SELECTION_PY = r'''import copy
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import update_selection as selection
+
+
+class ProviderSelection(unittest.TestCase):
+    def source(self, **changes):
+        base = {"name": "jq", "logical_id": "jq", "provider": "homebrew",
+                "kind": "formula", "installed_version": "1.2",
+                "discovery_complete": True,
+                "classification": {"category": "standalone_candidate",
+                                   "gaps": [], "consumers": []}}
+        return dict(base, **changes)
+
+    def candidate(self, provider="homebrew", upstream="1.3", action="update", **changes):
+        base = {"schema_version": 1, "logical_id": "jq",
+                "source_installation_id": "homebrew:formula:jq",
+                "provider": provider, "provider_names": ["jq"],
+                "upstream_version": upstream, "package_version": upstream,
+                "revision": 0, "action": action,
+                "availability": "verified", "execution_supported": True,
+                "profile_id": "jq", "profile_version": 1,
+                "system": {"os": "macos", "arch": "x86_64", "release": "15"},
+                "closure": [], "closure_verified": True, "blockers": []}
+        return dict(base, **changes)
+
+    def test_numeric_normalization_and_unknown_suffix(self):
+        self.assertEqual(selection.compare_upstream("v1.2", "1.2.0"), 0)
+        self.assertIsNone(selection.compare_upstream("1.2rc1", "1.2"))
+        self.assertIsNone(selection.compare_upstream("1.2_3", "1.2"))
+
+    def test_selects_newest_verified_route_from_three_providers(self):
+        routes = [self.candidate(),
+                  self.candidate("macports", "1.4", "migrate"),
+                  self.candidate("pixi", "1.5", "migrate")]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual((decision["target_provider"], decision["status"]),
+                         ("pixi", "ready"))
+
+    def test_tie_keeps_current_provider(self):
+        routes = [self.candidate("macports", "1.3", "migrate"), self.candidate()]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual(decision["target_provider"], "homebrew")
+
+    def test_newer_blocked_route_does_not_hide_current_update(self):
+        routes = [self.candidate(), self.candidate("macports", "9", "migrate",
+                                                   closure_verified=False)]
+        decision, = selection.select([self.source()], routes)
+        self.assertEqual(decision["target_provider"], "homebrew")
+        self.assertEqual(len(decision["alternatives"]), 2)
+
+    def test_revision_update_on_same_provider(self):
+        source = self.source(installed_version="1.2", revision=0)
+        decision, = selection.select([source], [self.candidate(upstream="1.2", revision=1)])
+        self.assertEqual(decision["status"], "ready")
+
+    def test_unknown_version_does_not_guess(self):
+        decision, = selection.select([self.source()], [self.candidate(upstream="2.0-beta")])
+        self.assertEqual(decision["status"], "unverified")
+
+    def test_downgrade_is_not_selected(self):
+        decision, = selection.select([self.source()], [self.candidate(upstream="1.1")])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_migration_requires_current_standalone_classification(self):
+        decision, = selection.select([self.source(classification={"category": "shared"})],
+                                     [self.candidate("macports", "2", "migrate")])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_excluded_package_cannot_execute(self):
+        source = self.source(name="ngrok", logical_id="ngrok")
+        decision, = selection.select([source], [])
+        self.assertEqual(decision["status"], "blocked")
+
+    def test_provider_failure_remains_partial(self):
+        failed = self.candidate("pixi", "unknown", "migrate", availability="unverified")
+        decision, = selection.select([self.source()], [failed, self.candidate()])
+        self.assertEqual(decision["status"], "ready")
+        self.assertIn("partial_provider_comparison", decision["reason_codes"])
+
+    def test_fingerprint_ignores_observation_times_not_material_changes(self):
+        a = self.candidate(checked_at="first", evidence_refs=["a"])
+        b = self.candidate(checked_at="second", evidence_refs=["b"])
+        first = selection.material_fingerprint(self.source(), a)
+        self.assertEqual(first, selection.material_fingerprint(self.source(), b))
+        b["package_version"] = "1.3_2"
+        self.assertNotEqual(first, selection.material_fingerprint(self.source(), b))
+
+    def test_two_physical_installations_never_merge_by_logical_id(self):
+        a = self.source()
+        b = self.source(provider="macports", kind="port", installation_id="macports:jq")
+        decisions = selection.select([a, b], [self.candidate()])
+        self.assertEqual(len(decisions), 2)
+        self.assertNotEqual(decisions[0]["source_installation_id"],
+                            decisions[1]["source_installation_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_PROVIDER_OWNERSHIP_PY = r'''import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import provider_ownership as owner
+
+
+class Ownership(unittest.TestCase):
+    def test_no_synthetic_port_or_duplicate_tool(self):
+        rows = [{"name": "jq", "provider": "macports", "kind": "port",
+                 "installation_id": "macports:jq"}]
+        registry = {"routes": [{"logical_id": "jq", "source_installation_id": "homebrew:formula:jq",
+                                "target_installation_id": "macports:jq", "status": "committed"}],
+                    "legacy": [], "error": None}
+        merged, issues = owner.merge_inventory(rows, registry)
+        self.assertFalse(issues)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["kind"], "port")
+
+    def test_old_route_is_preserved_unverified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "migrations" / "routes.json"
+            owner.atomic_write_json(path, {"jq": {"provider": "macports"}})
+            state = owner.load_routes(temp)
+            self.assertEqual(len(state["legacy"]), 1)
+            self.assertEqual(state["routes"], [])
+
+    def test_broken_file_does_not_wipe_inventory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "migrations" / "routes.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{ invalid")
+            state = owner.load_routes(temp)
+            merged, issues = owner.merge_inventory([{"name": "jq", "kind": "formula"}], state)
+            self.assertEqual(len(merged), 1)
+            self.assertTrue(issues)
+
+    def test_route_commit_requires_journal_and_physical_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            route = {"logical_id": "jq", "source_installation_id": "homebrew:formula:jq",
+                     "target_installation_id": "macports:jq", "status": "committed",
+                     "transaction_id": "transaction1"}
+            journal = Path(temp) / "journal.json"
+            journal.write_text("{}")
+            with self.assertRaises(ValueError):
+                owner.commit_route(temp, route, journal, [])
+            row = {"name": "jq", "provider": "macports", "kind": "port"}
+            saved = owner.commit_route(temp, route, journal, [row])
+            self.assertEqual(saved["generation"], 1)
+            self.assertEqual(len(owner.load_routes(temp)["routes"]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+UNIFIED_FOUNDATION_TESTS_TEST_OPERATION_LOCK_PY = r'''import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from operation_lock import OperationBusy, OperationLock
+
+
+class LockTests(unittest.TestCase):
+    def test_lock_is_shared_across_data_directories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with OperationLock(temp, "request-1"):
+                with self.assertRaises(OperationBusy):
+                    with OperationLock(temp, "request-2"):
+                        pass
+            with OperationLock(temp, "request-3"):
+                self.assertTrue((Path(temp) / "migrations" / "operation.lock").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+
+UNIFIED_RECOVERY = Path(os.environ.get(
+    'MAC_MANAGER_UNIFIED_RECOVERY',
+    str(Path.home() / '.local/share/brew-update-manager/recovery/unified-intel-1.3.4')
+))
+
+def unified_foundation_outputs():
+    return {
+        "backend/update_selection.py": UNIFIED_FOUNDATION_BACKEND_UPDATE_SELECTION_PY,
+        "backend/provider_ownership.py": UNIFIED_FOUNDATION_BACKEND_PROVIDER_OWNERSHIP_PY,
+        "backend/operation_lock.py": UNIFIED_FOUNDATION_BACKEND_OPERATION_LOCK_PY,
+        "tests/test_update_selection.py": UNIFIED_FOUNDATION_TESTS_TEST_UPDATE_SELECTION_PY,
+        "tests/test_provider_ownership.py": UNIFIED_FOUNDATION_TESTS_TEST_PROVIDER_OWNERSHIP_PY,
+        "tests/test_operation_lock.py": UNIFIED_FOUNDATION_TESTS_TEST_OPERATION_LOCK_PY,
+    }
+
+def _unified_atomic_bytes(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.unified-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+def unified_foundation_main(mode):
+    """Protected, no-package-mutation bundle for independently testable foundations."""
+    if mode not in ('unified-check', 'unified-apply', 'unified-restore',
+                    'unified-pack', 'unified-install'):
+        raise ValueError('Unknown unified bundle operation')
+    if mode in ('unified-pack', 'unified-install'):
+        raise RuntimeError('Bundle 004 foundation is not the completed product; '
+                           'pack/install are deliberately blocked pending all phases and checks')
+    outputs = {relative: content.encode('utf-8')
+               for relative, content in unified_foundation_outputs().items()}
+    manifest_path = UNIFIED_RECOVERY / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
+    if manifest and set(manifest.get('files', {})) != set(outputs):
+        raise RuntimeError('Bundle manifest does not match the generator output set')
+    prepared = []
+    for relative, desired in outputs.items():
+        path = ROOT / relative
+        before = path.read_bytes() if path.is_file() else None
+        current_hash = digest(before) if before is not None else None
+        after_hash = digest(desired)
+        if manifest:
+            record = manifest['files'][relative]
+            if record['after'] != after_hash or current_hash != after_hash:
+                raise RuntimeError('Protected bundle refuses independent edits: ' + relative)
+            backup = UNIFIED_RECOVERY / 'before' / relative
+            if record['before'] is not None and (
+                    not backup.is_file() or digest(backup.read_bytes()) != record['before']):
+                raise RuntimeError('Protected backup missing or changed: ' + relative)
+        elif before is not None and before != desired:
+            raise RuntimeError('Existing file differs from generator: ' + relative)
+        prepared.append((relative, path, before, desired))
+    if mode == 'unified-check':
+        print('Bundle 004 foundation checked without writes: ' + str(len(outputs)) + ' files.')
+        return
+    if mode == 'unified-restore':
+        if not manifest:
+            raise RuntimeError('Bundle 004 has no manifest to restore')
+        for relative, path, _, _ in prepared:
+            old = manifest['files'][relative]['before']
+            if old is None:
+                path.unlink()
+            else:
+                _unified_atomic_bytes(path, (UNIFIED_RECOVERY / 'before' / relative).read_bytes())
+        manifest_path.rename(UNIFIED_RECOVERY / ('restored-' + str(time.time_ns()) + '.json'))
+        print('Bundle 004 foundation restored exactly.')
+        return
+    if manifest:
+        print('Bundle 004 foundation already applied; no files changed.')
+        return
+    # All files and baselines have been checked before the first write.
+    records = {}
+    for relative, path, before, desired in prepared:
+        records[relative] = {'before': digest(before) if before is not None else None,
+                             'after': digest(desired)}
+        if before is not None:
+            _unified_atomic_bytes(UNIFIED_RECOVERY / 'before' / relative, before)
+    _unified_atomic_bytes(UNIFIED_RECOVERY / 'generator-before.py', Path(__file__).read_bytes())
+    _unified_atomic_bytes(manifest_path, (json.dumps({
+        'schema_version': 1, 'stage': 'foundation_only',
+        'files': records, 'generator_sha256': digest(Path(__file__).read_bytes())
+    }, sort_keys=True, indent=2) + '\n').encode())
+    for relative, path, before, desired in prepared:
+        if before != desired:
+            _unified_atomic_bytes(path, desired)
+    print('Bundle 004 foundations recorded; no package installs/updates/removals.')
+
 if __name__=='__main__':
     try:
-        if len(sys.argv)==2 and sys.argv[1].startswith('intel-plan-'):intel_plan_documents(sys.argv[1])
+        if len(sys.argv)==2 and sys.argv[1].startswith('unified-'):unified_foundation_main(sys.argv[1])
+        elif len(sys.argv)==2 and sys.argv[1].startswith('intel-plan-'):intel_plan_documents(sys.argv[1])
         elif sys.argv[1:]==['checks-runner-apply']:checks_runner_apply()
         elif len(sys.argv)==2 and sys.argv[1].startswith('direction-docs-'):direction_documentation(sys.argv[1])
         elif len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])
