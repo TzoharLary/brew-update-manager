@@ -54,7 +54,7 @@ def check(s, offers, packages, catalog_fresh, report=False):
     checked_at = s.now_iso()
     output = [dict(offer, checked_at=checked_at, archive_count=0, version_policy=VERSION_POLICY,
                    status='requires_live_check', detail=None,
-                   executable=bool(offer.get('executable')) and offer.get('name') == 'terminal-notifier') for offer in offers]
+                   executable=bool(offer.get('executable')) and offer.get('name') in {'terminal-notifier','include-what-you-use'}) for offer in offers]
     package_by_name = {p['name']: p for p in packages
                        if p.get('provider', 'homebrew') == 'homebrew' and p.get('kind') == 'formula'}
     installed = {p['name']: p for p in packages if p.get('provider') == 'macports'}

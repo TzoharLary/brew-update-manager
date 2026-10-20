@@ -4117,9 +4117,281 @@ app.whenReady().then(async()=>{
 });
 '''
 
+T03_PROFILES = r'''"""Profiles for conservative Intel MacPorts migrations."""
+from __future__ import annotations
+from dataclasses import dataclass
+from pathlib import Path
+import os, platform, re, tempfile, json, hashlib
+
+@dataclass(frozen=True)
+class Profile:
+    name: str; ports: tuple[str,...]; commands: tuple[str,...]; version_args: tuple[str,...]
+
+PROFILES={
+ 'terminal-notifier':Profile('terminal-notifier',('terminal-notifier',),('terminal-notifier',),('-version',)),
+ 'include-what-you-use':Profile('include-what-you-use',('include-what-you-use',),('include-what-you-use','iwyu_tool.py','fix_includes.py'),('--version',)),
+}
+def get(name): return PROFILES.get(name)
+def intel_only():
+    if platform.system()!='Darwin' or platform.machine()!='x86_64' or os.environ.get('SYSCTL_TRANSLATED')=='1':
+        raise ValueError('Migration execution is supported only on native Intel macOS')
+def command_paths(profile):
+    return {name:Path('/opt/local/bin')/name for name in profile.commands}
+def version_matches(text, target):
+    return re.search(r'(?<![0-9])'+re.escape(str(target).split('_')[0])+r'(?![0-9])',text) is not None
+def smoke(s, profile, target):
+    paths=command_paths(profile); missing=[n for n,p in paths.items() if not p.is_file()]
+    if missing: raise RuntimeError('MacPorts commands missing: '+', '.join(missing))
+    version=s.run_cmd([str(paths[profile.commands[0]]),*profile.version_args],timeout=30,cancellable=True)
+    if version.code or not version_matches(version.stdout+version.stderr,target): raise RuntimeError('Target version verification failed')
+    result={'version':{'code':version.code,'output':(version.stdout+version.stderr)[-3000:]}}
+    if profile.name=='include-what-you-use':
+      sdk=s.run_cmd(['/usr/bin/xcrun','--show-sdk-path'],timeout=30,cancellable=True)
+      if sdk.code or not Path(sdk.stdout.strip()).is_dir(): raise RuntimeError('Xcode SDK is unavailable')
+      with tempfile.TemporaryDirectory(prefix='iwyu-smoke-') as d:
+       root=Path(d); (root/'needed.h').write_text('struct Needed { int x; };\\n'); (root/'unused.h').write_text('struct Unused { int x; };\\n')
+       source=root/'probe.cc'; source.write_text('#include "needed.h"\\n#include "unused.h"\\n#include <vector>\\nint main(){ Needed n{1}; std::vector<int> v{n.x}; return v[0]; }\\n')
+       before=hashlib.sha256(source.read_bytes()).hexdigest()
+       argv=[str(paths['include-what-you-use']),'-std=c++17','-isysroot',sdk.stdout.strip(),'-Xiwyu','--error=17',str(source)]
+       run=s.run_cmd(argv,timeout=90,cancellable=True); output=run.stdout+run.stderr
+       if run.code!=17 or 'unused.h' not in output: raise RuntimeError('IWYU analysis smoke test failed')
+       cc=[{'directory':str(root),'command':'clang++ -std=c++17 -isysroot '+sdk.stdout.strip()+' '+str(source),'file':str(source)}]
+       (root/'compile_commands.json').write_text(json.dumps(cc))
+       env={'IWYU_BINARY':str(paths['include-what-you-use'])}
+       tool=s.run_cmd(['/usr/local/bin/python3.14',str(paths['iwyu_tool.py']),'-p',str(root),str(source)],timeout=90,cancellable=True,env_override=env)
+       if tool.code not in (0,17) or 'unused.h' not in tool.stdout+tool.stderr: raise RuntimeError('iwyu_tool.py smoke test failed')
+       fix=s.run_cmd(['/usr/local/bin/python3.14',str(paths['fix_includes.py']),'--dry_run',str(source)],timeout=90,cancellable=True,env_override=env)
+       if hashlib.sha256(source.read_bytes()).hexdigest()!=before: raise RuntimeError('fix_includes modified the smoke source')
+       result.update(iwyu={'code':run.code,'output':output[-3000:]},tool={'code':tool.code,'output':(tool.stdout+tool.stderr)[-3000:]},fix={'code':fix.code,'output':(fix.stdout+fix.stderr)[-3000:]})
+    return result
+'''
+
+T03_ENGINE = r'''"""Durable, profile-bound Homebrew to MacPorts transactions."""
+from __future__ import annotations
+from pathlib import Path
+import hashlib,json,os,platform,shutil,time,uuid
+import macports_provider as mp
+import migration_profiles as profiles
+
+SCHEMA=1
+def _sha(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def _root(s): return s.DATA_DIR/'migrations'
+def _write(s,p,v): s.atomic_write_json(p,v)
+def _plan_path(s,pid): return _root(s)/'plans'/(pid+'.json')
+def _transaction_path(s,tid): return _root(s)/'transactions'/tid
+def _profile(name):
+ p=profiles.get(name)
+ if not p: raise ValueError('No supported migration profile for this package')
+ return p
+def _source(s,name):
+ rows=s.fetch_installed_inventory(s.fetch_outdated_index()); row=next((x for x in rows if x.get('name')==name and x.get('kind')=='formula'),None)
+ if not row or row.get('brew_installation_present') is False: raise ValueError('Homebrew source installation is absent')
+ audit=row.get('inventory_verification',{})
+ if audit.get('status')!='verified': raise ValueError('Installation evidence is unverified')
+ active=Path(audit.get('active_keg') or '')
+ receipt=active/'INSTALL_RECEIPT.json'
+ if not active.is_dir() or not receipt.is_file(): raise ValueError('Active source keg or receipt is unavailable')
+ versions=audit.get('manager_versions',[])
+ if len(versions)!=1: raise ValueError('Multiple Homebrew kegs require manual review')
+ return row,audit,active,receipt
+def plan(s,name,action='migrate',transaction_id=None):
+ profiles.intel_only()
+ if action!='migrate': return recovery_plan(s,transaction_id,action)
+ if name=='ngrok' or s.is_excluded(name,'formula'): raise ValueError('Package is excluded')
+ profile=_profile(name); row,audit,active,receipt=_source(s,name)
+ import mac_manager,automatic_alternatives,installation_evidence
+ state=s.read_json(s.STATE_FILE) or {}; offer=next((o for o in state.get('migrations',[]) if o.get('name')==name),None)
+ cls=(offer or {}).get('classification',{})
+ if cls.get('category')!='standalone_candidate' or cls.get('gaps') or cls.get('consumers'): raise ValueError('Current classification does not permit an automatic migration')
+ if not offer or offer.get('status')!='binary_available': raise ValueError('A current verified MacPorts binary route is required')
+ graph=mp.preflight(s,list(profile.ports)); target=next(x['version'] for x in graph['nodes'] if x['name']==profile.ports[0])
+ probe=mp.load_probe(); compared=automatic_alternatives.compare_versions(probe,row['installed_version'],row['latest_version'],{profile.ports[0]:target})
+ if compared.get('status')!='version_eligible': raise ValueError(compared.get('detail','Target is not newer'))
+ existing={x['name']:x for x in mp.inventory(s)}
+ for node in graph['nodes']:
+  old=existing.get(node['name'])
+  if old and (old.get('installed_variants','')!=node['variants'] or old.get('installed_version')!=node['version']+'_'+node['revision']): raise ValueError('Existing MacPorts dependency differs: '+node['name'])
+ consumers=mp.checked(s,[s.brew_bin(),'uses','--installed',name],timeout=90).splitlines()
+ if consumers: raise ValueError('Documented Homebrew consumers block source removal: '+', '.join(consumers))
+ pid=uuid.uuid4().hex; routes=Path(s.TOOLS_ROOT)/'migrations'/'routes.json'; paths=profiles.command_paths(profile)
+ for command,path in paths.items():
+  shim=Path(s.TOOLS_ROOT)/'bin'/command
+  if shim.exists() and not shim.is_symlink(): raise ValueError('Unmanaged shim conflict: '+str(shim))
+ data={'schema_version':SCHEMA,'id':pid,'action':'migrate','profile':profile.name,'profile_version':1,'created_at':time.time(),'expires_at':time.time()+900,'system':{'machine':platform.machine(),'macos':platform.mac_ver()[0]},'source':{'name':name,'version':row['installed_version'],'keg':str(active),'receipt_sha256':_sha(receipt)},'classification':cls,'target':{'ports':list(profile.ports),'version':target,'graph':graph},'commands':{k:str(v) for k,v in paths.items()},'routes_file':str(routes),'remove_homebrew':True,'consumers':consumers}
+ data['fingerprint']=hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest(); _plan_path(s,pid).parent.mkdir(parents=True,exist_ok=True);_write(s,_plan_path(s,pid),data);return data
+def _load(s,pid):
+ p=_plan_path(s,pid); data=s.read_json(p)
+ if not data or data.get('schema_version')!=SCHEMA: raise ValueError('Migration plan is unavailable or obsolete')
+ if data['expires_at']<time.time(): raise ValueError('Migration plan expired; request a new plan')
+ return data
+def _stage(s,journal,path,value): journal['stage']=value;journal['updated_at']=s.now_iso();_write(s,path/'journal.json',journal)
+def approve(s,pid):
+ old=_load(s,pid)
+ if old.get('action')!='migrate': raise ValueError('Use recovery approval for recovery plans')
+ fresh=plan(s,old['source']['name'])
+ for key in ('source','target','classification','commands','remove_homebrew','consumers'):
+  if old.get(key)!=fresh.get(key): raise ValueError('Migration changed; review a new plan')
+ profile=_profile(old['profile']); tid=uuid.uuid4().hex; root=_transaction_path(s,tid); root.mkdir(parents=True); journal={'schema_version':SCHEMA,'transaction_id':tid,'plan_id':pid,'status':'running','stage':'preflight','started_at':s.now_iso(),'plan':old}; _write(s,root/'journal.json',journal)
+ active=Path(old['source']['keg']); backup=root/'backup'; routes=Path(old['routes_file']); previous=routes.read_bytes() if routes.exists() else None
+ try:
+  _stage(s,journal,root,'backup'); shutil.copytree(active,backup/'keg',symlinks=True); (backup/'source-receipt.sha256').write_text(old['source']['receipt_sha256']);
+  if _sha(backup/'keg'/'INSTALL_RECEIPT.json')!=old['source']['receipt_sha256']: raise RuntimeError('Backup receipt verification failed')
+  _stage(s,journal,root,'install'); result=mp.privileged(s,'install',list(profile.ports));
+  if result.code: raise RuntimeError(result.stderr or result.stdout)
+  _stage(s,journal,root,'verify'); smoke=profiles.smoke(s,profile,old['target']['version']); journal['smoke']=smoke;_write(s,root/'journal.json',journal)
+  _stage(s,journal,root,'activate'); routes.parent.mkdir(parents=True,exist_ok=True); saved=s.read_json(routes) or {}; saved[profile.name]={'provider':'macports','profile':profile.name,'commands':old['commands'],'verified_at':s.now_iso(),'transaction_id':tid};_write(s,routes,saved)
+  _stage(s,journal,root,'cleanup'); consumers=mp.checked(s,[s.brew_bin(),'uses','--installed',profile.name],timeout=90).splitlines()
+  if consumers: raise RuntimeError('Consumers appeared before cleanup: '+', '.join(consumers))
+  out=mp.checked(s,[s.brew_bin(),'uninstall','--formula',profile.name],timeout=120,env_override={'HOMEBREW_NO_AUTO_UPDATE':'1','HOMEBREW_NO_AUTOREMOVE':'1','HOMEBREW_NO_INSTALL_CLEANUP':'1'});journal['brew_uninstall_output']=out[-3000:]
+  _stage(s,journal,root,'postcheck');journal['postcheck']=profiles.smoke(s,profile,old['target']['version']);journal.update(status='completed',completed_at=s.now_iso());_stage(s,journal,root,'completed');return journal
+ except Exception as e:
+  journal.update(status='needs_attention',error=str(e),completed_at=s.now_iso());_write(s,root/'journal.json',journal);raise
+def recovery_plan(s,tid,action):
+ root=_transaction_path(s,tid);j=s.read_json(root/'journal.json')
+ if not j or j.get('status')=='completed': raise ValueError('No recoverable transaction')
+ if action not in ('resume','rollback'): raise ValueError('Unsupported recovery action')
+ data={'schema_version':SCHEMA,'id':uuid.uuid4().hex,'action':action,'transaction_id':tid,'created_at':time.time(),'expires_at':time.time()+900,'journal':j}
+ _plan_path(s,data['id']).parent.mkdir(parents=True,exist_ok=True);_write(s,_plan_path(s,data['id']),data);return data
+'''
+
+T03_VERIFY = r'''#!/usr/bin/env python3
+"""Run isolated T03 checks or the user-approved real migration."""
+from __future__ import annotations
+import argparse,json,sys,time,urllib.request
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]; RECOVERY=Path.home()/'.local/share/brew-update-manager/recovery/t03-1.3.3'
+def api(path,body=None):
+ data=json.dumps(body).encode() if body is not None else None
+ req=urllib.request.Request('http://127.0.0.1:8765'+path,data=data,headers={'Content-Type':'application/json'} if data else {})
+ with urllib.request.urlopen(req,timeout=1800) as r:return json.load(r)
+def main():
+ p=argparse.ArgumentParser();p.add_argument('--checks',action='store_true');p.add_argument('--acceptance',action='store_true');p.add_argument('--pilot');a=p.parse_args()
+ if a.checks:
+  import subprocess;raise SystemExit(subprocess.call(['/usr/local/bin/python3.14',str(ROOT/'tools/implement-mac-manager.py'),'t03-verify']))
+ if not(a.acceptance and a.pilot=='include-what-you-use'):raise SystemExit('Use --checks or --acceptance --pilot include-what-you-use')
+ out=RECOVERY/('acceptance-'+str(time.time_ns()));out.mkdir(parents=True); report={'started_at':time.time(),'pilot':a.pilot}
+ try:
+  health=api('/health');report['health']=health
+  if health.get('version')!='1.3.3' or 'migration-v1' not in health.get('capabilities',[]): raise RuntimeError('Installed app is not the verified 1.3.3 migration build')
+  plan=api('/api/migrations/plan',{'name':a.pilot})['plan'];report['plan']=plan
+  print(json.dumps({'source':plan['source'],'target':plan['target']['version'],'ports':plan['target']['ports'],'commands':plan['commands']},ensure_ascii=False,indent=2))
+  if input('לאשר את המעבר המדויק המוצג? הקלד YES: ').strip()!='YES': report['result']='not_approved';code=2
+  else:
+   report['result']=api('/api/migrations/approve',{'id':plan['id']})
+   if report['result'].get('migration',{}).get('status')!='completed': raise RuntimeError('Migration did not complete')
+   # The backend verifies postcheck before returning; capture the final live state.
+   report['after']=api('/api/state')
+   # Restart only the idle update-manager app, then prove a new backend owns the route.
+   import subprocess
+   previous_pid=health.get('pid')
+   subprocess.run(['/usr/bin/osascript','-e','tell application "Mac Update Manager" to quit'],check=True)
+   subprocess.run(['/usr/bin/open','/Applications/Mac Update Manager.app'],check=True)
+   deadline=time.time()+45
+   while time.time()<deadline:
+    try:
+     restarted=api('/health')
+     if restarted.get('pid')!=previous_pid and restarted.get('version')=='1.3.3': break
+    except Exception: pass
+    time.sleep(1)
+   else: raise RuntimeError('App restart could not be verified')
+   report['restarted_health']=restarted; code=0
+ except Exception as e: report['error']=str(e);code=1
+ report['finished_at']=time.time();(out/'summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));(out/'summary.md').write_text('# T03 acceptance\\n\\n'+json.dumps({'result':report.get('result'),'error':report.get('error')},ensure_ascii=False,indent=2));print('דוח:',out);return code
+if __name__=='__main__':raise SystemExit(main())
+'''
+T03_TESTS = r'''import os,sys,tempfile,unittest
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
+import migration_profiles as p
+class Profiles(unittest.TestCase):
+ def test_only_two_fixed_profiles(self):
+  self.assertEqual(set(p.PROFILES),{'terminal-notifier','include-what-you-use'})
+  self.assertEqual(p.get('include-what-you-use').commands,('include-what-you-use','iwyu_tool.py','fix_includes.py'))
+ def test_intel_gate(self):
+  with patch('migration_profiles.platform.machine',return_value='arm64'):
+   with self.assertRaisesRegex(ValueError,'Intel'):p.intel_only()
+ def test_paths_are_fixed(self):
+  self.assertTrue(all(str(x).startswith('/opt/local/bin/') for x in p.command_paths(p.get('include-what-you-use')).values()))
+if __name__=='__main__':unittest.main()
+'''
+T03_VALIDATION = '''# T03 — מנגנון מעבר לכלים עצמאיים\n\nגרסה 1.3.3 מוסיפה מסלול Mac Intel בלבד למעבר Homebrew ל־MacPorts עבור `include-what-you-use`. המימוש נבדק בבדיקות מבודדות; המעבר האמיתי לא בוצע בזמן הפיתוח.\n\nהפעלת בדיקות בלבד:\n\n```bash\n/usr/local/bin/python3.14 tools/verify-migration.py --checks\n```\n\nהפעלת בדיקת הקבלה והמעבר לאחר אישור מפורש:\n\n```bash\n/usr/local/bin/python3.14 tools/verify-migration.py --acceptance --pilot include-what-you-use\n```\n\nהפקודה יוצרת דוח תחת `~/.local/share/brew-update-manager/recovery/t03-1.3.3/`. T03 נסגרת רק אם הדוח מאשר את שלוש פקודות IWYU, הסרת עותק Homebrew, בעלות MacPorts והפעלה מחדש.\n'''
+
+def t03_outputs(read):
+    out={
+      'backend/migration_profiles.py':T03_PROFILES,
+      'backend/migration_engine.py':T03_ENGINE,
+      'backend/brew-updates-service.py':t03_service(read('backend/brew-updates-service.py')),
+      'backend/automatic_alternatives.py':read('backend/automatic_alternatives.py').replace("offer.get('name') == 'terminal-notifier'", "offer.get('name') in {'terminal-notifier','include-what-you-use'}"),
+      'tests/test_migration_profiles.py':T03_TESTS,
+      'docs/T03_VALIDATION.md':T03_VALIDATION,
+      'tools/verify-migration.py':T03_VERIFY,
+      'backend/mac_manager.py':read('backend/mac_manager.py').replace("'ok': catalog_state['fresh'], 'checked_at': s.now_iso(),", "'ok': True, 'checked_at': s.now_iso(),").replace("executable=p['name']=='terminal-notifier'", "executable=p['name'] in {'terminal-notifier','include-what-you-use'}")+"\n# Bundle 003 keeps the verified notifier pilot intact and delegates new profiles.\n_legacy_migration_plan=migration_plan\n_legacy_approve=approve\nimport migration_engine as _migration_engine\ndef migration_plan(s,name): return _legacy_migration_plan(s,name) if name=='terminal-notifier' else _migration_engine.plan(s,name)\ndef approve(s,plan_id):\n old=s.read_json(s.DATA_DIR/'migration-plan.json') or {}\n return _legacy_approve(s,plan_id) if old.get('name')=='terminal-notifier' and not old.get('schema_version') else _migration_engine.approve(s,plan_id)\ndef migration_recovery_plan(s, transaction_id, action): return _migration_engine.recovery_plan(s, transaction_id, action)\n",
+      'package.json':read('package.json').replace('"version": "1.3.2"','"version": "1.3.3"'),
+      'package-lock.json':read('package-lock.json').replace('"version": "1.3.2"','"version": "1.3.3"'),
+      'docs/MAC_MANAGER_TASKS.md':read('docs/MAC_MANAGER_TASKS.md').replace('### T03 — מנגנון מעבר משותף לכלים עצמאיים','### T03 — מנגנון מעבר משותף לכלים עצמאיים\n\nסטטוס: המימוש מוכן לבדיקה מקומית; סגירה מחייבת את פקודת הקבלה של IWYU.'),
+    }
+    return out
+T03_RECOVERY=Path.home()/'.local/share/brew-update-manager/recovery/t03-1.3.3'
+def t03_service(source):
+    source=source.replace('"/api/migrations/approve", "/api/macports/sync"}', '"/api/migrations/approve", "/api/migrations/recovery-plan", "/api/macports/sync"}')
+    source=source.replace('if self.path == "/api/migrations/approve":\n                    result = mac_manager.approve(sys.modules[__name__], body.get("id"))', 'if self.path == "/api/migrations/recovery-plan":\n                    return {"ok": True, "plan": mac_manager.migration_recovery_plan(sys.modules[__name__], body.get("transaction_id"), body.get("action"))}\n                if self.path == "/api/migrations/approve":\n                    result = mac_manager.approve(sys.modules[__name__], body.get("id"))')
+    source=source.replace('self._send_json(200, run_exclusive("migration", operation))', 'self._send_json(200, run_with_progress("migration", operation))')
+    source=source.replace('except Exception as exc:\n            self._send_json(400, {"ok": False, "detail": str(exc)})\n        return True\n\n    def do_GET(self):', 'except Exception as exc:\n            self._send_json(400, {"ok": False, "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})\n        return True\n\n    def do_GET(self):')
+    source=source.replace('"protocol": 6,', '"protocol": 6,\n                    "version": "1.3.3",\n                    "pid": os.getpid(),\n                    "data_dir": str(DATA_DIR),\n                    "capabilities": ["migration-v1", "migration-recovery"],\n                    "backend_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),')
+    source=source.replace('import argparse\n', 'import argparse\nimport hashlib\n',1)
+    return source
+def t03_manifest():
+    p=T03_RECOVERY/'manifest.json';return json.loads(p.read_text()) if p.exists() else None
+def t03_apply(apply=False):
+    targets=t03_outputs(lambda x:(ROOT/x).read_text())
+    old=t03_manifest()
+    if old:
+      for rel,r in old['files'].items():
+       if not (ROOT/rel).is_file() or digest((ROOT/rel).read_bytes())!=r['after']: raise RuntimeError('Bundle 003 refuses later edit: '+rel)
+      print('Bundle 003 already applied.');return
+    if not apply:
+      print('Bundle 003 can apply cleanly to '+str(len(targets))+' files.');return
+    T03_RECOVERY.mkdir(parents=True,exist_ok=True); records={}
+    for rel,content in targets.items():
+      p=ROOT/rel;before=p.read_bytes() if p.exists() else None;after=content.encode();records[rel]={'before':digest(before) if before is not None else None,'after':digest(after)}
+      if before!=after:
+       if before is not None:(T03_RECOVERY/'before'/rel).parent.mkdir(parents=True,exist_ok=True);(T03_RECOVERY/'before'/rel).write_bytes(before)
+       p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(after)
+    (T03_RECOVERY/'manifest.json').write_text(json.dumps({'version':'1.3.3','files':records},indent=2));print('Applied bundle 003.')
+def t03_restore():
+ old=t03_manifest()
+ if not old:raise RuntimeError('Bundle 003 is not applied')
+ for rel,r in old['files'].items():
+  p=ROOT/rel
+  if not p.is_file() or digest(p.read_bytes())!=r['after']:raise RuntimeError('Protected restore refuses later edit: '+rel)
+ for rel,r in old['files'].items():
+  p=ROOT/rel
+  if r['before'] is None:p.unlink()
+  else:p.write_bytes((T03_RECOVERY/'before'/rel).read_bytes())
+ (T03_RECOVERY/'manifest.json').rename(T03_RECOVERY/('restored-'+str(time.time_ns())+'.json'));print('Bundle 003 restored.')
+def t03_verify():
+ t03_apply(False)
+ run(['/usr/local/bin/python3.14','-m','unittest','discover','-s','tests','-p','test_*.py'])
+ for p in ['backend/migration_profiles.py','backend/migration_engine.py','electron/main.js','electron/preload.js','renderer/app.js','renderer/mac-manager.js']:run(['/usr/local/bin/python3.14','-m','py_compile',p] if p.endswith('.py') else ['node','--check',p])
+ run(['node','tests/service-http.cjs']);run([str(ROOT/'node_modules/.bin/electron'),'tests/progress-ui.cjs']);run([str(ROOT/'node_modules/.bin/electron'),'tests/operation-results-ui.cjs']);run(['git','diff','--check'])
+def t03_main(mode):
+ if mode=='t03-check':t03_apply(False)
+ elif mode=='t03-apply':t03_apply(True)
+ elif mode=='t03-verify':t03_verify()
+ elif mode=='t03-pack':t03_verify();run([str(ROOT/'node_modules/.bin/electron-builder'),'--dir','--mac','--x64','--publish','never'])
+ elif mode=='t03-install':
+  # Reuse the existing guarded installer, but bind it to bundle 003 verification.
+  global verify
+  verify=t03_verify
+  install()
+ elif mode=='t03-restore':t03_restore()
+ else:raise RuntimeError('Unknown bundle 003 mode')
+
 if __name__=='__main__':
     try:
         if len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])
+        elif len(sys.argv)==2 and sys.argv[1].startswith('t03-'):t03_main(sys.argv[1])
         else:main()
     except Exception as error:
         print('STOP: '+str(error),file=sys.stderr);sys.exit(1)

@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import argparse
+import hashlib
 from contextlib import contextmanager
 import datetime as dt
 import json
@@ -2726,7 +2727,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             return {}
 
     def _mac_operation(self):
-        if self.path not in {"/api/migrations/plan", "/api/migrations/approve", "/api/macports/sync"}:
+        if self.path not in {"/api/migrations/plan", "/api/migrations/approve", "/api/migrations/recovery-plan", "/api/macports/sync"}:
             return False
         if self.headers.get('Content-Type', '').split(';')[0] != 'application/json' or self.headers.get('Origin'):
             self._send_json(403, {'ok': False, 'detail': 'Desktop JSON requests only'})
@@ -2739,6 +2740,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             try:
                 if self.path == "/api/migrations/plan":
                     return {"ok": True, "plan": mac_manager.migration_plan(sys.modules[__name__], body.get("name"))}
+                if self.path == "/api/migrations/recovery-plan":
+                    return {"ok": True, "plan": mac_manager.migration_recovery_plan(sys.modules[__name__], body.get("transaction_id"), body.get("action"))}
                 if self.path == "/api/migrations/approve":
                     result = mac_manager.approve(sys.modules[__name__], body.get("id"))
                     return {"ok": True, "migration": result, "snapshot": compute_snapshot(False, enrich_details=False)}
@@ -2754,11 +2757,11 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                                    canceled=canceled, current_package=None,
                                    completed_at=now_iso(), eta_seconds=None if sys.exc_info()[0] else 0)
         try:
-            self._send_json(200, run_exclusive("migration", operation))
+            self._send_json(200, run_with_progress("migration", operation))
         except BusyError as exc:
             self._send_json(409, {"ok": False, "detail": str(exc)})
         except Exception as exc:
-            self._send_json(400, {"ok": False, "detail": str(exc)})
+            self._send_json(400, {"ok": False, "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
         return True
 
     def do_GET(self):
@@ -2772,6 +2775,11 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     "operation": operation,
                     "project_root": str(PROJECT_ROOT),
                     "protocol": 6,
+                    "version": "1.3.3",
+                    "pid": os.getpid(),
+                    "data_dir": str(DATA_DIR),
+                    "capabilities": ["migration-v1", "migration-recovery"],
+                    "backend_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 },
             )
             return

@@ -92,7 +92,7 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
         if not catalog_state['fresh']:
             ports = [dict(p, inventory_stale=True, update_block_reason='inventory_unavailable') for p in ports]
         packages.extend(ports)
-        status['macports'] = {'ok': catalog_state['fresh'], 'checked_at': s.now_iso(),
+        status['macports'] = {'ok': True, 'checked_at': s.now_iso(),
                              'catalog': catalog_state, 'catalog_note': catalog_state['status']}
     except s.OperationCancelledError:
         raise
@@ -130,7 +130,7 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
                         p['update_block_reason'] = 'source_required'
                     offers.append(dict(name=p['name'], ports=links.get(p['name'], []),
                         status='requires_live_check' if links.get(p['name']) else 'mapping_unverified',
-                        executable=p['name']=='terminal-notifier', source_blockers=blockers))
+                        executable=p['name'] in {'terminal-notifier','include-what-you-use'}, source_blockers=blockers))
     except s.OperationCancelledError:
         raise
     except Exception as error:
@@ -306,3 +306,13 @@ def notifier_path():
         Path('/opt/local/Applications/terminal-notifier.app/Contents/MacOS/terminal-notifier'),
         Path('/Applications/MacPorts/terminal-notifier.app/Contents/MacOS/terminal-notifier')]
     return next((p for p in candidates if p.is_file()), None)
+
+# Bundle 003 keeps the verified notifier pilot intact and delegates new profiles.
+_legacy_migration_plan=migration_plan
+_legacy_approve=approve
+import migration_engine as _migration_engine
+def migration_plan(s,name): return _legacy_migration_plan(s,name) if name=='terminal-notifier' else _migration_engine.plan(s,name)
+def approve(s,plan_id):
+ old=s.read_json(s.DATA_DIR/'migration-plan.json') or {}
+ return _legacy_approve(s,plan_id) if old.get('name')=='terminal-notifier' and not old.get('schema_version') else _migration_engine.approve(s,plan_id)
+def migration_recovery_plan(s, transaction_id, action): return _migration_engine.recovery_plan(s, transaction_id, action)
