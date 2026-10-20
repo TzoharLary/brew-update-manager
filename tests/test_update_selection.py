@@ -114,6 +114,14 @@ class ProviderSelection(unittest.TestCase):
         chosen, = selection.select([source], [port, home])
         self.assertEqual(chosen["target_provider"], "homebrew")
 
+    def test_decision_carries_exact_installed_package_version(self):
+        source = self.source(installed_version="1.2_5",
+                             installed_upstream_version="1.2", installed_revision=5)
+        result, = selection.select([source], [
+            self.candidate(upstream="1.2", revision=6)])
+        self.assertEqual(result["installed_version"], "1.2")
+        self.assertEqual(result["installed_package_version"], "1.2_5")
+
     def test_installed_upstream_from_receipt_preserves_revision_update(self):
         source = self.source(installed_version="1.2_5", installed_upstream_version="1.2",
                              installed_revision=5)

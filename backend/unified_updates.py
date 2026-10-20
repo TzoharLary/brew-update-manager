@@ -538,7 +538,7 @@ def _revalidate_migration(s, decision):
                 or plan.get("profile_version") != candidate.get("profile_version")
                 or source.get("installation_id") != decision["source_installation_id"]
                 or source.get("provider") != decision["current_provider"]
-                or source.get("version") != decision["installed_version"]
+                or source.get("version") != decision.get("installed_package_version")
                 or target.get("provider") != provider
                 or target.get("version") != candidate.get("upstream_version")):
             raise PlanError("plan_changed")
@@ -603,7 +603,10 @@ def execute(s, body, *, all_ready=False):
     rows = {_ids(p): p for p in current.get("packages", [])}
     for decision in decisions:
         item = rows.get(decision["source_installation_id"])
-        if not item or item.get("installed_version") != decision["installed_version"]:
+        if (not item
+                or item.get("installed_version") != decision.get("installed_package_version")
+                or (item.get("installed_upstream_version") or item.get("installed_version"))
+                   != decision["installed_version"]):
             raise PlanError("plan_changed")
         if (item.get("provider") or "homebrew") != decision["current_provider"]:
             raise PlanError("plan_changed")

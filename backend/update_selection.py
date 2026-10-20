@@ -227,6 +227,7 @@ def select(installed, candidates, ownership=None, *, plan_id=None, created_at=No
             "current_provider": provider,
             "target_provider": selected["provider"] if selected else provider,
             "installed_version": current,
+            "installed_package_version": row.get("installed_version"),
             "target_version": selected.get("upstream_version") if selected else None,
             "action": action, "status": status, "selected_candidate": selected,
             "alternatives": alternatives, "reason_codes": reasons, "blockers": [],

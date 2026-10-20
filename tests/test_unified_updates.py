@@ -304,7 +304,9 @@ class Plans(unittest.TestCase):
             decision = {"logical_id": "jq",
                         "source_installation_id": "homebrew:formula:jq",
                         "current_provider": "homebrew", "target_provider": "pixi",
-                        "installed_version": "1.7", "selected_candidate": route}
+                        "installed_version": "1.7",
+                        "installed_package_version": "1.7",
+                        "selected_candidate": route}
             keys = ("provider", "availability", "execution_supported",
                     "closure_verified", "upstream_version", "package_version",
                     "revision", "provider_names", "system", "closure",
@@ -331,6 +333,35 @@ class Plans(unittest.TestCase):
                 material.assert_not_called()
             with self.assertRaisesRegex(u.PlanError, "migration_route_unverified"):
                 u._revalidate_migration(s, dict(decision, target_provider="macports"))
+
+    def test_migration_compares_exact_package_revision_not_just_upstream(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            candidate = {"provider": "macports", "migration_plan_id": "a"*32,
+                         "migration_fingerprint": "b"*64,
+                         "profile_id": "terminal-notifier", "profile_version": 1,
+                         "provider_names": ["terminal-notifier"],
+                         "upstream_version": "1.3"}
+            decision = {"logical_id": "terminal-notifier",
+                        "source_installation_id": "homebrew:formula:terminal-notifier",
+                        "current_provider": "homebrew", "target_provider": "macports",
+                        "installed_version": "1.2",
+                        "installed_package_version": "1.2_4",
+                        "selected_candidate": candidate}
+            plan = {"action": "migrate", "profile": "terminal-notifier",
+                    "profile_version": 1, "fingerprint": "b"*64,
+                    "source": {"provider": "homebrew",
+                               "installation_id": "homebrew:formula:terminal-notifier",
+                               "version": "1.2_4"},
+                    "target": {"provider": "macports", "version": "1.3",
+                               "ports": ["terminal-notifier"]}}
+            with patch("migration_engine._load_plan", return_value=plan), \
+                 patch("migration_engine._material", return_value=({}, "b"*64)):
+                self.assertIs(u._revalidate_migration(s, decision), plan)
+                with self.assertRaisesRegex(u.PlanError, "plan_changed"):
+                    u._revalidate_migration(s, dict(decision,
+                        installed_package_version="1.2_5"))
 
     def test_mapped_pixi_candidate_is_discovered_but_not_executable(self):
         from unittest.mock import patch
