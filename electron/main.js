@@ -332,6 +332,7 @@ app.on('before-quit', () => {
 });
 
 ipcMain.handle('state:get', async () => fetchJson(serviceUrl('/api/state')));
+ipcMain.handle('update:plan:get', async () => fetchJson(serviceUrl('/api/update-plan')));
 ipcMain.handle('progress:get', async () => fetchJson(serviceUrl('/api/progress')));
 ipcMain.handle('updates:history:get', async () => fetchJson(serviceUrl('/api/update-history')));
 ipcMain.handle('settings:get', async () => fetchJson(serviceUrl('/api/settings')));
@@ -377,10 +378,10 @@ ipcMain.handle('update:one', async (_event, payload) => fetchJson(serviceUrl('/a
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(payload || {}),
 }));
-ipcMain.handle('update:all', async () => fetchJson(serviceUrl('/api/update-all'), {
+ipcMain.handle('update:all', async (_event, payload) => fetchJson(serviceUrl('/api/update-all'), {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({}),
+  body: JSON.stringify(payload || {}),
 }));
 ipcMain.handle('update:selected', async (_event, payload) => fetchJson(serviceUrl('/api/update-selected'), {
   method: 'POST',

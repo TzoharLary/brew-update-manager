@@ -31,7 +31,14 @@ function renderMacManager() {
   title.textContent=(he?'עדכונים חסומים וחלופות':'Blocked updates and alternatives')+` (${snapshot?.migrations?.length||0})`;
   panel.appendChild(title);
   const hint=document.createElement('p');
-  hint.textContent=he?'החלופות נבדקות אוטומטית עם ״התחל בדיקה״. מעבר למנהל אחר דורש בדיקת שימוש ואישור נפרד.':'Alternatives are checked automatically by Start Check. Changing managers requires a consumer review and separate approval.';
+  hint.textContent=he?'עדכון חבילה יוצג רק עם נתיב בינארי מאומת. פעולות מעבר שאינן מוכנות חסומות.':'An update is executable only with a verified binary route. Unfinished migration paths remain blocked.';
+  for (const decision of snapshot?.update_decisions||[]) {
+    if (decision.status==='current') continue;
+    const line=document.createElement('p');
+    const route=decision.current_provider===decision.target_provider?decision.current_provider:`${decision.current_provider} → ${decision.target_provider}`;
+    line.textContent=`${decision.logical_id}: ${decision.installed_version||'—'} → ${decision.target_version||'—'} · ${route} · ${decision.status} · ${(decision.reason_codes||[]).join(', ')}`;
+    panel.appendChild(line);
+  }
   panel.appendChild(hint);
   const labels={fresh:he?'עדכני':'current',refreshed:he?'רוענן אוטומטית':'refreshed automatically',stale:he?'ירוענן בבדיקה הבאה':'will refresh on next check',awaiting_authorization:he?'הרענון ממתין להזדהות; לחץ התחל בדיקה':'refresh awaits authorization; press Start Check',refresh_failed:he?'הרענון נכשל או לא אושר; התחל בדיקה ינסה שוב':'refresh failed or was declined; Start Check will retry',not_installed:he?'MacPorts אינו מותקן':'MacPorts is not installed'};
   for(const [name,provider] of Object.entries(snapshot?.providers||{})) {

@@ -39,6 +39,9 @@ import update_routes as routes
 import macports_provider
 import mac_manager
 import installation_evidence
+import unified_updates
+import operation_lock
+import provider_ownership
 import copy
 
 try:
@@ -60,6 +63,10 @@ BREW_SCAN_TIMEOUT_SECONDS = 20
 BREW_SCAN_MAX_RESULTS = 50
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_STARTUP_SHA = hashlib.sha256(b''.join(
+    p.name.encode() + b'\0' + hashlib.sha256(p.read_bytes()).digest()
+    for p in sorted((PROJECT_ROOT / 'backend').glob('*.py')))).hexdigest()
+PROCESS_STARTED_AT = now_start = time.time()
 if (PROJECT_ROOT / "package.json").exists():
     DATA_DIR = PROJECT_ROOT / "data"
 else:
@@ -1017,10 +1024,7 @@ def read_json(path: Path) -> dict[str, Any] | None:
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    ensure_dirs()
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    provider_ownership.atomic_write_json(path, payload)
 
 
 def append_log(path: Path, message: str) -> None:
@@ -1297,6 +1301,9 @@ def run_exclusive(op_name: str, fn):
     if op_name in {'update_plan', 'migration'}:
         mac_manager.SCAN_CONTEXT.active = True
     try:
+        if op_name.startswith(("update", "migration", "macports")) and op_name != "update_plan":
+            with operation_lock.OperationLock(TOOLS_ROOT, op_name):
+                return fn()
         return fn()
     except OperationCancelledError:
         set_check_progress(running=False, phase='canceled', message='Operation canceled',
@@ -2743,6 +2750,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 if self.path == "/api/migrations/recovery-plan":
                     return {"ok": True, "plan": mac_manager.migration_recovery_plan(sys.modules[__name__], body.get("transaction_id"), body.get("action"))}
                 if self.path == "/api/migrations/approve":
+                    raise unified_updates.PlanError("review_required", "Legacy migration approval is disabled until transactional recovery is complete")
                     result = mac_manager.approve(sys.modules[__name__], body.get("id"))
                     return {"ok": True, "migration": result, "snapshot": compute_snapshot(False, enrich_details=False)}
                 result = macports_provider.privileged(sys.modules[__name__], "sync")
@@ -2764,6 +2772,26 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
         return True
 
+    def _apply_unified_request(self, body, *, all_ready=False):
+        try:
+            def operation():
+                reset_check_progress_for_run()
+                set_check_progress(operation_name="unified_update", phase="preflight",
+                                   message="Validating displayed provider decisions",
+                                   running=True, eta_seconds=None)
+                return unified_updates.execute(sys.modules[__name__], body, all_ready=all_ready)
+            response = run_with_progress("update_unified", operation)
+            self._send_json(200, response)
+        except unified_updates.PlanError as exc:
+            code = 400 if exc.code in {"invalid_request", "invalid_request_id", "ambiguous_decisions"} else 409
+            self._send_json(code, {"ok": False, "error": exc.code, "detail": str(exc),
+                                   "plan": unified_updates.read_plan(sys.modules[__name__])})
+        except (BusyError, operation_lock.OperationBusy) as exc:
+            self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"ok": False, "error": "update_failed", "detail": str(exc)})
+        return True
+
     def do_GET(self):
         if self.path == "/health":
             operation = read_current_operation()
@@ -2779,7 +2807,10 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     "pid": os.getpid(),
                     "data_dir": str(DATA_DIR),
                     "capabilities": ["migration-v1", "migration-recovery"],
-                    "backend_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    "backend_sha256": BACKEND_STARTUP_SHA,
+                    "backend_code_sha256": BACKEND_STARTUP_SHA,
+                    "process_started_at": PROCESS_STARTED_AT,
+                    "build_id": "unified-intel-foundations",
                 },
             )
             return
@@ -2847,7 +2878,12 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 if item and pkg.get("outdated") and item["version"] == pkg["latest_version"]:
                     if item["reason"] != "source_required" or load_settings()["binary_only"]:
                         pkg["update_block_reason"] = item["reason"]
+            unified_updates.attach_cached(sys.modules[__name__], state)
             self._send_json(200, state)
+            return
+
+        if self.path == "/api/update-plan":
+            self._send_json(200, {"ok": True, "plan": unified_updates.read_plan(sys.modules[__name__])})
             return
 
         if self.path == "/api/progress":
@@ -3016,6 +3052,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/update-one":
             body = self._read_json_body()
+            if body.get("plan_id"):
+                return self._apply_unified_request(body)
             name = str(body.get("name") or "").strip()
             kind = str(body.get("kind") or "").strip()
 
@@ -3160,6 +3198,9 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/update-all":
+            body = self._read_json_body()
+            if body.get("plan_id"):
+                return self._apply_unified_request(body, all_ready=True)
             try:
                 payload = run_with_progress("update_all", lambda: run_update_all(track_progress=True))
                 self._send_json(200, payload)
@@ -3171,6 +3212,8 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/update-selected":
             body = self._read_json_body()
+            if body.get("plan_id"):
+                return self._apply_unified_request(body)
             raw_packages = body.get("packages") if isinstance(body, dict) else None
 
             try:

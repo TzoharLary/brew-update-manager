@@ -93,7 +93,7 @@ def _artifact(url):
     if not parsed.path.startswith("/conda-forge/"):
         raise PixiUnavailable("untrusted_binary_channel")
     pieces = parsed.path.split("/")
-    if len(pieces) < 5 or pieces[2] not in (PLATFORM, "noarch") or not pieces[-1].endswith((".conda", ".tar.bz2")):
+    if len(pieces) < 4 or pieces[2] not in (PLATFORM, "noarch") or not pieces[-1].endswith((".conda", ".tar.bz2")):
         raise PixiUnavailable("wrong_platform_or_format")
     if not parsed.fragment or not re.fullmatch(r"(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{64})", parsed.fragment):
         raise PixiUnavailable("binary_checksum_missing")
