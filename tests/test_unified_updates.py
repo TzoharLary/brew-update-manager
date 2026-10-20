@@ -228,6 +228,38 @@ class Plans(unittest.TestCase):
                 result = u.collect_candidates(s, {"packages": [row]})
             self.assertEqual(result, [])
 
+    def test_collect_candidates_selects_pixi_for_current_brew_with_complete_plan(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.7", "outdated": False,
+                   "classification": {"category": "standalone_candidate",
+                                      "gaps": [], "consumers": [], "shared_roles": []}}
+            verified = {"provider": "pixi", "availability": "verified",
+                        "execution_supported": True, "closure_verified": True,
+                        "upstream_version": "1.8", "package_version": "1.8",
+                        "revision": None, "provider_names": ["jq"],
+                        "system": {"os": "macos", "arch": "x86_64"},
+                        "closure": [{"arch": "osx-64", "archive_id": "jq-fixture",
+                                     "checksum": "f"*64}],
+                        "manifest": "locked", "lock": "pinned",
+                        "lock_sha256": "f"*64}
+            plan = {"id": "a"*32, "fingerprint": "b"*64,
+                    "target": {"provider": "pixi", "candidate": dict(verified),
+                               "version": "1.8"}, "profile": "jq", "profile_version": 1}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                    {"jq": {"stable_version": "1.7", "revision": 0}}, {})), \
+                 patch("pixi_provider.discover", return_value=verified), \
+                 patch("migration_engine.plan", return_value=plan):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertTrue(row["discovery_complete"])
+            decision, = sel.select([row], candidates)
+            self.assertEqual(decision["status"], "ready")
+            self.assertEqual(decision["target_provider"], "pixi")
+            self.assertEqual(decision["selected_candidate"]["migration_plan_id"], "a"*32)
+
     def test_pixi_bridge_only_allows_exact_profile_with_plan(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
