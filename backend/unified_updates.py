@@ -15,6 +15,7 @@ import macports_provider
 import provider_ownership
 import update_routes
 import update_selection
+import migration_profiles
 
 
 class PlanError(ValueError):
@@ -83,7 +84,7 @@ def _formula_closure(name, catalog, installed, excluded):
 
 def _homebrew(s, row, catalog, installed, settings):
     candidate = _base_candidate(row, "homebrew", "update")
-    if row.get("kind") != "formula" or not row.get("outdated") or row.get("inventory_stale"):
+    if row.get("kind") != "formula" or row.get("inventory_stale"):
         candidate["blockers"] = ["homebrew_candidate_unverified"]
         return candidate
     if not catalog or installed is None:
@@ -101,7 +102,8 @@ def _homebrew(s, row, catalog, installed, settings):
                          ("_" + str(entry.get("revision")) if entry.get("revision") else ""),
                          revision=int(entry.get("revision") or 0),
                          closure=closure, closure_verified=True, availability="verified",
-                         execution_supported=True, blockers=[])
+                         execution_supported=True, provider_outdated=bool(row.get("outdated")),
+                         blockers=[])
     except (KeyError, ValueError, PlanError) as error:
         candidate["blockers"] = [str(error)]
     return candidate
@@ -200,54 +202,135 @@ def _pixi_update(s, source, candidate):
             "stdout": "Exact locked Pixi generation installed and verified",
             "stderr": ""}
 
+def _load_homebrew_catalog(s):
+    from update_engine import Engine
+    engine = Engine(s)
+    return engine.catalog(), engine.installed()
+
+
+def _unavailable_bridge(row, provider, target_names, reason):
+    """A mapped package is not necessarily a verified executable route."""
+    action = "update" if provider == (row.get("provider") or "homebrew") else "migrate"
+    candidate = _base_candidate(row, provider, action)
+    candidate["provider_names"] = list(target_names)
+    candidate["blockers"] = [reason]
+    return candidate
+
+
+def _pixi_bridge(s, row, *, timeout=60):
+    """Discover an exact Intel route, without inventing a missing migration."""
+    candidate = _unavailable_bridge(
+        row, "pixi", [update_routes.PIXI_TOOLS[row["name"]][0]],
+        "pixi_migration_transaction_unavailable")
+    import pixi_provider
+    try:
+        verified = pixi_provider.discover(s, row["name"], max_seconds=timeout)
+        candidate.update(verified, schema_version=1, logical_id=row["name"],
+                         source_installation_id=_ids(row), action="migrate",
+                         execution_supported=False, profile_id=None, profile_version=None,
+                         blockers=["pixi_migration_transaction_unavailable"],
+                         checked_at=time.time())
+    except Exception as error:
+        if isinstance(error, getattr(s, "OperationCancelledError", ())):
+            raise
+        candidate["blockers"].append("pixi_discovery_unverified:" + str(error)[-180:])
+    return candidate
+
+
 def collect_candidates(s, snapshot):
-    """Run only during an explicit check. Cached state GET never scans providers."""
+    """Collect all *mapped* provider alternatives, regardless of brew.outdated.
+
+    Classifications originate in the common T02 inventory scan. A missing
+    migration profile remains a visible blocker, not a runnable alternative.
+    """
     rows = snapshot.get("packages", [])
-    offers = {o["name"]: o for o in snapshot.get("migrations", [])}
     mapping = json.loads((Path(__file__).with_name("macports-map.json")).read_text())
     candidates = []
-    catalog, installed = None, None
     settings = s.load_settings()
     try:
-        from update_engine import Engine
-        engine = Engine(s)
-        catalog, installed = engine.catalog(), engine.installed()
+        catalog, installed = _load_homebrew_catalog(s)
     except Exception:
-        pass
+        catalog, installed = None, None
     for row in rows:
         provider = row.get("provider") or "homebrew"
-        if row.get("excluded") or row.get("name") == "ngrok" or row.get("inventory_stale"):
+        name = row.get("name")
+        if (not name or row.get("excluded") or name == "ngrok"
+                or row.get("inventory_stale")):
+            row["discovery_complete"] = False
             continue
-        if provider == "homebrew":
-            if row.get("kind") == "formula" and row.get("outdated"):
-                candidates.append(_homebrew(s, row, catalog, installed, settings))
-            offer = offers.get(row.get("name"))
-            roots = mapping.get(row.get("name"), [])
-            if row.get("kind") == "formula" and roots and offer and offer.get("status") == "binary_available":
-                row["classification"] = offer.get("classification") or {}
-                candidate = _ports(s, row, roots, "migrate")
-                candidate["logical_id"] = row["name"]
-                candidate["profile_id"] = row["name"] if row["name"] in (
-                    "terminal-notifier", "include-what-you-use") else None
-                candidate["profile_version"] = 1 if candidate["profile_id"] else None
-                if candidate["availability"] == "verified" and candidate["profile_id"]:
-                    try:
-                        import migration_engine
-                        migration = migration_engine.plan(s, row["name"])
-                        candidate.update(migration_plan_id=migration["id"],
-                                         migration_fingerprint=migration["fingerprint"],
+        row["discovery_complete"] = True
+        if provider == "homebrew" and row.get("kind") == "formula":
+            if catalog is None or installed is None:
+                candidates.append(_unavailable_bridge(
+                    row, "homebrew", [name], "homebrew_catalog_unavailable"))
+                row["discovery_complete"] = False
+            else:
+                entry = catalog.get(name)
+                current = row.get("installed_upstream_version") or row.get("installed_version")
+                version = entry.get("stable_version") if isinstance(entry, dict) else None
+                comparison = (update_selection.compare_upstream(str(version), str(current))
+                              if version is not None else None)
+                # No closure inspection is needed if a known stable upstream
+                # cannot be an update; other mapped providers are still probed.
+                if row.get("outdated") or comparison is None or comparison > 0:
+                    candidate = _homebrew(s, row, catalog, installed, settings)
+                    candidates.append(candidate)
+                    if candidate.get("availability") != "verified":
+                        row["discovery_complete"] = False
+            roots = mapping.get(name)
+            if roots:
+                profile = migration_profiles.get(name)
+                classification = row.get("classification") or {}
+                if not profile or profile.provider != "macports":
+                    candidates.append(_unavailable_bridge(
+                        row, "macports", roots, "migration_profile_missing"))
+                elif classification.get("category") != "standalone_candidate":
+                    candidates.append(_unavailable_bridge(
+                        row, "macports", roots, "fresh_classification_required"))
+                else:
+                    offer = _ports(s, row, roots, "migrate")
+                    offer["profile_id"] = profile.name
+                    offer["profile_version"] = profile.version
+                    if offer["availability"] == "verified":
+                        try:
+                            import migration_engine
+                            plan = migration_engine.plan(s, name, classification=classification)
+                            offer.update(migration_plan_id=plan["id"],
+                                         migration_fingerprint=plan["fingerprint"],
                                          execution_supported=True, blockers=[])
-                    except Exception as error:
-                        if isinstance(error, getattr(s, "OperationCancelledError", ())):
-                            raise
-                        candidate["blockers"] = ["migration_preflight_failed: " + str(error)[-200:]]
+                        except Exception as error:
+                            if isinstance(error, getattr(s, "OperationCancelledError", ())):
+                                raise
+                            offer["blockers"] = ["migration_preflight_failed:" + str(error)[-180:]]
+                    else:
+                        row["discovery_complete"] = False
+                    candidates.append(offer)
+            if name in update_routes.PIXI_TOOLS:
+                classification = row.get("classification") or {}
+                if classification.get("category") != "standalone_candidate":
+                    candidates.append(_unavailable_bridge(
+                        row, "pixi", [update_routes.PIXI_TOOLS[name][0]],
+                        "fresh_classification_required"))
+                else:
+                    candidate = _pixi_bridge(s, row)
+                    candidates.append(candidate)
+                    if candidate.get("availability") != "verified":
+                        row["discovery_complete"] = False
+        elif provider == "homebrew" and row.get("kind") == "cask":
+            candidates.append(_unavailable_bridge(
+                row, "homebrew", [name], "cask_binary_adapter_not_verified"))
+        elif provider == "macports" and row.get("kind") == "port":
+            if row.get("outdated"):
+                candidate = _ports(s, row, [name], "update")
                 candidates.append(candidate)
-        elif provider == "macports" and row.get("kind") == "port" and row.get("outdated"):
-            candidates.append(_ports(s, row, [row["name"]], "update"))
+                if candidate.get("availability") != "verified":
+                    row["discovery_complete"] = False
         elif provider == "pixi" and row.get("kind") == "tool":
-            candidates.append(_pixi(s, row))
+            candidate = _pixi(s, row)
+            candidates.append(candidate)
+            if candidate.get("availability") != "verified":
+                row["discovery_complete"] = False
     return candidates
-
 
 def _safe_snapshot(s, snapshot):
     rows = snapshot.get("packages", [])

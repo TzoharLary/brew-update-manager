@@ -165,7 +165,25 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
                 offer.update(status='checking_pending' if offer['ports'] else 'mapping_unverified')
             pkg.update(alternative_status=offer['status'], alternative_detail=offer.get('detail',''),
                        alternative_target=offer.get('target'), alternative_below_homebrew=offer.get('below_homebrew_target', False))
-    offers = installation_evidence.annotate(s, offers, packages, refresh, report=track_progress)
+    # T02 classifies mapped Homebrew CLI tools even when Brew has a bottle.
+    # Supplemental records are not advertised as MacPorts migration offers.
+    mapped = set(links) | set(routes.PIXI_TOOLS)
+    existing = {offer['name'] for offer in offers}
+    supplemental = [dict(name=p['name'], status='classification_only',
+                         ports=[], executable=False)
+                    for p in packages if p.get('provider') == 'homebrew'
+                    and p.get('kind') == 'formula' and p.get('name') in mapped
+                    and p.get('name') not in existing
+                    and not p.get('excluded') and not p.get('inventory_stale')]
+    augmented = installation_evidence.annotate(
+        s, offers + supplemental, packages, refresh, report=track_progress)
+    classifications = {offer['name']: offer['classification'] for offer in augmented
+                       if offer.get('classification')}
+    for package in packages:
+        if package.get('provider') == 'homebrew' and package.get('kind') == 'formula':
+            if package.get('name') in classifications:
+                package['classification'] = classifications[package['name']]
+    offers = augmented[:len(offers)]
     journal = s.read_json(s.DATA_DIR / 'migration-journal.json')
     state = dict(app=s.APP_NAME, updated_at=s.now_iso(), packages=packages,
                  counts=s.summarize_counts(packages), errors=errors, providers=status,

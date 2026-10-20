@@ -61,6 +61,91 @@ class Plans(unittest.TestCase):
                          "homebrew:formula:jq")
 
 
+    def test_cross_provider_discovery_when_brew_is_current(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "include-what-you-use", "kind": "formula",
+                   "provider": "homebrew", "installed_version": "1.0",
+                   "outdated": False, "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"include-what-you-use": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", return_value=dict(
+                     u._base_candidate(row, "macports", "migrate"),
+                     availability="verified", upstream_version="2.0",
+                     closure_verified=True, execution_supported=False, blockers=[])), \
+                 patch("migration_engine.plan", return_value={"id": "a"*32, "fingerprint": "f"}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertTrue(row["discovery_complete"])
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["provider"], "macports")
+            self.assertTrue(candidates[0]["execution_supported"])
+            self.assertEqual(candidates[0]["migration_plan_id"], "a"*32)
+
+    def test_unsupported_mapping_never_calls_port_preflight(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "libtensorflow", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"libtensorflow": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", side_effect=AssertionError("unsupported probe")):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertFalse(candidates[0]["execution_supported"])
+            self.assertIn("migration_profile_missing", candidates[0]["blockers"])
+
+    def test_mapped_pixi_candidate_is_discovered_but_not_executable(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": False,
+                   "classification": {"category": "standalone_candidate"}}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.0"}}, {})), \
+                 patch("pixi_provider.discover", return_value={
+                     "availability": "verified", "upstream_version": "2.0",
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure": [{"arch": "osx-64", "archive_id": "verified-fixture"}],
+                     "closure_verified": True}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["provider"], "pixi")
+            self.assertFalse(candidates[0]["execution_supported"])
+            decision, = sel.select([row], candidates)
+            self.assertNotEqual(decision["status"], "ready")
+            self.assertIn("pixi_migration_transaction_unavailable",
+                          decision["alternatives"][0]["reason_codes"])
+
+    def test_blocked_pixi_does_not_hide_working_homebrew(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "jq", "kind": "formula", "provider": "homebrew",
+                   "installed_version": "1.0", "outdated": True,
+                   "classification": {"category": "standalone_candidate"}}
+            home = dict(u._base_candidate(row, "homebrew", "update"),
+                        availability="verified", upstream_version="1.2",
+                        execution_supported=True, closure_verified=True,
+                        blockers=[])
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"jq": {"stable_version": "1.2"}}, {})), \
+                 patch.object(u, "_homebrew", return_value=home), \
+                 patch("pixi_provider.discover", return_value={
+                     "availability": "verified", "upstream_version": "2.0",
+                     "system": {"os": "macos", "arch": "x86_64"},
+                     "closure_verified": True, "closure": []}):
+                candidates = u.collect_candidates(s, {"packages": [row]})
+            selected, = sel.select([row], candidates)
+            self.assertEqual(selected["target_provider"], "homebrew")
+
     def test_expired_cached_plan_cannot_be_executed(self):
         with tempfile.TemporaryDirectory() as temp:
             from provider_ownership import atomic_write_json
