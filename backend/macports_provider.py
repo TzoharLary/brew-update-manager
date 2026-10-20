@@ -28,6 +28,14 @@ def checked(s, args, **kwargs):
         raise RuntimeError(result.stderr or result.stdout or f'Command failed: {args[0]}')
     return result.stdout
 
+def version_parts(value):
+    """Separate MacPorts package revision from upstream for provider comparison."""
+    match = re.fullmatch(r"(.+?)_(\\d+)", str(value))
+    if not match:
+        return str(value), 0
+    return match.group(1), int(match.group(2))
+
+
 def inventory(s):
     if not Path(PORT).is_file():
         raise RuntimeError('MacPorts is not installed at /opt/local/bin/port')
@@ -41,9 +49,13 @@ def inventory(s):
     packages = []
     for name, version, variants in re.findall(r'^\s*(\S+)\s+@([^\s+]+)((?:\+[^\s]+)?)\s+\(active\)', raw, re.M):
         valid(name)
+        upstream, revision = version_parts(version)
+        latest_upstream, latest_revision = version_parts(old.get(name, version))
         packages.append(dict(name=name, kind='port', provider='macports', provider_name=name,
             installation_id=f'macports:{name}', display_name=name, description='MacPorts',
             description_he='', installed_version=version, latest_version=old.get(name, version),
+            installed_upstream_version=upstream, installed_revision=revision,
+            latest_upstream_version=latest_upstream, latest_revision=latest_revision,
             installed_variants=variants, outdated=name in old, excluded=False,
             route_reason='installed_owner', homepage='', current_release_date=None,
             latest_release_date=None, days_since_outdated=None))

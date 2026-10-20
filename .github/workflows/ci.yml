@@ -42,6 +42,8 @@ jobs:
       - name: Focused cached-plan regression checks
         run: |
           python3 -m unittest discover -s tests -p 'test_unified_updates.py'
+          python3 -m unittest discover -s tests -p 'test_update_selection.py'
+          python3 -m unittest discover -s tests -p 'test_macports_provider.py'
           node tests/stale-plan-ui.cjs
           python3 tools/implement-mac-manager.py unified-check
 
