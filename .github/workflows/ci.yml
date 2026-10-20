@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p 'test_unified_updates.py'
           node tests/stale-plan-ui.cjs
+          python3 tools/implement-mac-manager.py unified-check
 
       - name: Packaging smoke check
         run: npm run pack
