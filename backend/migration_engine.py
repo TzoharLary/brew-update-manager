@@ -155,7 +155,91 @@ def _route_ownership(s, name):
     return prior, registry
 
 
-def _material(s, name, *, classification=None):
+def _material_pixi(s, name, *, classification=None, candidate=None,
+                   generation_id=None):
+    """Read-only Intel preflight for a fixed-profile Homebrew-to-Pixi route."""
+    from pathlib import Path
+    import pixi_provider
+    import update_routes
+    profiles.intel_only()
+    profile = profiles.pixi_get(name)
+    if not profile:
+        raise MigrationConflict("pixi_migration_profile_missing")
+    if name == "ngrok" or s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    if update_routes.read_records(s.TOOLS_ROOT).get(name):
+        raise MigrationConflict("existing_managed_tool_conflict")
+    row, audit, keg, receipt = _source(s, name)
+    cls = _fresh_classification(s, name, row, provided=classification)
+    _consumers(s, name)
+    fresh = candidate if candidate is not None else pixi_provider.discover(s, name)
+    if (not isinstance(fresh, dict) or fresh.get("provider") != "pixi"
+            or fresh.get("availability") != "verified"
+            or fresh.get("execution_supported") is not True
+            or fresh.get("closure_verified") is not True
+            or fresh.get("system", {}).get("arch") != "x86_64"):
+        raise MigrationConflict("pixi_binary_route_unverified")
+    version = fresh.get("upstream_version")
+    current = row.get("installed_upstream_version") or row.get("installed_version")
+    if compare_upstream(version, current) != 1:
+        raise MigrationConflict("migration_downgrade_or_unknown")
+    lock = fresh.get("lock")
+    manifest = fresh.get("manifest")
+    if (not isinstance(lock, str) or not isinstance(manifest, str)
+            or hashlib.sha256(lock.encode()).hexdigest() != fresh.get("lock_sha256")
+            or manifest != pixi_provider.manifest_text(name, version)):
+        raise MigrationConflict("pixi_lock_or_manifest_unverified")
+    closure = fresh.get("closure")
+    if (not isinstance(closure, list) or not closure
+            or any(not isinstance(node, dict)
+                   or node.get("arch") not in ("osx-64", "noarch")
+                   or not node.get("archive_id") or not node.get("checksum")
+                   for node in closure)
+            or not any(n.get("arch") == "osx-64" for n in closure)):
+        raise MigrationConflict("pixi_binary_closure_unverified")
+    generation_id = _check_id(generation_id or uuid.uuid4().hex)
+    directory = Path(s.TOOLS_ROOT) / "environments" / name / ("generation-" + generation_id)
+    if os.path.lexists(directory):
+        raise MigrationConflict("pixi_generation_conflict")
+    prefix = directory / ".pixi" / "envs" / "default"
+    target_commands = {command: str(prefix / "bin" / command)
+                       for command in profile.commands}
+    previous, registry = _route_ownership(s, name)
+    source_commands = _source_commands(keg, profile)
+    owned_shims = (previous or {}).get("owned_shims", {})
+    routing.preflight(s.TOOLS_ROOT, name, target_commands, owned_shims=owned_shims)
+    route = {key: fresh.get(key) for key in (
+        "provider", "availability", "execution_supported", "closure_verified",
+        "upstream_version", "package_version", "revision", "provider_names",
+        "system", "closure", "manifest", "lock", "lock_sha256")}
+    source = {"name": name, "kind": "formula", "provider": "homebrew",
+              "installation_id": "homebrew:formula:" + name,
+              "version": row["installed_version"], "keg": str(keg),
+              "receipt_sha256": _hash(receipt),
+              "manager_versions": audit.get("manager_versions"),
+              "commands": source_commands}
+    target = {"provider": "pixi", "installation_id": "pixi:" + name,
+              "version": version, "revision": None,
+              "generation_id": generation_id, "directory": str(directory),
+              "prefix": str(prefix), "candidate": route,
+              "mapped_name": fresh["provider_names"][0],
+              "commands": target_commands, "ports": []}
+    core = {"source": source, "target": target, "profile": name,
+            "profile_version": profile.version, "classification": cls,
+            "consumers": [], "route_generation": (previous or {}).get("generation", 0),
+            "owned_shims": owned_shims, "system": fresh["system"],
+            "exclusions": s.load_settings().get("excluded_packages", [])}
+    return core, material_fingerprint(source, core, previous or {})
+
+
+def _material(s, name, *, classification=None, provider="macports",
+              pixi_candidate=None, planned_generation=None):
+    if provider == "pixi":
+        return _material_pixi(s, name, classification=classification,
+                              candidate=pixi_candidate,
+                              generation_id=planned_generation)
+    if provider != "macports":
+        raise MigrationConflict("unsupported_target_provider")
     profiles.intel_only()
     if name == "ngrok" or s.is_excluded(name, "formula"):
         raise MigrationConflict("package_excluded")
@@ -205,10 +289,12 @@ def _material(s, name, *, classification=None):
     return core, material_fingerprint(source, core, prior or {})
 
 
-def plan(s, name, action="migrate", transaction_id=None, *, classification=None):
+def plan(s, name, action="migrate", transaction_id=None, *,
+         classification=None, provider="macports", pixi_candidate=None):
     if action != "migrate":
         return recovery_plan(s, transaction_id, action)
-    core, fingerprint = _material(s, name, classification=classification)
+    core, fingerprint = _material(s, name, classification=classification,
+                                  provider=provider, pixi_candidate=pixi_candidate)
     plan_id = uuid.uuid4().hex
     created = time.time()
     data = {"schema_version": SCHEMA, "id": plan_id,
@@ -459,7 +545,10 @@ def approve(s, plan_id, request_id=None):
         return approve_recovery(s, old)
     if old.get("action") != "migrate":
         raise MigrationConflict("unsupported_migration_action")
-    fresh, fingerprint = _material(s, old["profile"])
+    target_provider = old["target"]["provider"]
+    fresh, fingerprint = _material(
+        s, old["profile"], provider=target_provider,
+        planned_generation=old["target"].get("generation_id"))
     if fingerprint != old.get("fingerprint"):
         raise MigrationConflict("plan_changed")
     tid = uuid.uuid4().hex
