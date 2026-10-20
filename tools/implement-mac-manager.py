@@ -8167,7 +8167,7 @@ def smoke_pixi(s, profile, prefix, target):
     elif profile.name == "pandoc":
         probe = s.run_cmd([str(commands["pandoc"]), "--from=markdown", "--to=html"],
                           timeout=90, cancellable=True, env_override=env,
-                          input_data="*probe*\\n")
+                          input_data="*probe*\n")
         report["functional"] = _check(probe, "pandoc functional smoke")
         if "<em>probe</em>" not in probe.stdout:
             raise RuntimeError("pandoc functional output mismatch")
@@ -8322,6 +8322,31 @@ class Profiles(unittest.TestCase):
                     return SimpleNamespace(code=0, stdout="jq-1.7", stderr="")
             with self.assertRaisesRegex(RuntimeError, "version mismatch"):
                 p.smoke_pixi(Wrong(), p.pixi_get("jq"), root, "1.8")
+
+    def test_pandoc_smoke_rejects_nonfunctional_converter(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            prefix = Path(temp)
+            program = prefix / "bin" / "pandoc"
+            program.parent.mkdir()
+            program.write_text("#!/bin/sh\nexit 0\n")
+            program.chmod(0o755)
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    if "--version" in argv:
+                        return SimpleNamespace(code=0, stdout="pandoc 3.2.1", stderr="")
+                    self.input = kwargs["input_data"]
+                    return SimpleNamespace(code=0, stdout="<em>probe</em>\n", stderr="")
+            fake = Fake()
+            p.smoke_pixi(fake, p.pixi_get("pandoc"), prefix, "3.2.1")
+            self.assertEqual(fake.input, "*probe*\n")
+            class Broken:
+                def run_cmd(self, argv, **kwargs):
+                    return SimpleNamespace(code=0, stdout=(
+                        "pandoc 3.2.1" if "--version" in argv else "unchanged"), stderr="")
+            with self.assertRaisesRegex(RuntimeError, "functional output mismatch"):
+                p.smoke_pixi(Broken(), p.pixi_get("pandoc"), prefix, "3.2.1")
 
     def test_two_fixed_profiles_and_commands(self):
         self.assertEqual(set(p.PROFILES), {"terminal-notifier", "include-what-you-use"})
@@ -9136,6 +9161,66 @@ class MigrationContracts(unittest.TestCase):
             self.assertEqual(first["target"]["provider"], "pixi")
             self.assertEqual(first["target"]["installation_id"], "pixi:pandoc")
             self.assertFalse((root / "environments").exists())
+
+    def test_pixi_target_postinstall_checks_exact_meta_and_smoke(self):
+        import pixi_provider
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            prefix = home / "environments" / "pandoc" / "generation-a" / ".pixi" / "envs" / "default"
+            prefix.mkdir(parents=True)
+            plan = {"profile": "pandoc", "target": {
+                "provider": "pixi", "prefix": str(prefix), "mapped_name": "pandoc",
+                "version": "3.2.1", "candidate": {"closure": [{"archive_id": "pandoc"}]}}}
+            class S:
+                TOOLS_ROOT = home
+            with patch.object(pixi_provider, "installed_record", return_value={
+                     "name": "pandoc", "version": "3.2.1"}) as meta, \
+                 patch.object(pixi_provider, "verify_generation") as closure, \
+                 patch.object(engine.profiles, "smoke_pixi",
+                              return_value={"functional": {"code": 0}}) as smoke:
+                result = engine._target_ready(S(), plan)
+            self.assertEqual(result["functional"]["code"], 0)
+            meta.assert_called_once()
+            closure.assert_called_once()
+            smoke.assert_called_once()
+
+    def test_pixi_managed_record_roundtrip_and_independent_edit_protection(self):
+        import json
+        import pixi_provider
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work = root / "tx"
+            work.mkdir()
+            target = {"provider": "pixi", "prefix": str(root / "prefix"),
+                      "directory": str(root / "workspace"), "mapped_name": "pandoc",
+                      "version": "3.2.1", "installation_id": "pixi:pandoc",
+                      "candidate": {"closure": []}, "commands": {"pandoc": "/tool/pandoc"}}
+            journal = {"transaction_id": "a"*32, "plan": {"profile": "pandoc",
+                       "target": target}, "activation": {"active": "/managed/active"}}
+            class S:
+                TOOLS_ROOT = root
+            engine._write(work / "journal.json", journal)
+            with patch.object(pixi_provider, "installed_record", return_value={
+                     "name": "pandoc", "version": "3.2.1"}), \
+                 patch.object(pixi_provider, "verify_generation"), \
+                 patch.object(engine.routing, "owned_shim_hashes", return_value={
+                     "pandoc": "sha"}):
+                physical = engine._register_pixi_target(S(), journal, work)
+            self.assertEqual(physical[0]["installation_id"], "pixi:pandoc")
+            stored = json.loads((root / "installed.json").read_text())
+            self.assertEqual(stored["pandoc"]["transaction_id"], "a"*32)
+            stored["pandoc"]["prefix"] = "/independent-user-change"
+            engine._write(root / "installed.json", stored)
+            with self.assertRaisesRegex(engine.MigrationConflict, "independently"):
+                engine._remove_pixi_target_record(S(), journal)
+            self.assertEqual(json.loads((root / "installed.json").read_text())
+                             ["pandoc"]["prefix"], "/independent-user-change")
+            stored["pandoc"]["prefix"] = target["prefix"]
+            engine._write(root / "installed.json", stored)
+            engine._remove_pixi_target_record(S(), journal)
+            self.assertNotIn("pandoc", json.loads((root / "installed.json").read_text()))
 
     def test_pixi_unlisted_profile_cannot_authorize_migration(self):
         from unittest.mock import patch

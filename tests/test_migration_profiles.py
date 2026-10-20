@@ -51,6 +51,31 @@ class Profiles(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "version mismatch"):
                 p.smoke_pixi(Wrong(), p.pixi_get("jq"), root, "1.8")
 
+    def test_pandoc_smoke_rejects_nonfunctional_converter(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            prefix = Path(temp)
+            program = prefix / "bin" / "pandoc"
+            program.parent.mkdir()
+            program.write_text("#!/bin/sh\nexit 0\n")
+            program.chmod(0o755)
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    if "--version" in argv:
+                        return SimpleNamespace(code=0, stdout="pandoc 3.2.1", stderr="")
+                    self.input = kwargs["input_data"]
+                    return SimpleNamespace(code=0, stdout="<em>probe</em>\n", stderr="")
+            fake = Fake()
+            p.smoke_pixi(fake, p.pixi_get("pandoc"), prefix, "3.2.1")
+            self.assertEqual(fake.input, "*probe*\n")
+            class Broken:
+                def run_cmd(self, argv, **kwargs):
+                    return SimpleNamespace(code=0, stdout=(
+                        "pandoc 3.2.1" if "--version" in argv else "unchanged"), stderr="")
+            with self.assertRaisesRegex(RuntimeError, "functional output mismatch"):
+                p.smoke_pixi(Broken(), p.pixi_get("pandoc"), prefix, "3.2.1")
+
     def test_two_fixed_profiles_and_commands(self):
         self.assertEqual(set(p.PROFILES), {"terminal-notifier", "include-what-you-use"})
         self.assertEqual(p.get("include-what-you-use").commands,

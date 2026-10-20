@@ -64,7 +64,7 @@ def smoke_pixi(s, profile, prefix, target):
     elif profile.name == "pandoc":
         probe = s.run_cmd([str(commands["pandoc"]), "--from=markdown", "--to=html"],
                           timeout=90, cancellable=True, env_override=env,
-                          input_data="*probe*\\n")
+                          input_data="*probe*\n")
         report["functional"] = _check(probe, "pandoc functional smoke")
         if "<em>probe</em>" not in probe.stdout:
             raise RuntimeError("pandoc functional output mismatch")
