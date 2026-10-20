@@ -177,8 +177,12 @@ def _material_pixi(s, name, *, classification=None, candidate=None,
             or fresh.get("availability") != "verified"
             or fresh.get("execution_supported") is not True
             or fresh.get("closure_verified") is not True
-            or fresh.get("system", {}).get("arch") != "x86_64"):
+            or fresh.get("system", {}).get("arch") != "x86_64"
+            or fresh.get("system", {}).get("os") != "macos"):
         raise MigrationConflict("pixi_binary_route_unverified")
+    import update_routes
+    if fresh.get("provider_names") != [update_routes.PIXI_TOOLS[name][0]]:
+        raise MigrationConflict("pixi_package_identity_mismatch")
     version = fresh.get("upstream_version")
     current = row.get("installed_upstream_version") or row.get("installed_version")
     if compare_upstream(version, current) != 1:
@@ -250,7 +254,8 @@ def _material(s, name, *, classification=None, provider="macports",
     cls = _fresh_classification(s, name, row, provided=classification)
     _consumers(s, name)
     graph, target = _target_graph(s, profile)
-    if compare_upstream(target["version"], row["installed_version"]) != 1:
+    installed_upstream = row.get("installed_upstream_version") or row["installed_version"]
+    if compare_upstream(target["version"], installed_upstream) != 1:
         raise MigrationConflict("migration_downgrade_or_unknown")
     existing = {x["name"]: x for x in mp.inventory(s)}
     for node in graph["nodes"]:

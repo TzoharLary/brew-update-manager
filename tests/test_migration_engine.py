@@ -73,6 +73,41 @@ class MigrationContracts(unittest.TestCase):
             self.assertEqual(first["target"]["installation_id"], "pixi:pandoc")
             self.assertFalse((root / "environments").exists())
 
+    def test_macports_revision_suffix_does_not_block_newer_upstream(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            keg = root / "keg"
+            keg.mkdir()
+            receipt = keg / "INSTALL_RECEIPT.json"
+            receipt.write_text("{}")
+            class Service:
+                TOOLS_ROOT = root
+                def is_excluded(self, name, kind):
+                    return False
+                def load_settings(self):
+                    return {"excluded_packages": []}
+            row = {"installed_version": "1.2_4", "installed_upstream_version": "1.2"}
+            target = {"name": "terminal-notifier", "version": "1.3",
+                      "revision": "0", "variants": "", "archive": "fixture"}
+            graph = {"nodes": [target], "system": {"os": "macos", "arch": "x86_64"}}
+            with patch.object(engine.profiles, "intel_only"), \
+                 patch.object(engine, "_source", return_value=(
+                     row, {"manager_versions": ["1.2_4"]}, keg, receipt)), \
+                 patch.object(engine, "_fresh_classification", return_value={
+                     "category": "standalone_candidate"}), \
+                 patch.object(engine, "_consumers", return_value=[]), \
+                 patch.object(engine, "_target_graph", return_value=(graph, target)), \
+                 patch.object(engine.mp, "inventory", return_value=[]), \
+                 patch.object(engine, "_route_ownership", return_value=(None, {})), \
+                 patch.object(engine, "_source_commands", return_value={
+                     "terminal-notifier": "/source/terminal-notifier"}), \
+                 patch.object(engine.routing, "preflight"):
+                result, digest = engine._material(Service(), "terminal-notifier")
+            self.assertEqual(result["target"]["version"], "1.3")
+            self.assertEqual(result["source"]["version"], "1.2_4")
+            self.assertEqual(len(digest), 64)
+
     def test_pixi_target_postinstall_checks_exact_meta_and_smoke(self):
         import pixi_provider
         from unittest.mock import patch
