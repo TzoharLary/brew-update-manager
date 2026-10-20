@@ -88,16 +88,30 @@ class Plans(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             s = FakeService(temp)
             s.load_settings = lambda: {"excluded_packages": []}
-            row = {"name": "libtensorflow", "kind": "formula", "provider": "homebrew",
+            row = {"name": "cryptography", "kind": "formula", "provider": "homebrew",
                    "installed_version": "1.0", "outdated": False,
                    "classification": {"category": "standalone_candidate"}}
             with patch.object(u, "_load_homebrew_catalog", return_value=(
-                {"libtensorflow": {"stable_version": "1.0"}}, {})), \
+                {"cryptography": {"stable_version": "1.0"}}, {})), \
                  patch.object(u, "_ports", side_effect=AssertionError("unsupported probe")):
                 candidates = u.collect_candidates(s, {"packages": [row]})
             self.assertEqual(len(candidates), 1)
             self.assertFalse(candidates[0]["execution_supported"])
             self.assertIn("migration_profile_missing", candidates[0]["blockers"])
+
+    def test_empty_port_mapping_has_no_phantom_port_candidate(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            s = FakeService(temp)
+            s.load_settings = lambda: {"excluded_packages": []}
+            row = {"name": "libtensorflow", "kind": "formula",
+                   "provider": "homebrew", "installed_version": "1.0",
+                   "outdated": False}
+            with patch.object(u, "_load_homebrew_catalog", return_value=(
+                {"libtensorflow": {"stable_version": "1.0"}}, {})), \
+                 patch.object(u, "_ports", side_effect=AssertionError("empty mapping")):
+                result = u.collect_candidates(s, {"packages": [row]})
+            self.assertEqual(result, [])
 
     def test_mapped_pixi_candidate_is_discovered_but_not_executable(self):
         from unittest.mock import patch
