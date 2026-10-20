@@ -412,20 +412,21 @@ function isBrewPathConfigured() {
 
 function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
+  const planExpired = unifiedPlanExpired(snapshot);
   const selectedCount = selectedPackagesFromSnapshot().length;
   const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason && (!snapshot?.unified_plan_id || unifiedReady(pkg))).length;
   const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;
   const checkBlockedByBusy = !!busyLoading && !isUpdateOperationRunning();
 
   checkNowBtn.disabled = checkBlockedByBusy || !allowed;
-  updateAllBtn.disabled = busyLoading || operationRunning || !allowed || (!!snapshot?.unified_plan_id && !snapshot?.update_decisions?.some(d => d.status === 'ready'));
+  updateAllBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || (!!snapshot?.unified_plan_id && !snapshot?.update_decisions?.some(d => d.status === 'ready'));
 
   if (updateSelectedBtn) {
-    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || selectedCount === 0;
+    updateSelectedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || selectedCount === 0;
   }
 
   if (selectVisibleOutdatedBtn) {
-    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || visibleOutdatedCount === 0;
+    selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !allowed || planExpired || visibleOutdatedCount === 0;
   }
 
   if (clearSelectionBtn) {
@@ -433,11 +434,11 @@ function applyActionAvailability() {
   }
 
   document.querySelectorAll('.row-update-btn').forEach((btn) => {
-    btn.disabled = busyLoading || operationRunning || !allowed;
+    btn.disabled = busyLoading || operationRunning || !allowed || planExpired;
   });
 
   document.querySelectorAll('.row-select-checkbox').forEach((checkbox) => {
-    checkbox.disabled = busyLoading || operationRunning || !allowed;
+    checkbox.disabled = busyLoading || operationRunning || !allowed || planExpired;
   });
 }
 
@@ -1625,10 +1626,19 @@ function packageSelectionKey(name, kind) {
 function packageSelectionKeyFromPkg(pkg) {
   return String(pkg?.update_decision?.source_installation_id || pkg?.installation_id || packageSelectionKey(pkg?.name, pkg?.kind));
 }
+function ensureFreshUnifiedPlan() {
+  if (!unifiedPlanExpired(snapshot)) return true;
+  showMessage(i18n.lang === 'he'
+    ? 'תוכנית העדכון פגה או אינה זמינה. יש לבצע בדיקת עדכונים חדשה.'
+    : 'The update plan expired or is unavailable. Run a new update check.', true);
+  applyActionAvailability();
+  return false;
+}
 function unifiedReady(pkg) {
-  return pkg?.update_decision?.status === 'ready';
+  return !unifiedPlanExpired(snapshot) && pkg?.update_decision?.status === 'ready';
 }
 function unifiedPayload(packages) {
+  if (unifiedPlanExpired(snapshot)) throw new Error('Update plan expired; run a new check');
   if (!snapshot?.unified_plan_id) return null;
   if (packages.some(p => !unifiedReady(p))) throw new Error(
     i18n.lang === 'he' ? 'החבילה חסומה. יש לבצע בדיקה חדשה.' : 'Package is blocked. Run another check.');
@@ -2515,7 +2525,7 @@ async function checkNow() {
 }
 
 async function updateOne(name, kind, sourceBtn = null, row = null) {
-  if (!ensureBrewConfiguredForActions()) return;
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
   const request = row && snapshot?.unified_plan_id ? unifiedPayload([row]) : null;
   if (!request && !confirm(i18n.t('confirm.updateOne', { name, kind: kindLabel(kind) }))) return;
 
@@ -2574,7 +2584,7 @@ async function updateOne(name, kind, sourceBtn = null, row = null) {
 }
 
 async function updateSelected() {
-  if (!ensureBrewConfiguredForActions()) return;
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
 
   const selected = selectedPackagesFromSnapshot();
   if (!selected.length) {
@@ -2662,7 +2672,7 @@ ${i18n.t('message.inventoryRefreshWarning', {
 }
 
 async function updateAll() {
-  if (!ensureBrewConfiguredForActions()) return;
+  if (!ensureBrewConfiguredForActions() || !ensureFreshUnifiedPlan()) return;
   const request = snapshot?.unified_plan_id ? unifiedPayload(
     (snapshot?.packages || []).filter(unifiedReady)) : null;
   if (!request && !confirm(i18n.t('confirm.updateAll'))) return;

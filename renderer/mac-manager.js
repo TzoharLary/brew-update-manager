@@ -20,6 +20,12 @@ function macAlternativeLabel(status) {
   };
   return (labels[status]||[status,status])[he?0:1];
 }
+function unifiedPlanExpired(state, nowMillis = Date.now()) {
+  if (!state?.unified_plan_id) return false;
+  if (state.unified_plan_stale === true) return true;
+  const expiry = Number(state.unified_plan_expires_at);
+  return !Number.isFinite(expiry) || expiry <= 0 || nowMillis >= expiry * 1000;
+}
 function unifiedReasonLabel(code) {
   const he=i18n.lang==='he';
   const known={
@@ -29,6 +35,7 @@ function unifiedReasonLabel(code) {
     excluded_package:['חבילה מוחרגת','Excluded package'],
     no_executable_binary_route:['אין מסלול בינארי בטוח לביצוע','No executable binary route'],
     recovery_required:['נדרש שחזור עסקה','Transaction recovery required'],
+    plan_expired:['תוכנית העדכון פגה — נדרשת בדיקה חדשה','Update plan expired — run a new check'],
     ownership_unreadable:['אי אפשר לאמת בעלות','Ownership registry cannot be verified'],
     already_current:['אין עדכון מאומת','No verified update'],
   };
@@ -44,6 +51,17 @@ function renderMacManager() {
   const title=document.createElement('summary');
   title.textContent=(he?'עדכונים חסומים וחלופות':'Blocked updates and alternatives')+` (${snapshot?.migrations?.length||0})`;
   panel.appendChild(title);
+  if (unifiedPlanExpired(snapshot)) {
+    const warning=document.createElement('p');
+    warning.textContent=he?'תוכנית העדכון אינה בתוקף. כדי לעדכן חבילות יש לבצע בדיקה חדשה.':'The update plan is no longer valid. Run a new check before updating packages.';
+    warning.setAttribute('role','status');
+    panel.appendChild(warning);
+    const rescan=document.createElement('button');
+    rescan.textContent=he?'בדוק עדכונים מחדש':'Check for updates again';
+    rescan.disabled=!!busyLoading||!!lastKnownOperationRunning;
+    rescan.onclick=()=>checkNow();
+    panel.appendChild(rescan);
+  }
   const hint=document.createElement('p');
   hint.textContent=he?'עדכון חבילה יוצג רק עם נתיב בינארי מאומת. פעולות מעבר שאינן מוכנות חסומות.':'An update is executable only with a verified binary route. Unfinished migration paths remain blocked.';
   for (const decision of snapshot?.update_decisions||[]) {

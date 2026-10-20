@@ -285,6 +285,8 @@ def generate_plan(s, snapshot):
     snapshot["packages"] = rows
     snapshot["update_decisions"] = decisions
     snapshot["unified_plan_id"] = pid
+    snapshot["unified_plan_expires_at"] = plan["expires_at"]
+    snapshot["unified_plan_stale"] = False
     return plan
 
 
@@ -303,18 +305,34 @@ def re_full_id(value):
 
 
 def attach_cached(s, snapshot):
+    """After expiry, present the plan as stale without offering executable routes."""
     plan = read_plan(s)
     if not plan:
+        if snapshot.get("unified_plan_id"):
+            snapshot["unified_plan_stale"] = True
+            snapshot["unified_plan_expires_at"] = 0
+            snapshot["update_decisions"] = []
+            for row in snapshot.get("packages", []):
+                row.pop("update_decision", None)
         return snapshot
-    by_id = {d["source_installation_id"]: d for d in plan["decisions"]}
+    expiry = plan.get("expires_at")
+    fresh = isinstance(expiry, (int, float)) and expiry > time.time()
+    stored = plan.get("decisions") or []
+    decisions = stored if fresh else [
+        dict(d, status="unverified", action="none",
+             selected_candidate=None, reason_codes=["plan_expired"],
+             blockers=["plan_expired"]) for d in stored
+    ]
+    by_id = {d["source_installation_id"]: d for d in decisions}
     for row in snapshot.get("packages", []):
         row["update_decision"] = by_id.get(_ids(row))
-        if row["update_decision"] and row["update_decision"]["status"] == "ready":
+        if fresh and row["update_decision"] and row["update_decision"]["status"] == "ready":
             row["outdated"] = True
-    snapshot["update_decisions"] = plan["decisions"]
+    snapshot["update_decisions"] = decisions
     snapshot["unified_plan_id"] = plan["id"]
+    snapshot["unified_plan_expires_at"] = expiry
+    snapshot["unified_plan_stale"] = not fresh
     return snapshot
-
 
 def validate_request(s, body, *, all_ready=False):
     if not isinstance(body, dict):
@@ -325,7 +343,7 @@ def validate_request(s, body, *, all_ready=False):
     plan = read_plan(s, plan_id)
     if not plan:
         raise PlanError("plan_not_found")
-    if plan.get("expires_at", 0) < time.time():
+    if plan.get("expires_at", 0) <= time.time():
         raise PlanError("plan_expired")
     submitted = body.get("decisions")
     if not isinstance(submitted, list):

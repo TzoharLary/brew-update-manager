@@ -39,5 +39,10 @@ jobs:
           python3 -m compileall -q backend tools tests
           python3 -m py_compile tools/implement-mac-manager.py tools/verify-migration.py
 
+      - name: Focused cached-plan regression checks
+        run: |
+          python3 -m unittest discover -s tests -p 'test_unified_updates.py'
+          node tests/stale-plan-ui.cjs
+
       - name: Packaging smoke check
         run: npm run pack

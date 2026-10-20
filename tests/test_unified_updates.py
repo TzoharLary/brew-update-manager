@@ -61,6 +61,65 @@ class Plans(unittest.TestCase):
                          "homebrew:formula:jq")
 
 
+    def test_expired_cached_plan_cannot_be_executed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from provider_ownership import atomic_write_json
+            s = FakeService(temp)
+            ident = "a" * 32
+            decision = {"decision_id": "c"*32, "source_installation_id": "homebrew:formula:jq",
+                        "status": "ready", "action": "update", "material_fingerprint": "hash",
+                        "selected_candidate": {"provider": "homebrew"}}
+            atomic_write_json(Path(temp)/"update-plans"/(ident+".json"),
+                              {"id": ident, "expires_at": time.time()-5,
+                               "decisions": [decision]})
+            atomic_write_json(Path(temp)/"update-plans"/"latest.json", {"plan_id": ident})
+            snapshot = {"packages": [{"name": "jq", "kind": "formula", "outdated": True}]}
+            u.attach_cached(s, snapshot)
+            self.assertTrue(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["unified_plan_id"], ident)
+            self.assertEqual(snapshot["update_decisions"][0]["status"], "unverified")
+            self.assertEqual(snapshot["update_decisions"][0]["reason_codes"], ["plan_expired"])
+            self.assertIsNone(snapshot["packages"][0]["update_decision"]["selected_candidate"])
+            self.assertEqual(u.read_plan(s, ident)["decisions"][0], decision)
+            with self.assertRaisesRegex(u.PlanError, "plan_expired"):
+                u.validate_request(s, {"request_id": "b"*32, "plan_id": ident,
+                                       "decisions": [{"decision_id": "c"*32,
+                                                      "material_fingerprint": "hash"}]})
+
+    def test_fresh_cached_plan_remains_ready_with_expiry_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from provider_ownership import atomic_write_json
+            s = FakeService(temp)
+            expiry = time.time()+500
+            plan = {"id": "a"*32, "expires_at": expiry,
+                    "decisions": [{"source_installation_id": "homebrew:formula:jq",
+                                   "status": "ready", "action": "update"}]}
+            atomic_write_json(Path(temp)/"update-plans"/("a"*32+".json"), plan)
+            atomic_write_json(Path(temp)/"update-plans"/"latest.json", {"plan_id": "a"*32})
+            snapshot = {"packages": [{"name": "jq", "kind": "formula", "outdated": False}]}
+            u.attach_cached(s, snapshot)
+            self.assertFalse(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["unified_plan_expires_at"], expiry)
+            self.assertTrue(snapshot["packages"][0]["outdated"])
+            self.assertEqual(snapshot["packages"][0]["update_decision"]["status"], "ready")
+
+    def test_missing_cached_plan_clears_historical_ready(self):
+        with tempfile.TemporaryDirectory() as temp:
+            snapshot = {"unified_plan_id": "a"*32,
+                        "update_decisions": [{"status": "ready"}],
+                        "packages": [{"name": "jq", "kind": "formula",
+                                      "update_decision": {"status": "ready"}}]}
+            u.attach_cached(FakeService(temp), snapshot)
+            self.assertTrue(snapshot["unified_plan_stale"])
+            self.assertEqual(snapshot["update_decisions"], [])
+            self.assertNotIn("update_decision", snapshot["packages"][0])
+
+    def test_initial_state_without_plan_is_unmodified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            snapshot = {"packages": [{"name": "jq", "kind": "formula"}]}
+            self.assertIs(u.attach_cached(FakeService(temp), snapshot), snapshot)
+            self.assertNotIn("unified_plan_stale", snapshot)
+
     def test_pixi_user_workspace_cannot_be_upgraded(self):
         with tempfile.TemporaryDirectory() as temp:
             from unittest.mock import patch
