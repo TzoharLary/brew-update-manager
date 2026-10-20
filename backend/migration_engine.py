@@ -91,20 +91,38 @@ def _source_commands(keg, profile):
     return commands
 
 
-def _fresh_classification(s, name, row):
-    state = s.read_json(s.STATE_FILE) or {}
-    offer = next((x for x in state.get("migrations", []) if x.get("name") == name), None)
-    if not offer or offer.get("status") != "binary_available":
-        raise MigrationConflict("verified_offer_missing")
-    fresh = installation_evidence.annotate(
-        s, [dict(offer)], [dict(row)], True, report=False)
-    cls = fresh[0].get("classification") if fresh else None
-    if (not isinstance(cls, dict) or cls.get("category") != "standalone_candidate"
-            or cls.get("gaps") or cls.get("consumers")
-            or cls.get("shared_roles")):
+def _fresh_classification(s, name, row, *, provided=None):
+    """Validate the same T02 classification against a fresh source audit."""
+    if provided is None:
+        state = s.read_json(s.STATE_FILE) or {}
+        entries = [x for x in state.get("packages", [])
+                   if x.get("provider") == "homebrew"
+                   and x.get("kind") == "formula" and x.get("name") == name]
+        provided = entries[0].get("classification") if len(entries) == 1 else None
+        if provided is None:
+            offer = next((x for x in state.get("migrations", [])
+                          if x.get("name") == name), None)
+            provided = (offer or {}).get("classification")
+    cls = provided if isinstance(provided, dict) else {}
+    audit = row.get("inventory_verification") or {}
+    if (cls.get("category") != "standalone_candidate" or cls.get("gaps")
+            or cls.get("consumers") or cls.get("shared_roles")
+            or cls.get("inventory_fingerprint") != installation_evidence.fingerprint(audit)):
         raise MigrationConflict("standalone_classification_blocked")
+    checked = cls.get("checked_at")
+    if not isinstance(checked, str):
+        raise MigrationConflict("classification_timestamp_missing")
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(checked.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("Timezone is required")
+        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    except (ValueError, TypeError) as error:
+        raise MigrationConflict("classification_timestamp_invalid") from error
+    if age < -60 or age >= 900:
+        raise MigrationConflict("classification_stale")
     return cls
-
 
 def _consumers(s, name):
     check = s.run_cmd([s.brew_bin(), "uses", "--installed", name],
@@ -137,7 +155,7 @@ def _route_ownership(s, name):
     return prior, registry
 
 
-def _material(s, name):
+def _material(s, name, *, classification=None):
     profiles.intel_only()
     if name == "ngrok" or s.is_excluded(name, "formula"):
         raise MigrationConflict("package_excluded")
@@ -145,7 +163,7 @@ def _material(s, name):
     if not profile or profile.provider != "macports":
         raise MigrationConflict("unsupported_migration_profile")
     row, audit, keg, receipt = _source(s, name)
-    cls = _fresh_classification(s, name, row)
+    cls = _fresh_classification(s, name, row, provided=classification)
     _consumers(s, name)
     graph, target = _target_graph(s, profile)
     if compare_upstream(target["version"], row["installed_version"]) != 1:
@@ -187,10 +205,10 @@ def _material(s, name):
     return core, material_fingerprint(source, core, prior or {})
 
 
-def plan(s, name, action="migrate", transaction_id=None):
+def plan(s, name, action="migrate", transaction_id=None, *, classification=None):
     if action != "migrate":
         return recovery_plan(s, transaction_id, action)
-    core, fingerprint = _material(s, name)
+    core, fingerprint = _material(s, name, classification=classification)
     plan_id = uuid.uuid4().hex
     created = time.time()
     data = {"schema_version": SCHEMA, "id": plan_id,

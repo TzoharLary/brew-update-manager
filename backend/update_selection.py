@@ -149,9 +149,10 @@ def _candidate_issues(row, candidate):
             issues.append("migration_profile_missing")
     if candidate.get("blockers"):
         issues.extend(str(x) for x in candidate["blockers"])
-    current_version = row.get("upstream_version") or row.get("installed_version")
+    current_version = (row.get("installed_upstream_version") or row.get("upstream_version")
+                       or row.get("installed_version"))
     cmp = (compare_same_provider_package(
-        current_version, row.get("revision"),
+        current_version, row.get("installed_revision", row.get("revision")),
         candidate.get("upstream_version"), candidate.get("revision"),
         candidate.get("provider_outdated", False))
         if provider == current_provider
@@ -175,7 +176,8 @@ def select(installed, candidates, ownership=None, *, plan_id=None, created_at=No
         installation_id = _installation_id(row)
         logical_id = row.get("logical_id") or row.get("name")
         provider = row.get("provider") or "homebrew"
-        current = row.get("upstream_version") or row.get("installed_version")
+        current = (row.get("installed_upstream_version") or row.get("upstream_version")
+                   or row.get("installed_version"))
         relevant = [c for c in candidates
                     if c.get("source_installation_id") == installation_id]
         excluded = row.get("excluded") or logical_id == "ngrok" or row.get("name") == "ngrok"
@@ -195,9 +197,8 @@ def select(installed, candidates, ownership=None, *, plan_id=None, created_at=No
             version = normalize_upstream(c["upstream_version"])
             # Version tuple comparison must pad zeros for 1.2 vs 1.2.0.
             padded = version + (0,) * (20 - len(version)) if len(version) < 20 else version
-            return (padded, int(c.get("revision") or 0)
-                    if c["provider"] == provider else 0,
-                    int(c["provider"] == provider),
+            return (padded, int(c["provider"] == provider),
+                    int(c.get("revision") or 0) if c["provider"] == provider else 0,
                     -_PROVIDER_ORDER[c["provider"]])
         selected = max(eligible, key=preference) if eligible else None
         if selected:

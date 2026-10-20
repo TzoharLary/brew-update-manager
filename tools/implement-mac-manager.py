@@ -5938,9 +5938,10 @@ def _candidate_issues(row, candidate):
             issues.append("migration_profile_missing")
     if candidate.get("blockers"):
         issues.extend(str(x) for x in candidate["blockers"])
-    current_version = row.get("upstream_version") or row.get("installed_version")
+    current_version = (row.get("installed_upstream_version") or row.get("upstream_version")
+                       or row.get("installed_version"))
     cmp = (compare_same_provider_package(
-        current_version, row.get("revision"),
+        current_version, row.get("installed_revision", row.get("revision")),
         candidate.get("upstream_version"), candidate.get("revision"),
         candidate.get("provider_outdated", False))
         if provider == current_provider
@@ -5964,7 +5965,8 @@ def select(installed, candidates, ownership=None, *, plan_id=None, created_at=No
         installation_id = _installation_id(row)
         logical_id = row.get("logical_id") or row.get("name")
         provider = row.get("provider") or "homebrew"
-        current = row.get("upstream_version") or row.get("installed_version")
+        current = (row.get("installed_upstream_version") or row.get("upstream_version")
+                   or row.get("installed_version"))
         relevant = [c for c in candidates
                     if c.get("source_installation_id") == installation_id]
         excluded = row.get("excluded") or logical_id == "ngrok" or row.get("name") == "ngrok"
@@ -5984,9 +5986,8 @@ def select(installed, candidates, ownership=None, *, plan_id=None, created_at=No
             version = normalize_upstream(c["upstream_version"])
             # Version tuple comparison must pad zeros for 1.2 vs 1.2.0.
             padded = version + (0,) * (20 - len(version)) if len(version) < 20 else version
-            return (padded, int(c.get("revision") or 0)
-                    if c["provider"] == provider else 0,
-                    int(c["provider"] == provider),
+            return (padded, int(c["provider"] == provider),
+                    int(c.get("revision") or 0) if c["provider"] == provider else 0,
                     -_PROVIDER_ORDER[c["provider"]])
         selected = max(eligible, key=preference) if eligible else None
         if selected:
@@ -6314,6 +6315,26 @@ class ProviderSelection(unittest.TestCase):
         self.assertEqual(first, selection.material_fingerprint(self.source(), b))
         b["package_version"] = "1.3_2"
         self.assertNotEqual(first, selection.material_fingerprint(self.source(), b))
+
+    def test_cross_provider_revision_does_not_override_current_owner_on_upstream_tie(self):
+        source = self.source(installed_upstream_version="1.2", installed_revision=7)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        home = self.candidate("homebrew", "1.3", "update", revision=0)
+        chosen, = selection.select([source], [port, home])
+        self.assertEqual(chosen["target_provider"], "homebrew")
+
+    def test_installed_upstream_from_receipt_preserves_revision_update(self):
+        source = self.source(installed_version="1.2_5", installed_upstream_version="1.2",
+                             installed_revision=5)
+        chosen, = selection.select([source], [self.candidate(upstream="1.2", revision=6)])
+        self.assertEqual(chosen["status"], "ready")
+
+    def test_cross_provider_lower_upstream_cannot_win_due_to_revision(self):
+        source = self.source()
+        home = self.candidate(upstream="1.4", revision=0)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        chosen, = selection.select([source], [home, port])
+        self.assertEqual(chosen["target_provider"], "homebrew")
 
     def test_two_physical_installations_never_merge_by_logical_id(self):
         a = self.source()
@@ -8011,20 +8032,38 @@ def _source_commands(keg, profile):
     return commands
 
 
-def _fresh_classification(s, name, row):
-    state = s.read_json(s.STATE_FILE) or {}
-    offer = next((x for x in state.get("migrations", []) if x.get("name") == name), None)
-    if not offer or offer.get("status") != "binary_available":
-        raise MigrationConflict("verified_offer_missing")
-    fresh = installation_evidence.annotate(
-        s, [dict(offer)], [dict(row)], True, report=False)
-    cls = fresh[0].get("classification") if fresh else None
-    if (not isinstance(cls, dict) or cls.get("category") != "standalone_candidate"
-            or cls.get("gaps") or cls.get("consumers")
-            or cls.get("shared_roles")):
+def _fresh_classification(s, name, row, *, provided=None):
+    """Validate the same T02 classification against a fresh source audit."""
+    if provided is None:
+        state = s.read_json(s.STATE_FILE) or {}
+        entries = [x for x in state.get("packages", [])
+                   if x.get("provider") == "homebrew"
+                   and x.get("kind") == "formula" and x.get("name") == name]
+        provided = entries[0].get("classification") if len(entries) == 1 else None
+        if provided is None:
+            offer = next((x for x in state.get("migrations", [])
+                          if x.get("name") == name), None)
+            provided = (offer or {}).get("classification")
+    cls = provided if isinstance(provided, dict) else {}
+    audit = row.get("inventory_verification") or {}
+    if (cls.get("category") != "standalone_candidate" or cls.get("gaps")
+            or cls.get("consumers") or cls.get("shared_roles")
+            or cls.get("inventory_fingerprint") != installation_evidence.fingerprint(audit)):
         raise MigrationConflict("standalone_classification_blocked")
+    checked = cls.get("checked_at")
+    if not isinstance(checked, str):
+        raise MigrationConflict("classification_timestamp_missing")
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(checked.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("Timezone is required")
+        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    except (ValueError, TypeError) as error:
+        raise MigrationConflict("classification_timestamp_invalid") from error
+    if age < -60 or age >= 900:
+        raise MigrationConflict("classification_stale")
     return cls
-
 
 def _consumers(s, name):
     check = s.run_cmd([s.brew_bin(), "uses", "--installed", name],
@@ -8057,7 +8096,7 @@ def _route_ownership(s, name):
     return prior, registry
 
 
-def _material(s, name):
+def _material(s, name, *, classification=None):
     profiles.intel_only()
     if name == "ngrok" or s.is_excluded(name, "formula"):
         raise MigrationConflict("package_excluded")
@@ -8065,7 +8104,7 @@ def _material(s, name):
     if not profile or profile.provider != "macports":
         raise MigrationConflict("unsupported_migration_profile")
     row, audit, keg, receipt = _source(s, name)
-    cls = _fresh_classification(s, name, row)
+    cls = _fresh_classification(s, name, row, provided=classification)
     _consumers(s, name)
     graph, target = _target_graph(s, profile)
     if compare_upstream(target["version"], row["installed_version"]) != 1:
@@ -8107,10 +8146,10 @@ def _material(s, name):
     return core, material_fingerprint(source, core, prior or {})
 
 
-def plan(s, name, action="migrate", transaction_id=None):
+def plan(s, name, action="migrate", transaction_id=None, *, classification=None):
     if action != "migrate":
         return recovery_plan(s, transaction_id, action)
-    core, fingerprint = _material(s, name)
+    core, fingerprint = _material(s, name, classification=classification)
     plan_id = uuid.uuid4().hex
     created = time.time()
     data = {"schema_version": SCHEMA, "id": plan_id,

@@ -90,6 +90,26 @@ class ProviderSelection(unittest.TestCase):
         b["package_version"] = "1.3_2"
         self.assertNotEqual(first, selection.material_fingerprint(self.source(), b))
 
+    def test_cross_provider_revision_does_not_override_current_owner_on_upstream_tie(self):
+        source = self.source(installed_upstream_version="1.2", installed_revision=7)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        home = self.candidate("homebrew", "1.3", "update", revision=0)
+        chosen, = selection.select([source], [port, home])
+        self.assertEqual(chosen["target_provider"], "homebrew")
+
+    def test_installed_upstream_from_receipt_preserves_revision_update(self):
+        source = self.source(installed_version="1.2_5", installed_upstream_version="1.2",
+                             installed_revision=5)
+        chosen, = selection.select([source], [self.candidate(upstream="1.2", revision=6)])
+        self.assertEqual(chosen["status"], "ready")
+
+    def test_cross_provider_lower_upstream_cannot_win_due_to_revision(self):
+        source = self.source()
+        home = self.candidate(upstream="1.4", revision=0)
+        port = self.candidate("macports", "1.3", "migrate", revision=999)
+        chosen, = selection.select([source], [home, port])
+        self.assertEqual(chosen["target_provider"], "homebrew")
+
     def test_two_physical_installations_never_merge_by_logical_id(self):
         a = self.source()
         b = self.source(provider="macports", kind="port", installation_id="macports:jq")
