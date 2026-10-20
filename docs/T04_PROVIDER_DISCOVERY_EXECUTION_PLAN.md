@@ -51,3 +51,70 @@
 - [ ] הוכחת ביצוע ושחזור מלאים ב־fixtures עם כשלים בכל שלב והגנה מפני עריכה עצמאית.
 - [ ] מעבר Homebrew→Pixi ב־Mac Intel בריצת קבלה מפורשת של המשתמש.
 - [ ] בדיקות HTTP/Electron וגילוי עתידי של עדכון אצל הספק החדש לאחר restart.
+
+---
+
+## שלב 2 — דוח סקירת חוזים ובטיחות לקראת חיבור Homebrew→Pixi
+
+**סטטוס:** סקירת קוד הושלמה ב־20.10.2026 על בסיס `53abc72`; שלב 3 (מימוש החיבור) **טרם בוצע**.
+הסקירה היא סטטית של הקוד והבדיקות הקיימות, **לא** הוכחת הרצה על Mac או תוצאת התקנה.
+לא הופעלו פקודות חבילות, לא שונו PATH או ההתקנות, ולא שונה קוד מוצר במסגרת שלב 2.
+
+### 1. נתיב הנתונים שנבדק
+
+```text
+POST /api/check
+ -> mac_manager._combined(refresh=True)
+ -> installation_evidence.annotate(...): סיווג T02 ומיפוי לכלי Homebrew
+ -> unified_updates.generate_plan
+ -> collect_candidates -> _pixi_bridge -> pixi_provider.discover(osx-64)
+ -> update_selection.select -> persisted plan / 15-minute fingerprint
+ -> UI: update selected / all / one (request_id, decision_id, material_fingerprint)
+ -> unified_updates.validate_request -> execute
+ -> migration_engine._material / approve / _run
+ -> backup -> pixi install --locked -> metadata+functional smoke
+ -> routing -> shell PATH check -> guarded brew uninstall
+ -> postcheck -> installed.json + ownership routes -> refresh/recovery
+```
+
+**הפרדה חשובה:** `pixi_provider.discover` מאמת מועמדות בינארית ו־lock, אך אינו מתיר מעבר; `migration_profiles.pixi_get` מתיר רק `jq` ו־`pandoc`; `migration_engine.plan` יוצר תוכנית עסקה אחרי preflight, וה־executor צריך להוכיח מחדש את התאמתה לפני כל מוטציה.
+
+### 2. ממצאים מאומתים בקוד
+
+| מזהה | דחיפות | ממצא וקוד תומך | השלכה | טיפול נדרש |
+| --- | --- | --- | --- | --- |
+| P0-A | חוסם הפעלה | `backend/unified_updates.py:228-245`: `_pixi_bridge` משאיר `execution_supported=False`, `profile_id=None`, `migration_plan_id` חסר גם לאחר `discover` מוצלח. `update_selection.py:117-151` חוסם הצעה זו. | מנוע Pixi החדש אינו נבחר לעדכון. | לחבר פרופיל קבוע ותוכנית `migration_engine.plan(... provider="pixi", pixi_candidate=verified, classification=...)` רק לאחר כל תנאי הסף, ולהציב `ready` רק עם מזהה ו־fingerprint תקינים. |
+| P0-B | חוסם הפעלה | `backend/unified_updates.py:535-539, 550-556`: ה־executor מאמת מעבר דרך `migration_engine._material(s, logical_id)` **ללא provider**, ולכן ברירת המחדל היא MacPorts. | הצעת Pixi שתסומן `ready` תיבדק בטעות לפי נתיב MacPorts, ועלולה להיכשל ב־`plan_changed` או לפרש חוזה לא מתאים. | לנתב במפורש לפי `selected_candidate.provider` / `target_provider`, ולהצליב עם תוכנית העסקה השמורה, `profile_version`, `migration_fingerprint`, `generation_id` ונתוני Pixi. לא להסיר את האימות. |
+| P0-C | חוסם הפעלה | `backend/mac_manager.py:168-186` מעביר סיווג T02 מלא מה־supplemental ל־packages בבדיקה מלאה; אולם `installation_evidence.py:281-306` בסריקה `refresh=False` משחזר סיווג רק מ־`previous.migrations`, **לא** מרשומת `previous.packages`. `unified_updates.py:527-539` קורא `compute_snapshot(False)` לפני מימוש, ו־`mac_manager.py:204` שומר את המצב החדש. `migration_engine.py:94-125` דורש סיווג טרי/מתאים. | עבור כלי שהיה supplemental בלבד (למשל jq עם Homebrew bottle), סיווג `standalone_candidate` עלול להפוך ל־`unclassified` לפני אישור העסקה; פעולה נכונה תידחה גם ללא שינוי התקנה. | לשמר סיווג **רק** מרשומת התקנה פיזית תואמת עם fingerprint תקף ותוקף זמן, או להפיק סיווג טרי לפני ביצוע. בדיקות חייבות להוכיח שסיווג מיושן/שונה/חסר נחסם. |
+| P1-D | חשוב | `backend/migration_engine.py:297-310` מקבל מועמד Pixi נעול ויוצר תוכנית; אבל `approve:648-659` בונה `_material(... provider="pixi")` **ללא pixi_candidate**, כך ש־`_material_pixi:175` מגלה מועמד מחדש. | גם ללא שינוי קוד אפשר לקבל lock/closure שונה, timeout או חסם ממקור חיצוני בין תכנון לאישור. זה אינו אישור בטיחות אוטומטי. | להגדיר במדויק revalidation: תוכנית/מקור/דור דורשים התאמה מהותית, ונתיב גילוי מחדש מוגבל בזמן ויכול רק לדחות כשיש שינוי; לא ליפול לגרסה או lock אחרים. |
+| P1-E | חשוב | `update_selection.py:145-151` בודק פרופיל כללי אך **לא** מחייב תוכנית migration; `unified_updates.validate_request:475-479` דורש `migration_plan_id` ו־fingerprint רק בזמן לחיצה. | אם יוצב `execution_supported=True` לפני תוכנית מאומתת, ה־UI עלול להציג `ready` שה־backend ידחה. | גם בזמן selection לדרוש ראיית תוכנית תקפה ומצומדת לפרופיל, מקור, ספק ויעד; בדיקת השרת חייבת להישאר בנוסף. |
+| P1-F | חשוב לשלב 4 | `migration_engine._run:540-645`: יש backup/locked install/smoke/routing/cleanup/postcheck/ownership, אבל ברירות כשל אחרי cleanup יוצרות `needs_attention`, והמנוע לא מכוסה בבדיקות end-to-end של כל השלבים. `_compensate:445-469` משחזר קג רק כשהתיקייה חסרה; נדרש מבחן להסרה חלקית כשהיא עדיין קיימת. | אי אפשר להבטיח שחזור מלא במקרה כשל ביניים או פגיעה חלקית במקור. | לשמור חסימה עד הבדיקות הרלוונטיות; לכתוב fault-injection ו־resume/rollback מדומים לכל שלב, לשמור שינוי עצמאי, ורק לאחר מכן קבלת Mac אמיתית. |
+| P2-G | המשך | `backend/brew-updates-service.py` מפעיל unified תחת `run_with_progress` ומנעול בין תהליכים; בקשת migration legacy חדשה נדחית ב־`review_required`, recovery נפרד. טיפול ב־`MigrationConflict` ו־409/500 אינו אחיד. | חסמי ביצוע טכניים עלולים להופיע כהודעת כשל כללית, ו־UI/HTTP לא נבדקו במלואם. | בשלב 6–7 להבטיח סטטוס 409 מובנה והצגת מסלול בדיקה מחדש; אין להמציא אישור migration חדש שעוקף את ה־executor המאוחד. |
+
+### 3. הגנות חיוביות שנמצאו — לשמר
+
+- `migration_engine._material_pixi:164-214`: native Intel בלבד, allowlist של פרופילים, ngrok/החרגות, איסור רשומת tool קיימת, בעלות shim, השוואת upstream ללא downgrade, lock/hash ומיפוי מדויק.
+- `_fresh_classification:94-125`: fingerprint של מלאי המקור, חותמת זמן (עד 15 דקות), ללא gaps/consumers/shared roles; `_consumers` מבצע `brew uses --installed` מחדש.
+- `pixi_provider.discover/install_locked/verify_generation`: osx-64, manifest+lock מדויקים, URL/channel מוגבלים, רשומות `conda-meta` וארטיפקטים תואמים, התקנה חדשה בלבד.
+- `migration_profiles.smoke_pixi`: בודק version ותפקוד ממשי של `jq` ו־`pandoc` דרך executables מוגדרים.
+- `routing_activation`: מסרב ל־shim זר או משתנה, כותב wrappers בשלבים, ומאמת login shell לפני הסרת מקור.
+- `migration_engine._run`: מקור מוסר רק אחרי גיבוי, התקנת היעד ואימות שימוש; רישום בעלות מתבצע רק אחרי postcheck; כשל אחרי cleanup אינו מסומן הצלחה אוטומטית.
+- `provider_ownership.commit_route`: דורש יעד פיזי יחיד ורשומת journal לפני commit; אין לייצר רשומת port פיקטיבית ב־installed.json.
+- `unified_updates.validate_request`: דוחה תוכנית שפג תוקפה, החלטות כפולות, fingerprint שונה או החלטה לא מוכנה; שכבת ה־API שומרת request IDs ומנעול פעולה.
+
+### 4. מפת שינויים מצומצמת לשלב 3
+
+1. **קודם P0-C:** ב־`installation_evidence.annotate` / `mac_manager._combined` לתקן שימור בטוח של classification ב־snapshot `refresh=False`. ליצור fixtures לסריקה מלאה של jq עם `classification_only`, אחריה `compute_snapshot(False)`, ולוודא שראיה אמיתית נשמרת רק עד פקיעת התוקף/שינוי fingerprint. בלי fallback לסיווג בלתי מאומת.
+2. **P0-A + P1-E:** ב־`unified_updates._pixi_bridge` וב־`collect_candidates` להפעיל `migration_engine.plan` רק ל־`pixi_get(name)` תואם ל־`PIXI_TOOLS[name]`, T02 טרי, ללא consumers, עם candidate `osx-64` ב־closure נעול ו־version חדש. לתעד `migration_plan_id`, `migration_fingerprint`, `profile_id`, `profile_version`; רק אז `execution_supported=True`.
+3. **P0-B + P1-D:** ב־`unified_updates.execute` ו־`migration_engine.approve` להעביר יעד provider מפורש, לאמת תוכנית Pixi שנשמרה ונתוני lock/closure ומספר generation, ולחסום כל שינוי מהותי. אין מעבר מספק אחר או שינוי ספק סמוי.
+4. **בדיקות ממוקדות:** קוד `test_unified_updates.py`, `test_migration_engine.py`, בדיקות T02, provider-version ו־`test_update_selection.py`: jq/pandoc `ready` עם preflight מלא, כלי ממופה ללא profile חסום, T02 ישן/שונה, שינוי lock, revision, שינוי בעלות, תוכנית שפג תוקפה, חבילת Homebrew רגילה שנבחרת כש־Pixi חסום, וגם בדיקה שמקור ה־Pixi לא עבר בטעות בנתיב MacPorts.
+5. **גנרטור וביקורת:** לעדכן `tools/implement-mac-manager.py` באותם קובצי קוד/בדיקות, לבדוק `unified-check`, syntax ו־CI ממוקד. אין להריץ `--full`, לשנות חבילות, להגדיל allowlist ללא smoke או להתקין Pixi במחשב בזמן כתיבת הקוד.
+
+**שער כניסה למצב `ready`:** כל P0 סגור בקוד + fixtures חיוביים ושליליים עברו + `validate_request` ו־`execute` יודעים לאמת/להפעיל *בדיוק* את תוכנית Pixi שנבחרה. אם תנאי חסר, משאירים `execution_supported=False`, גם אם `discover` מצא גרסה חדשה.
+
+### 5. מה לא בוצע בשלב 2
+
+- לא שונה `execution_supported` ולא הופעל מסלול Homebrew→Pixi בבקשת העדכון.
+- לא נערכו קוד backend, UI, בדיקות מוצר או סקריפט התקנה; השינויים הם תיעוד ועותק התיעוד בגנרטור בלבד.
+- לא הורצו בדיקות קבלה על Mac או התקנה/הסרה/חילופי PATH.
+- 63 בדיקות ה־CI מהבסיס `555ae7b` הן רגרסיות ממוקדות; הן אינן מוכיחות את התרחישים החסרים שתועדו כאן.
