@@ -2508,7 +2508,7 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
             return {"ok": False, "name": name, "kind": kind, "code": 78, "stdout": "",
                     "stderr": item.get("detail", item["reason"]), "reason": item["reason"]}
         return engine.install_tool(item)
-    if kind == "formula" and settings["binary_only"]:
+    if kind == "formula":
         blockers = routes.bottle_blockers(name, engine.catalog(), engine.installed(), settings["excluded_packages"])
         if blockers:
             return {"ok": False, "name": name, "kind": kind, "code": 78, "stdout": "", "reason": "source_required",
@@ -2516,7 +2516,7 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     b = brew_bin()
 
     if kind == "formula":
-        cmd = [b, "upgrade", name]
+        cmd = [b, "upgrade", "--force-bottle", name]
     elif kind == "cask":
         cmd = [b, "upgrade", "--cask", name]
     else:
@@ -2531,7 +2531,7 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
     def observe(line: str, source: str) -> None:
         nonlocal source_fallback
         activity.observe(line, source)
-        if settings["binary_only"] and activity.state["stage"] == "building":
+        if activity.state["stage"] == "building":
             source_fallback = True
             with ACTIVE_COMMAND_LOCK:
                 proc = ACTIVE_COMMAND.get("process")
@@ -2539,7 +2539,12 @@ def run_upgrade(name: str, kind: str) -> dict[str, Any]:
 
     try:
         res = run_cmd(cmd, timeout=settings["upgrade_timeout_seconds"] or None, cancellable=True,
-                      on_output=observe, env_override=engine.brew_env)
+                      on_output=observe, env_override={
+                          **engine.brew_env,
+                          "HOMEBREW_NO_AUTO_UPDATE": "1",
+                          "HOMEBREW_NO_AUTOREMOVE": "1",
+                          "HOMEBREW_NO_INSTALL_CLEANUP": "1",
+                      })
     finally:
         activity.stop_monitor()
         with CHECK_PROGRESS_LOCK:
