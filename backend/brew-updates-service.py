@@ -2808,14 +2808,14 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                     "operation": operation,
                     "project_root": str(PROJECT_ROOT),
                     "protocol": 6,
-                    "version": "1.3.3",
+                    "version": "1.3.4",
                     "pid": os.getpid(),
                     "data_dir": str(DATA_DIR),
-                    "capabilities": ["migration-v1", "migration-recovery"],
+                    "capabilities": ["provider-decisions-v1", "migration-recovery-v2", "batch-idempotency-v1"],
                     "backend_sha256": BACKEND_STARTUP_SHA,
                     "backend_code_sha256": BACKEND_STARTUP_SHA,
                     "process_started_at": PROCESS_STARTED_AT,
-                    "build_id": "unified-intel-foundations",
+                    "build_id": "unified-intel-1.3.4",
                 },
             )
             return
@@ -2889,6 +2889,27 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/update-plan":
             self._send_json(200, {"ok": True, "plan": unified_updates.read_plan(sys.modules[__name__])})
+            return
+
+        if self.path.startswith("/api/update-requests/"):
+            request_id = self.path.removeprefix("/api/update-requests/")
+            if not unified_updates.re_full_id(request_id):
+                self._send_json(400, {"ok": False, "error": "invalid_request_id"})
+                return
+            path = DATA_DIR / "update-requests" / (request_id + ".json")
+            journal = read_json(path)
+            if journal:
+                transactions = []
+                for txn_path in (DATA_DIR / "migrations" / "transactions").glob("*/journal.json"):
+                    txn = read_json(txn_path) or {}
+                    if txn.get("request_id") == request_id:
+                        transactions.append({"transaction_id": txn.get("transaction_id"),
+                                             "status": txn.get("status"),
+                                             "stage": txn.get("stage")})
+                self._send_json(200, {"ok": True, "request": journal,
+                                      "transactions": transactions})
+            else:
+                self._send_json(404, {"ok": False, "error": "request_not_found"})
             return
 
         if self.path == "/api/progress":
