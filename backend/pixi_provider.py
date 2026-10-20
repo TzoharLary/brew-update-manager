@@ -46,13 +46,19 @@ def runtime(service):
     return str(path)
 
 
-def _env(root):
+def _env(root, *, allow_install=False):
+    """A discovery probe must never install; an explicitly locked install must.
+
+    The service overlays environment variables rather than replacing them, so
+    explicitly pass false during install to override inherited user settings.
+    """
     root = Path(root)
     return {
         "HOME": str(root), "PIXI_HOME": str(root / "pixi-home"),
         "PIXI_CACHE_DIR": str(root / "cache"),
         "XDG_CONFIG_HOME": str(root / "xdg"), "XDG_CACHE_HOME": str(root / "cache"),
-        "PIXI_NO_INSTALL": "true", "PIXI_PLATFORM": PLATFORM,
+        "PIXI_NO_INSTALL": "false" if allow_install else "true",
+        "PIXI_PLATFORM": PLATFORM,
     }
 
 
@@ -207,7 +213,7 @@ def install_locked(service, candidate, generation):
     (generation / "pixi.lock").write_text(lock)
     result = service.run_cmd([pixi, "install", "--locked", "--no-config",
                               "--manifest-path", str(generation / "pixi.toml")],
-                             timeout=1800, cancellable=True, env_override=_env(generation))
+                             timeout=1800, cancellable=True, env_override=_env(generation, allow_install=True))
     if result.code:
         raise PixiUnavailable("pixi_locked_install_failed: " + result.stderr[-200:])
     prefix = generation / ".pixi" / "envs" / "default"

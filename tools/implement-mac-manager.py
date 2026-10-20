@@ -6481,13 +6481,19 @@ def runtime(service):
     return str(path)
 
 
-def _env(root):
+def _env(root, *, allow_install=False):
+    """A discovery probe must never install; an explicitly locked install must.
+
+    The service overlays environment variables rather than replacing them, so
+    explicitly pass false during install to override inherited user settings.
+    """
     root = Path(root)
     return {
         "HOME": str(root), "PIXI_HOME": str(root / "pixi-home"),
         "PIXI_CACHE_DIR": str(root / "cache"),
         "XDG_CONFIG_HOME": str(root / "xdg"), "XDG_CACHE_HOME": str(root / "cache"),
-        "PIXI_NO_INSTALL": "true", "PIXI_PLATFORM": PLATFORM,
+        "PIXI_NO_INSTALL": "false" if allow_install else "true",
+        "PIXI_PLATFORM": PLATFORM,
     }
 
 
@@ -6642,7 +6648,7 @@ def install_locked(service, candidate, generation):
     (generation / "pixi.lock").write_text(lock)
     result = service.run_cmd([pixi, "install", "--locked", "--no-config",
                               "--manifest-path", str(generation / "pixi.toml")],
-                             timeout=1800, cancellable=True, env_override=_env(generation))
+                             timeout=1800, cancellable=True, env_override=_env(generation, allow_install=True))
     if result.code:
         raise PixiUnavailable("pixi_locked_install_failed: " + result.stderr[-200:])
     prefix = generation / ".pixi" / "envs" / "default"
@@ -6747,6 +6753,34 @@ class PixiContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):
                 p.install_locked(S(), {"provider":"pixi", "closure_verified":False}, temp)
+
+    def test_locked_install_enables_install_even_when_user_env_disables_it(self):
+        import hashlib
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generation = root / "generation"
+            manifest = p.manifest_text("jq", "1.2")
+            lock = "verified fixture lock"
+            candidate = {"provider": "pixi", "closure_verified": True,
+                         "system": {"arch": "x86_64"},
+                         "manifest": manifest, "lock": lock,
+                         "lock_sha256": hashlib.sha256(lock.encode()).hexdigest()}
+            class Fake:
+                def run_cmd(self, argv, **kwargs):
+                    self.args = argv
+                    self.env = kwargs["env_override"]
+                    (generation / ".pixi" / "envs" / "default" / "conda-meta").mkdir(
+                        parents=True)
+                    return SimpleNamespace(code=0, stdout="", stderr="")
+            service = Fake()
+            with patch.object(p, "runtime", return_value="/verified/pixi"):
+                installed = p.install_locked(service, candidate, generation)
+            self.assertIn("--locked", service.args)
+            self.assertEqual(service.env["PIXI_NO_INSTALL"], "false")
+            self.assertEqual(installed, generation / ".pixi" / "envs" / "default")
+            self.assertEqual(p._env(root)["PIXI_NO_INSTALL"], "true")
 
     def test_ngrok_and_unmapped_blocked(self):
         for name in ("ngrok", "not-mapped", "../evil"):
