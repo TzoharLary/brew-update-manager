@@ -61,5 +61,20 @@ class PixiContract(unittest.TestCase):
                 p.installed_record(temp, "jq", "1.3")
 
 
+    def test_pixi_full_closure_must_match_conda_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            meta = Path(root)/"conda-meta"
+            meta.mkdir()
+            (meta/"jq.json").write_text('{"fn":"jq-1.2.conda", "name":"jq",'
+                                         '"version":"1.2", "subdir":"osx-64",'
+                                         '"sha256":"' + "a"*64 + '"}')
+            closure = [{"archive_id":"jq-1.2.conda","arch":"osx-64",
+                        "checksum_algorithm":"sha256","checksum":"a"*64}]
+            self.assertEqual(p.verify_generation(root,closure)["verified_archives"],1)
+            closure[0]["checksum"] = "b"*64
+            with self.assertRaises(p.PixiUnavailable):
+                p.verify_generation(root,closure)
+
+
 if __name__ == "__main__":
     unittest.main()

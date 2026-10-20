@@ -229,3 +229,37 @@ def installed_record(prefix, mapped_name, required_version):
     if len(records) != 1 or compare_upstream(records[0].get("version"), required_version) != 0:
         raise PixiUnavailable("pixi_installed_version_mismatch")
     return records[0]
+
+
+def verify_generation(prefix, closure):
+    """Match every approved archive and published checksum to live conda-meta.
+
+    An existing user-managed environment is never treated as evidence for a
+    generated application-owned environment.
+    """
+    folder = Path(prefix) / "conda-meta"
+    if not folder.is_dir() or not isinstance(closure, list) or not closure:
+        raise PixiUnavailable("pixi_closure_inventory_missing")
+    installed = {}
+    for path in folder.glob("*.json"):
+        try:
+            metadata = json.loads(path.read_text())
+        except (OSError, ValueError) as error:
+            raise PixiUnavailable("pixi_invalid_conda_metadata") from error
+        name = metadata.get("fn")
+        if not isinstance(name, str) or name in installed:
+            raise PixiUnavailable("pixi_ambiguous_archive_inventory")
+        installed[name] = metadata
+    for node in closure:
+        archive = node.get("archive_id")
+        record = installed.get(archive)
+        if record is None or node.get("arch") not in (PLATFORM, "noarch"):
+            raise PixiUnavailable("pixi_expected_archive_missing")
+        checksum = record.get(node.get("checksum_algorithm"))
+        if not isinstance(checksum, str) or checksum.lower() != node.get("checksum"):
+            raise PixiUnavailable("pixi_archive_checksum_mismatch")
+        if record.get("subdir") != node["arch"]:
+            raise PixiUnavailable("pixi_installed_architecture_mismatch")
+    if len(installed) != len(closure):
+        raise PixiUnavailable("pixi_unapproved_extra_archives")
+    return {"verified_archives": len(closure)}

@@ -6643,6 +6643,40 @@ def installed_record(prefix, mapped_name, required_version):
     if len(records) != 1 or compare_upstream(records[0].get("version"), required_version) != 0:
         raise PixiUnavailable("pixi_installed_version_mismatch")
     return records[0]
+
+
+def verify_generation(prefix, closure):
+    """Match every approved archive and published checksum to live conda-meta.
+
+    An existing user-managed environment is never treated as evidence for a
+    generated application-owned environment.
+    """
+    folder = Path(prefix) / "conda-meta"
+    if not folder.is_dir() or not isinstance(closure, list) or not closure:
+        raise PixiUnavailable("pixi_closure_inventory_missing")
+    installed = {}
+    for path in folder.glob("*.json"):
+        try:
+            metadata = json.loads(path.read_text())
+        except (OSError, ValueError) as error:
+            raise PixiUnavailable("pixi_invalid_conda_metadata") from error
+        name = metadata.get("fn")
+        if not isinstance(name, str) or name in installed:
+            raise PixiUnavailable("pixi_ambiguous_archive_inventory")
+        installed[name] = metadata
+    for node in closure:
+        archive = node.get("archive_id")
+        record = installed.get(archive)
+        if record is None or node.get("arch") not in (PLATFORM, "noarch"):
+            raise PixiUnavailable("pixi_expected_archive_missing")
+        checksum = record.get(node.get("checksum_algorithm"))
+        if not isinstance(checksum, str) or checksum.lower() != node.get("checksum"):
+            raise PixiUnavailable("pixi_archive_checksum_mismatch")
+        if record.get("subdir") != node["arch"]:
+            raise PixiUnavailable("pixi_installed_architecture_mismatch")
+    if len(installed) != len(closure):
+        raise PixiUnavailable("pixi_unapproved_extra_archives")
+    return {"verified_archives": len(closure)}
 '''
 
 UNIFIED_PIXI_TESTS = r'''import sys
@@ -6706,6 +6740,21 @@ class PixiContract(unittest.TestCase):
             self.assertEqual(p.installed_record(temp, "jq", "1.2.0")["version"], "1.2")
             with self.assertRaises(p.PixiUnavailable):
                 p.installed_record(temp, "jq", "1.3")
+
+
+    def test_pixi_full_closure_must_match_conda_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            meta = Path(root)/"conda-meta"
+            meta.mkdir()
+            (meta/"jq.json").write_text('{"fn":"jq-1.2.conda", "name":"jq",'
+                                         '"version":"1.2", "subdir":"osx-64",'
+                                         '"sha256":"' + "a"*64 + '"}')
+            closure = [{"archive_id":"jq-1.2.conda","arch":"osx-64",
+                        "checksum_algorithm":"sha256","checksum":"a"*64}]
+            self.assertEqual(p.verify_generation(root,closure)["verified_archives"],1)
+            closure[0]["checksum"] = "b"*64
+            with self.assertRaises(p.PixiUnavailable):
+                p.verify_generation(root,closure)
 
 
 if __name__ == "__main__":
@@ -6896,6 +6945,7 @@ def _pixi_update(s, source, candidate):
     prefix = pixi_provider.install_locked(s, candidate, directory)
     mapped, commands, probe = update_routes.PIXI_TOOLS[name]
     pixi_provider.installed_record(prefix, mapped, candidate["upstream_version"])
+    pixi_provider.verify_generation(prefix, candidate["closure"])
     binaries = {command: prefix / "bin" / command for command in commands}
     if not all(p.is_file() for p in binaries.values()):
         raise PlanError("pixi_missing_mandatory_commands")

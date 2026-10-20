@@ -182,6 +182,7 @@ def _pixi_update(s, source, candidate):
     prefix = pixi_provider.install_locked(s, candidate, directory)
     mapped, commands, probe = update_routes.PIXI_TOOLS[name]
     pixi_provider.installed_record(prefix, mapped, candidate["upstream_version"])
+    pixi_provider.verify_generation(prefix, candidate["closure"])
     binaries = {command: prefix / "bin" / command for command in commands}
     if not all(p.is_file() for p in binaries.values()):
         raise PlanError("pixi_missing_mandatory_commands")
