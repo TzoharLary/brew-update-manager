@@ -192,6 +192,10 @@ def generate_plan(s, snapshot):
     candidates = collect_candidates(s, dict(snapshot, packages=rows))
     pid = uuid.uuid4().hex
     decisions = update_selection.select(rows, candidates, plan_id=pid)
+    if registry.get("error"):
+        for decision in decisions:
+            decision.update(status="unverified", action="none", selected_candidate=None,
+                            reason_codes=["ownership_unreadable"], blockers=[registry["error"]])
     by_id = {d["source_installation_id"]: d for d in decisions}
     for row in rows:
         decision = by_id.get(row["installation_id"])
@@ -295,9 +299,21 @@ def execute(s, body, *, all_ready=False):
     """
     request_id = body.get("request_id") if isinstance(body, dict) else None
     path = _request_path(s, request_id) if isinstance(request_id, str) and re_full_id(request_id) else None
+    journal = s.read_json(path) if path else None
+    if journal and journal.get("status") == "completed":
+        supplied = body.get("decisions")
+        if supplied is None and body.get("decision_id"):
+            supplied = [{"decision_id": body.get("decision_id"),
+                         "material_fingerprint": body.get("material_fingerprint")}]
+        fingerprint = hashlib.sha256(json.dumps({
+            "plan_id": body.get("plan_id"), "decisions": sorted(
+                (x.get("decision_id"), x.get("material_fingerprint")) for x in (supplied or []))},
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if fingerprint != journal.get("request_hash"):
+            raise PlanError("request_conflict")
+        return journal["result"]
     plan, decisions = validate_request(s, body, all_ready=all_ready)
     signature = _canonical_request(plan["id"], decisions)
-    journal = s.read_json(path) if path else None
     if journal:
         if journal.get("request_hash") != signature:
             raise PlanError("request_conflict")
@@ -355,13 +371,26 @@ def execute(s, body, *, all_ready=False):
             if not outcome.get("ok"):
                 journal["status"] = "needs_recovery"
                 provider_ownership.atomic_write_json(path, journal)
-                return {"ok": False, "results": journal["results"],
-                        "error": "update_failed", "request_id": request_id}
+                raise PlanError("needs_recovery")
         journal["status"] = "completed"
         journal["completed_at"] = s.now_iso()
-        journal["result"] = {"ok": True, "results": journal["results"],
-                             "request_id": request_id}
+        refreshed, refresh_error = s.safe_refresh_snapshot(current)
+        refreshed.pop("update_decisions", None)
+        refreshed.pop("unified_plan_id", None)
+        provider_ownership.atomic_write_json(_plan_dir(s) / "latest.json", {"plan_id": None})
+        journal["result"] = {
+            "ok": refresh_error is None, "results": journal["results"],
+            "updated_count": sum(bool(r.get("ok")) for r in journal["results"]),
+            "failed_count": sum(not bool(r.get("ok")) for r in journal["results"]),
+            "attempted_count": len(journal["results"]),
+            "deferred_count": 0, "skipped_count": 0, "remaining_count": 0,
+            "snapshot": refreshed, "inventory_refresh_error": refresh_error,
+            "request_id": request_id,
+        }
+        journal["status"] = "completed"
         provider_ownership.atomic_write_json(path, journal)
+        s.set_check_progress(running=False, phase="completed", completed_at=s.now_iso(),
+                             message="Verified update batch completed", eta_seconds=0)
         return journal["result"]
     except BaseException:
         journal["status"] = "needs_recovery"
