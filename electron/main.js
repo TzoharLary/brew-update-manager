@@ -395,7 +395,7 @@ ipcMain.handle('operation:cancel', async () => fetchJson(serviceUrl('/api/cancel
 }));
 
 for (const [channel, endpoint] of [['migration:plan','/api/migrations/plan'],
-  ['migration:approve','/api/migrations/approve'], ['macports:sync','/api/macports/sync']]) {
+  ['migration:approve','/api/migrations/approve'], ['migration:recovery-plan','/api/migrations/recovery-plan'], ['macports:sync','/api/macports/sync']]) {
   ipcMain.handle(channel, async (_event, payload) => fetchJson(serviceUrl(endpoint), {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload || {}),
   }));

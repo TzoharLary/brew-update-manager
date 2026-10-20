@@ -20,6 +20,20 @@ function macAlternativeLabel(status) {
   };
   return (labels[status]||[status,status])[he?0:1];
 }
+function unifiedReasonLabel(code) {
+  const he=i18n.lang==='he';
+  const known={
+    newest_verified_compatible:['העדכון הבינארי החדש ביותר שאומת','Latest verified compatible binary'],
+    partial_provider_comparison:['השוואת הספקים חלקית','Provider comparison is incomplete'],
+    discovery_incomplete:['מידע על חלק מהספקים חסר','Some providers could not be verified'],
+    excluded_package:['חבילה מוחרגת','Excluded package'],
+    no_executable_binary_route:['אין מסלול בינארי בטוח לביצוע','No executable binary route'],
+    recovery_required:['נדרש שחזור עסקה','Transaction recovery required'],
+    ownership_unreadable:['אי אפשר לאמת בעלות','Ownership registry cannot be verified'],
+    already_current:['אין עדכון מאומת','No verified update'],
+  };
+  return (known[code]||[he?'נימוק טכני בפרטים':'Technical reason in details',he?'נימוק טכני בפרטים':'Technical reason in details'])[he?0:1];
+}
 function renderMacManager() {
   let panel=document.getElementById('macManagerPanel');
   if (!panel) {
@@ -36,7 +50,7 @@ function renderMacManager() {
     if (decision.status==='current') continue;
     const line=document.createElement('p');
     const route=decision.current_provider===decision.target_provider?decision.current_provider:`${decision.current_provider} → ${decision.target_provider}`;
-    line.textContent=`${decision.logical_id}: ${decision.installed_version||'—'} → ${decision.target_version||'—'} · ${route} · ${decision.status} · ${(decision.reason_codes||[]).join(', ')}`;
+    line.textContent=`${decision.logical_id}: ${decision.installed_version||'—'} → ${decision.target_version||'—'} · ${route} · ${decision.status} · ${(decision.reason_codes||[]).map(unifiedReasonLabel).join(' · ')}`;
     panel.appendChild(line);
   }
   panel.appendChild(hint);
@@ -50,6 +64,58 @@ function renderMacManager() {
   }
   if(['running','needs_attention'].includes(snapshot?.migration_journal?.status)) {
     const warning=document.createElement('p');warning.textContent=he?'מעבר קודם דורש בדיקה לפני המשך.':'A previous migration needs review before continuing.';panel.appendChild(warning);
+  }
+  for (const pending of snapshot?.pending_recovery || []) {
+    const item=document.createElement('div');
+    item.style.marginBlock='12px';
+    const description=document.createElement('p');
+    description.textContent=(he?'נדרש טיפול בעסקה: ':'Recovery required: ')+
+      (pending.logical_id||'—')+' · '+(pending.stage||'—');
+    item.appendChild(description);
+    for (const action of ['resume','rollback']) {
+      const button=document.createElement('button');
+      button.textContent=action==='resume'?(he?'סקירת המשך':'Review resume'):
+        (he?'סקירת שחזור':'Review rollback');
+      button.disabled=!!busyLoading||!!lastKnownOperationRunning;
+      button.onclick=async()=>{
+        button.disabled=true;
+        try {
+          const response=await window.brewApp.migrationRecoveryPlan(pending.transaction_id,action);
+          const plan=response.plan;
+          if (!plan || !plan.id) throw new Error('Recovery plan unavailable');
+          const review=document.createElement('p');
+          review.textContent=JSON.stringify(plan.preview||{},null,2);
+          review.style.whiteSpace='pre-wrap';
+          item.appendChild(review);
+          const approve=document.createElement('button');
+          approve.textContent=he?'אשר את פעולת ההתאוששות':'Approve this recovery';
+          approve.onclick=async()=>{
+            approve.disabled=true;
+            setLoading(true,'message.loadingState');
+            beginOperationRequest();
+            const generation=operationRequestGeneration;
+            let result=null;
+            startProgressPolling();
+            try {
+              result=await window.brewApp.migrationApprove(plan.id);
+              await loadState({showLoader:false});
+            } catch(error) {
+              showMessage(error.message,true);
+            } finally {
+              await finishOperationRequest(result,generation);
+              setLoading(false,'message.loadingState');
+            }
+          };
+          item.appendChild(approve);
+        } catch(error) {
+          showMessage(error.message,true);
+        } finally {
+          button.disabled=false;
+        }
+      };
+      item.appendChild(button);
+    }
+    panel.appendChild(item);
   }
   for(const offer of snapshot?.migrations||[]) {
     const row=document.createElement('details');row.style.marginBlock='10px';
@@ -95,7 +161,7 @@ function renderMacManager() {
     for(const [label,values] of [[he?'מידע חסר':'Missing evidence',classification.gaps],[he?'קובצי ראיות':'Evidence files',classification.evidence_refs]]) {
       if(values?.length) {const evidence=document.createElement('details');const title=document.createElement('summary');title.textContent=label;const text=document.createElement('p');text.textContent=values.join(' · ');evidence.append(title,text);row.appendChild(evidence);}
     }
-    if(offer.status==='binary_available') {
+    if(!snapshot?.unified_plan_id && offer.status==='binary_available') {
       if(offer.below_homebrew_target) {
         const version=document.createElement('p');
         version.textContent=he?`זו גרסה חדשה מהמותקנת אצלך. יעד Homebrew הוא ${offer.homebrew_target}; אין בכך הוכחה שזו הגרסה האחרונה הנתמכת ב־Intel.`:`This is newer than your installed version. Homebrew targets ${offer.homebrew_target}; this does not prove it is the last Intel-supported release.`;

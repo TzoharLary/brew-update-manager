@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('brewApp', {
   migrationPlan: (name) => ipcRenderer.invoke('migration:plan', {name}),
   migrationApprove: (id) => ipcRenderer.invoke('migration:approve', {id}),
+  migrationRecoveryPlan: (transaction_id, action) => ipcRenderer.invoke('migration:recovery-plan', {transaction_id, action}),
   macportsSync: () => ipcRenderer.invoke('macports:sync'),
   getState: () => ipcRenderer.invoke('state:get'),
   getUpdatePlan: () => ipcRenderer.invoke('update:plan:get'),
