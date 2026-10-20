@@ -92,40 +92,89 @@ def validate_lock(manifest: Path, python: str, run, env):
 
 
 def activate(root: Path, name, provider, directory: Path, prefix: Path, version, executables, probe_output):
-    """Publish only after installation AND executable probes succeeded."""
-    root.mkdir(parents=True, exist_ok=True)
+    """Publish a complete tool update only after ownership of every shim is proved.
+
+    The installed.json record and the exact generated wrapper bytes form the
+    legacy ownership manifest; arbitrary files and broken links are blocked.
+    """
+    import hashlib
+    from provider_ownership import atomic_write_json
+    root = Path(root)
     bin_dir = root / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    available = [command for command in executables if (prefix / "bin" / command).exists()]
-    if not available:
-        raise RuntimeError("Provider supplied none of the expected commands")
-    # A single atomic symlink switch publishes all commands for this tool.
     active_dir = root / "active"
-    active_dir.mkdir(exist_ok=True)
     link = active_dir / name
-    staged = active_dir / (name + ".next")
-    staged.unlink(missing_ok=True)
-    staged.symlink_to(prefix)
-    os.replace(staged, link)
+    prefix = Path(prefix)
+    available = list(dict.fromkeys(executables))
+    if not available or not all((prefix / "bin" / command).is_file() for command in available):
+        raise RuntimeError("Provider did not supply all mandatory tool commands")
+    if name not in PIXI_TOOLS and provider == "pixi":
+        raise RuntimeError("Unmapped Pixi package")
+    if name == "ngrok":
+        raise RuntimeError("Excluded package")
+    records = read_records(root)
+    previous = records.get(name)
+    if os.path.lexists(link):
+        if not link.is_symlink() or not previous or os.readlink(link) != previous.get("prefix"):
+            raise RuntimeError("Active tool routing is not owned by the manager")
+    elif previous and previous.get("prefix"):
+        raise RuntimeError("Prior managed active pointer is missing")
+    if previous and set(previous.get("executables", [])) != set(available):
+        raise RuntimeError("Existing command set differs from required profile")
+    def wrapper(command):
+        return ('#!/bin/sh\n' +
+                f'export CONDA_PREFIX={shlex.quote(str(link))}\n' +
+                f'export PATH={shlex.quote(str(link / "bin"))}:{shlex.quote(str(bin_dir))}:"$PATH"\n' +
+                f'exec {shlex.quote(str(link / "bin" / command))} "$@"\n')
+    import hashlib
     for command in available:
         destination = bin_dir / command
-        staged_shim = destination.with_suffix(".next")
-        staged_shim.write_text(
-            '#!/bin/sh\n'
-            f'export CONDA_PREFIX={shlex.quote(str(link))}\n'
-            f'export PATH={shlex.quote(str(link / "bin"))}:{shlex.quote(str(bin_dir))}:"$PATH"\n'
-            f'exec {shlex.quote(str(link / "bin" / command))} "$@"\n'
-        )
-        staged_shim.chmod(0o755)
-        os.replace(staged_shim, destination)
-    records = read_records(root)
-    records[name] = {"provider": provider, "version": version, "prefix": str(prefix),
-                     "workspace": str(directory), "executables": available,
-                     "verified_at": time.time(), "probe_output": probe_output[-3000:]}
-    temporary = root / "installed.json.next"
-    temporary.write_text(json.dumps(records, indent=2))
-    os.replace(temporary, root / "installed.json")
-    return records[name]
+        if not os.path.lexists(destination):
+            continue
+        if not previous or destination.is_symlink() or not destination.is_file():
+            raise RuntimeError("Unmanaged tool shim conflict: " + str(destination))
+        raw = destination.read_bytes()
+        actual = hashlib.sha256(raw).hexdigest()
+        old_hash = (previous.get("owned_shims") or {}).get(command)
+        legacy = hashlib.sha256(wrapper(command).encode()).hexdigest()
+        if actual != old_hash and not (old_hash is None and actual == legacy):
+            raise RuntimeError("Independently changed managed shim: " + command)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    active_dir.mkdir(parents=True, exist_ok=True)
+    staged_wrappers = []
+    try:
+        for command in available:
+            destination = bin_dir / command
+            staged = destination.parent / ("." + command + "." + str(time.time_ns()) + ".next")
+            staged.write_text(wrapper(command))
+            staged.chmod(0o755)
+            staged_wrappers.append((staged, destination))
+        staged_active = active_dir / ("." + name + "." + str(time.time_ns()) + ".next")
+        staged_active.symlink_to(prefix)
+        # Existing shims execute through link, so switch only after all
+        # destinations and preconditions are rechecked.
+        for command in available:
+            destination = bin_dir / command
+            if os.path.lexists(destination):
+                prior_hash = (previous or {}).get("owned_shims", {}).get(command)
+                actual_hash = hashlib.sha256(destination.read_bytes()).hexdigest()
+                if destination.is_symlink() or (prior_hash and actual_hash != prior_hash) or (
+                        not prior_hash and actual_hash != hashlib.sha256(wrapper(command).encode()).hexdigest()):
+                    raise RuntimeError("Shim changed during installation")
+        for staged, destination in staged_wrappers:
+            os.replace(staged, destination)
+        os.replace(staged_active, link)
+        record = {"provider": provider, "version": version, "prefix": str(prefix),
+                  "workspace": str(directory), "executables": available,
+                  "owned_shims": {c: hashlib.sha256((bin_dir / c).read_bytes()).hexdigest()
+                                  for c in available},
+                  "verified_at": time.time(), "probe_output": probe_output[-3000:]}
+        records[name] = record
+        atomic_write_json(root / "installed.json", records)
+        return record
+    finally:
+        for staged, _ in staged_wrappers:
+            if os.path.lexists(staged):
+                staged.unlink()
 
 
 def bottle_blockers(name, formulae, installed, excluded):
