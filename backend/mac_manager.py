@@ -14,6 +14,7 @@ import macports_provider as mp
 import update_routes as routes
 import catalog_refresh
 import automatic_alternatives
+import installation_evidence
 
 def mapping():
     return json.loads((Path(__file__).with_name('macports-map.json')).read_text())
@@ -41,6 +42,7 @@ def combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
 
 
 def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
+    installation_evidence.reset()
     previous = s.read_json(s.STATE_FILE) or {}
     status, errors = {}, []
     try:
@@ -158,6 +160,7 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
                 offer.update(status='checking_pending' if offer['ports'] else 'mapping_unverified')
             pkg.update(alternative_status=offer['status'], alternative_detail=offer.get('detail',''),
                        alternative_target=offer.get('target'), alternative_below_homebrew=offer.get('below_homebrew_target', False))
+    offers = installation_evidence.annotate(s, offers, packages, refresh, report=track_progress)
     journal = s.read_json(s.DATA_DIR / 'migration-journal.json')
     state = dict(app=s.APP_NAME, updated_at=s.now_iso(), packages=packages,
                  counts=s.summarize_counts(packages), errors=errors, providers=status,
@@ -183,6 +186,8 @@ def migration_plan(s, name):
         raise ValueError('No verified package mapping')
     current = s.fetch_installed_inventory(s.fetch_outdated_index())
     pkg = next((p for p in current if p['name'] == name and p['kind'] == 'formula'), None)
+    if pkg and (pkg.get('inventory_stale') or pkg.get('inventory_verification', {}).get('status', 'verified') != 'verified'):
+        raise ValueError('Installation evidence is unverified; scan and resolve the reported inventory gap')
     if not pkg or pkg.get('brew_installation_present') is False:
         raise ValueError('The Homebrew installation is not present')
     from update_engine import Engine

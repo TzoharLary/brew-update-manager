@@ -15,6 +15,7 @@ import zipfile
 
 import update_routes as routes
 import macports_provider
+import installation_evidence
 
 
 class Engine:
@@ -46,9 +47,7 @@ class Engine:
                                env_override=self.brew_env)
         if result.code:
             raise RuntimeError(result.stderr or result.stdout)
-        return {row["name"]: {"versions": [x["version"] for x in row.get("installed", [])],
-                              "options": [option for x in row.get("installed", []) for option in x.get("used_options", [])]}
-                for row in json.loads(result.stdout).get("formulae", [])}
+        return installation_evidence.verified_dependencies(self.s, json.loads(result.stdout))
 
     def check_cancel(self):
         if self.s.is_cancel_requested():
@@ -335,5 +334,6 @@ class Engine:
                              error=refresh_error or ("stopped_after_failure" if stopped else None), completed_at=s.now_iso())
         return {"ok": not (stopped or canceled or refresh_error), "canceled": canceled, "attempted_count": len(results),
                 "updated_count": updated, "failed_count": len(failed),
-                "deferred_count": len(deferred), "remaining_count": len(remaining), "results": results,
+                "deferred_count": len(deferred), "skipped_count": sum(bool(r.get("skipped")) for r in results) + len(deferred),
+                "remaining_count": len(remaining), "results": results,
                 "deferred_packages": deferred, "snapshot": refreshed, "inventory_refresh_error": refresh_error}

@@ -127,7 +127,8 @@ class UpdatePolicyTests(unittest.TestCase):
                    service.CommandResult(0, json.dumps({"formulae": [
                        {"name": "pandoc", "versions": {"stable": "3.12.1"}, "revision": 0}]}), "")]
         with patch.object(service, "brew_bin", return_value="brew"), patch.object(service, "run_cmd", side_effect=replies):
-            packages = service.fetch_installed_inventory({})
+            with patch('installation_evidence.collect',return_value={'omitted':[]}):
+                packages = service.fetch_installed_inventory({})
         service.apply_update_policy(packages)
         self.assertEqual(len(packages), 1)
         self.assertEqual(packages[0]["provider"], "pixi")

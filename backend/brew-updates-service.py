@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import update_routes as routes
 import macports_provider
 import mac_manager
+import installation_evidence
+import copy
 
 try:
     import fcntl
@@ -227,7 +229,20 @@ def read_parallel_check_state() -> dict[str, Any]:
         return dict(PARALLEL_CHECK_STATE)
 
 
+def runtime_status_payload():
+    # Same lock order as operation startup: ownership first, then progress.
+    # A stale caller snapshot must never terminate a newly started operation.
+    with CURRENT_OPERATION_LOCK:
+        operation = dict(CURRENT_OPERATION)
+        progress = _normalize_stale_progress_locked(operation)
+    return {'ok':True,'operation':operation,'progress':progress,'parallel_check':read_parallel_check_state()}
+
+
 def normalize_stale_progress_state(operation: dict[str, Any] | None = None) -> dict[str, Any]:
+    return runtime_status_payload()['progress']
+
+
+def _normalize_stale_progress_locked(operation: dict[str, Any]) -> dict[str, Any]:
     operation_state = operation if isinstance(operation, dict) else read_current_operation()
     progress = read_check_progress()
 
@@ -252,7 +267,8 @@ def normalize_stale_progress_state(operation: dict[str, Any] | None = None) -> d
         eta_seconds=0,
         completed_at=now_iso(),
         cancel_requested=False,
-        canceled=bool(progress.get("canceled")) or interrupted,
+        current_package=None,
+        canceled=bool(progress.get("canceled")),
         error=(
             str(progress.get("error") or "stale_progress_state_reset")
             if interrupted
@@ -1240,6 +1256,29 @@ def request_cancel_current_operation() -> dict[str, Any]:
     }
 
 
+def run_with_progress(op_name, fn, *, snapshot=False):
+    """Capture a deep final progress snapshot before releasing the operation lock."""
+    def operation():
+        try:
+            value = fn()
+        except OperationCancelledError:
+            set_check_progress(running=False, phase='canceled', canceled=True,
+                               current_package=None, eta_seconds=None, completed_at=now_iso())
+            return {'ok':False, 'canceled':True, 'snapshot':read_json(STATE_FILE) or {},
+                    'progress':copy.deepcopy(read_check_progress())}
+        except Exception as error:
+            set_check_progress(running=False, phase='error', error=str(error),
+                               current_package=None, eta_seconds=None, completed_at=now_iso())
+            error.operation_progress=copy.deepcopy(read_check_progress())
+            raise
+        progress=copy.deepcopy(read_check_progress())
+        progress['partial']=bool(value.get('partial')) if snapshot else bool(value.get('inventory_refresh_error'))
+        with CHECK_PROGRESS_LOCK:
+            CHECK_PROGRESS['partial']=progress['partial']
+        return {'ok':True,'snapshot':value,'progress':progress} if snapshot else {**value,'progress':progress}
+    return run_exclusive(op_name, operation)
+
+
 def run_exclusive(op_name: str, fn):
     if not OP_LOCK.acquire(blocking=False):
         active_operation = read_current_operation()
@@ -1340,6 +1379,15 @@ def fetch_installed_inventory(outdated_index: dict[tuple[str, str], dict[str, st
         raise RuntimeError(f"brew info --installed failed: {res.stderr or res.stdout}")
 
     payload = json.loads(res.stdout or "{}")
+    try:
+        evidence_context = installation_evidence.collect(sys.modules[__name__], payload)
+        payload.setdefault('formulae', []).extend(evidence_context['omitted'])
+    except OperationCancelledError:
+        raise
+    except Exception as error:
+        evidence_context = None
+        installation_evidence.reset()
+        append_service_log('Installation evidence unavailable: ' + str(error))
     packages: list[dict[str, Any]] = []
 
     for row in payload.get("formulae", []) or []:
@@ -1352,19 +1400,21 @@ def fetch_installed_inventory(outdated_index: dict[tuple[str, str], dict[str, st
 
         installed_entries = row.get("installed") or []
         installed_versions = normalize_versions(installed_entries)
-        installed_version = installed_versions[-1] if installed_versions else str(row.get("linked_keg") or "unknown")
+        installation_fields = installation_evidence.inventory_fields(sys.modules[__name__], row, evidence_context)
+        installed_version = installation_fields['installed_version']
         latest_version = str(((row.get("versions") or {}).get("stable") or "unknown"))
 
         outdated_meta = outdated_index.get(("formula", name))
         outdated = bool(outdated_meta) or bool(row.get("outdated", False))
         if outdated_meta:
-            installed_version = outdated_meta.get("installed_version") or installed_version
+            installation_fields['manager_outdated_version'] = outdated_meta.get('installed_version')
             latest_version = outdated_meta.get("latest_version") or latest_version
 
         packages.append(
             {
                 "name": name,
                 "kind": "formula",
+                **installation_fields,
                 "display_name": str(row.get("full_name") or name),
                 "description": str(row.get("desc") or ""),
                 "description_he": "",
@@ -2793,17 +2843,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/progress":
-            operation = read_current_operation()
-            progress = normalize_stale_progress_state(operation)
-            self._send_json(
-                200,
-                {
-                    "ok": True,
-                    "progress": progress,
-                    "operation": operation,
-                    "parallel_check": read_parallel_check_state(),
-                },
-            )
+            self._send_json(200, runtime_status_payload())
             return
 
         if self.path == "/api/update-history":
@@ -2953,17 +2993,17 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                snapshot = run_exclusive(
+                payload = run_with_progress(
                     "check_now",
-                    lambda: compute_snapshot(run_brew_update=True, track_progress=True),
+                    lambda: compute_snapshot(run_brew_update=True, track_progress=True), snapshot=True,
                 )
-                self._send_json(200, {"ok": True, "snapshot": snapshot})
+                self._send_json(200, payload)
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
             except OperationCancelledError:
                 self._send_json(200, {"ok": True, "canceled": True})
             except Exception as exc:
-                self._send_json(500, {"ok": False, "error": "check_failed", "detail": str(exc)})
+                self._send_json(500, {"ok": False, "error": "check_failed", "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
             return
 
         if self.path == "/api/update-one":
@@ -3103,22 +3143,22 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         "inventory_refresh_error": refresh_error,
                     }
 
-                payload = run_exclusive(f"update_one:{kind}:{name}", _operation)
+                payload = run_with_progress(f"update_one:{kind}:{name}", _operation)
                 self._send_json(200, {"ok": True, **payload})
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
             except Exception as exc:
-                self._send_json(500, {"ok": False, "error": "update_failed", "detail": str(exc)})
+                self._send_json(500, {"ok": False, "error": "update_failed", "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
             return
 
         if self.path == "/api/update-all":
             try:
-                payload = run_exclusive("update_all", lambda: run_update_all(track_progress=True))
+                payload = run_with_progress("update_all", lambda: run_update_all(track_progress=True))
                 self._send_json(200, payload)
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
             except Exception as exc:
-                self._send_json(500, {"ok": False, "error": "update_all_failed", "detail": str(exc)})
+                self._send_json(500, {"ok": False, "error": "update_all_failed", "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
             return
 
         if self.path == "/api/update-selected":
@@ -3127,7 +3167,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
 
             try:
                 selected_packages = normalize_selected_packages(raw_packages)
-                payload = run_exclusive(
+                payload = run_with_progress(
                     f"update_selected:{len(selected_packages)}",
                     lambda: run_update_selected(selected_packages, track_progress=True),
                 )
@@ -3137,7 +3177,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             except BusyError as exc:
                 self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc), "operation": read_current_operation()})
             except Exception as exc:
-                self._send_json(500, {"ok": False, "error": "update_selected_failed", "detail": str(exc)})
+                self._send_json(500, {"ok": False, "error": "update_selected_failed", "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
             return
 
         self._send_json(404, {"ok": False, "error": "not_found"})

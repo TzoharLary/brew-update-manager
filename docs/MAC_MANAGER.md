@@ -50,3 +50,12 @@ Start Check refreshes the MacPorts catalog when its last verified sync or local 
 ## 1.3.1 installed-version baseline
 
 Alternative updates compare the mapped MacPorts upstream component versions with the actual Homebrew installation, not with Homebrew latest. All mapped components must avoid a downgrade and at least one must be newer. A version below Homebrew latest can qualify after complete binary closure checks; it is never described as the last Intel-supported release without upstream evidence. Equal upstream versions and unknown comparisons remain distinct from updates. Cached recommendations are invalidated on policy or installed-version changes. Every approved migration repeats the same policy with a fresh inventory. The primary action is labeled Update all / עדכן הכול.
+
+
+## 1.3.2 operation results and installation evidence
+
+Operation responses include a final progress copy captured before the operation lock is released. Completed, partial, canceled and failed reports remain visible independently of the busy overlay. Unreachable service status is unverified, never inferred success.
+
+Homebrew inventory reconciles manager metadata with active opt links and local receipts, including retained Cellar installations omitted by brew info. Upstream version, package revision, inactive receipt gaps and PATH command resolution stay separate. Only the explicit LLVM clang probe is executed. Evidence conflicts block the affected installation.
+
+Full checks collect local migration classifications independently of binary availability. Installed receipt reverse dependencies, exported interfaces, formula service definitions, registered services, options and bounded Mach-O linkage checks determine service/shared-environment/standalone-candidate/insufficient-information roles. Private projects are not searched. Classification evidence is retained under migration-evidence in the application data directory. A classification never enables migration: only the existing terminal-notifier pilot remains executable. Old classifications are unclassified until fresh evidence is available.

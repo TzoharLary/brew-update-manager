@@ -54,6 +54,40 @@ function renderMacManager() {
     detail.textContent=(offer.ports?.length?`${offer.ports.join(', ')} · `:'')+(offer.detail||'');
     if(offer.checked_at)detail.textContent+=' · '+(he?'נבדק: ':'Checked: ')+offer.checked_at;
     row.appendChild(detail);
+    const classification = offer.classification || {category:'unclassified'};
+    const installation=(snapshot?.packages||[]).find(p=>p.provider==='homebrew'&&p.kind==='formula'&&p.name===offer.name)?.inventory_verification;
+    if(installation) {
+      const evidence=document.createElement('details');const title=document.createElement('summary');
+      title.textContent=he?'ראיות ההתקנה':'Installation evidence';
+      const text=document.createElement('p');text.style.whiteSpace='pre-wrap';
+      text.textContent=(he?'גרסה לפי ההתקנה הפעילה: ':'Active installation version: ')+installation.package_version+'\n'+
+        (he?'גרסאות שדווחו: ':'Manager versions: ')+(installation.manager_versions||[]).join(', ')+'\n'+
+        (installation.active_keg||'')+'\n'+(installation.command_resolution?.resolved_path||'')+'\n'+
+        [...(installation.issues||[]),...(installation.warnings||[])].join(' · ');
+      if(installation.version_probe?.code)text.textContent+='\n'+installation.version_probe.output;
+      evidence.append(title,text);row.appendChild(evidence);
+    }
+    const classificationLabels = {
+      service:['שירות עם הגדרות ונתונים','Service with configuration and data'],
+      shared_environment:['ספרייה או סביבת פיתוח משותפת','Shared library or development environment'],
+      standalone_candidate:['כלי עצמאי מועמד לאוטומציה','Standalone automation candidate'],
+      insufficient_information:['חסר מידע לסיווג','Insufficient classification evidence'],
+      unclassified:['טרם סווג','Not yet classified'],
+    };
+    const classificationText=document.createElement('p');
+    classificationText.className='migration-classification';
+    classificationText.textContent=(he?'סיווג: ':'Classification: ')+(classificationLabels[classification.category]||classificationLabels.unclassified)[he?0:1];
+    row.appendChild(classificationText);
+    const reasons=document.createElement('p');
+    reasons.textContent=(classification.reasons||[]).map(migrationReasonLabel).join(' · ');
+    if(classification.checked_at) reasons.textContent+=' · '+classification.checked_at;
+    row.appendChild(reasons);
+    if(classification.consumers?.length) {
+      const consumers=document.createElement('p');consumers.textContent=(he?'תלויים מתועדים: ':'Documented consumers: ')+classification.consumers.map(c=>c.name).join(', ');row.appendChild(consumers);
+    }
+    for(const [label,values] of [[he?'מידע חסר':'Missing evidence',classification.gaps],[he?'קובצי ראיות':'Evidence files',classification.evidence_refs]]) {
+      if(values?.length) {const evidence=document.createElement('details');const title=document.createElement('summary');title.textContent=label;const text=document.createElement('p');text.textContent=values.join(' · ');evidence.append(title,text);row.appendChild(evidence);}
+    }
     if(offer.status==='binary_available') {
       if(offer.below_homebrew_target) {
         const version=document.createElement('p');
@@ -63,7 +97,7 @@ function renderMacManager() {
       const availability=document.createElement('p');
       availability.textContent=he?'נבדקה זמינות קבצים לכל התלויות. חתימות ותפקוד יאומתו רק בהתקנה.':'Archive availability was checked for all dependencies. Signatures and functionality are verified during installation.';row.appendChild(availability);
       if(!offer.executable) {
-        const blocked=document.createElement('p');blocked.textContent=he?'המעבר עדיין דורש תוכנית לצרכנים ולנתונים; אינו מבוצע בעדכון רגיל.':'Migration still requires a consumer and data plan; regular updates do not perform it.';row.appendChild(blocked);
+        const blocked=document.createElement('p');blocked.textContent=classification.category==='standalone_candidate'?(he?'מנגנון המעבר לכלי זה טרם מומש.':'The migration mechanism for this tool is not implemented yet.'):(he?'המעבר דורש טיפול בצרכנים, בנתונים או במידע החסר; אינו מבוצע בעדכון רגיל.':'Migration needs consumer, data or missing-evidence review; regular updates do not perform it.');row.appendChild(blocked);
       } else {
         const review=document.createElement('button');review.textContent=he?'סקירת תוכנית המעבר':'Review migration plan';
         review.disabled=!!busyLoading||!!lastKnownOperationRunning;

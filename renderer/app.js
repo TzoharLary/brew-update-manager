@@ -414,7 +414,7 @@ function applyActionAvailability() {
   const allowed = isBrewPathConfigured();
   const selectedCount = selectedPackagesFromSnapshot().length;
   const visibleOutdatedCount = getFilteredPackages().filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason).length;
-  const operationRunning = !!lastKnownOperationRunning;
+  const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;
   const checkBlockedByBusy = !!busyLoading && !isUpdateOperationRunning();
 
   checkNowBtn.disabled = checkBlockedByBusy || !allowed;
@@ -447,9 +447,152 @@ function ensureBrewConfiguredForActions() {
   return false;
 }
 
+
+// Operation presentation is independent of the busy overlay.
+let retainedOperationProgress = null;
+let operationStatusUnverified = false;
+let operationRequestGeneration = 0;
+let operationStartedFloor = 0;
+let runtimeRefreshGeneration = 0;
+
+function runtimeText(he, en) { return i18n.lang === 'he' ? he : en; }
+
+function presentOperationStatus() {
+  const p = retainedOperationProgress;
+  const terminal = p && !p.running && ['completed','error','canceled'].includes(p.phase);
+  const reportStatus = terminal ? p.phase === 'error' ? 'failed' : p.phase === 'canceled' ? 'canceled'
+    : p.partial || p.error || (p.deferred_packages || []).length ? 'warning' : 'completed' : 'idle';
+  let status = p?.running || lastKnownParallelCheckRunning || (busyLoading && !terminal) ? 'running' : terminal ? reportStatus : 'idle';
+  if (operationStatusUnverified) status = 'unverified';
+  const labels = {
+    idle:i18n.t('actions.statusIdle'),running:i18n.t('actions.statusRunning'),
+    completed:i18n.t('actions.statusCompleted'),failed:i18n.t('actions.statusFailed'),
+    warning:runtimeText('הושלם עם אזהרות','Completed with warnings'),
+    canceled:runtimeText('בוטל','Canceled'),unverified:runtimeText('לא ניתן לאמת סטטוס','Status could not be verified'),
+  };
+  operationStatusBadgeEl.removeAttribute('data-i18n');
+  operationStatusBadgeEl.className = `status-badge ${status === 'warning' || status === 'unverified' ? 'idle' : status === 'failed' ? 'error' : status === 'canceled' ? 'completed' : status}`;
+  operationStatusBadgeEl.dataset.status = status;
+  operationStatusBadgeEl.textContent = labels[status];
+  // A completed report has its own persistent panel, never an active loader.
+  if (loaderEl) loaderEl.classList.toggle('visible', !terminal && (busyLoading || !!p?.running) && !operationStatusUnverified);
+  let panel = document.getElementById('operationResultSummary');
+  if (!panel) {
+    panel = document.createElement('section'); panel.id = 'operationResultSummary'; panel.className = 'panel';
+    panel.style.padding = '16px'; panel.style.marginBlock = '12px'; panel.setAttribute('aria-live','polite');
+    document.querySelector('.tabs').before(panel);
+  }
+  panel.hidden = !terminal;
+  if (!terminal) return;
+  panel.replaceChildren();
+  const heading = document.createElement('strong'); heading.textContent = labels[reportStatus]; panel.appendChild(heading);
+  if (String(p.operation_name || '').startsWith('update')) {
+    const items = p.completed_packages || [];
+    const skipped = items.filter(x => x.skipped);
+    const updated = items.filter(x => x.ok && !x.skipped);
+    const failed = items.filter(x => !x.ok && !x.skipped && !x.canceled);
+    const canceled = items.filter(x => x.canceled);
+    const deferred = p.deferred_packages || [];
+    const remaining = p.remaining_packages || [];
+    const text = document.createElement('p');
+    text.textContent = runtimeText(
+      `עודכנו: ${updated.length} · נכשלו: ${failed.length} · דולגו: ${skipped.length + deferred.length} · הופסקו: ${canceled.length} · לא בוצעו: ${remaining.length}`,
+      `Updated: ${updated.length} · Failed: ${failed.length} · Skipped: ${skipped.length + deferred.length} · Canceled: ${canceled.length} · Not attempted: ${remaining.length}`);
+    panel.appendChild(text);
+    const list = document.createElement('ul');
+    for (const item of [...deferred,...skipped,...failed,...canceled,...remaining]) {
+      const line = document.createElement('li');
+      const reason = item.reason || (item.canceled ? 'canceled' : !item.ok && !remaining.includes(item) ? 'failed' : 'not_attempted');
+      line.textContent = `${item.name || '—'}: ${migrationReasonLabel(reason)}`;
+      if (item.blockers?.length) line.textContent += ' · ' + item.blockers.map(b=>`${b.name}: ${migrationReasonLabel(b.reason)}`).join(', ');
+      list.appendChild(line);
+    }
+    if (list.children.length) panel.appendChild(list);
+  } else {
+    const text = document.createElement('p');
+    text.textContent = p.phase === 'completed' ? i18n.t(p.partial ? 'message.checkPartial' : 'message.checkSuccess')
+      : p.phase === 'canceled' ? i18n.t('message.checkCanceled') : (p.error || i18n.t('actions.statusFailed'));
+    panel.appendChild(text);
+  }
+}
+
+function acceptOperationProgress(progress, authoritative = false) {
+  if (!progress) return false;
+  const stamp = Date.parse(progress.started_at || '') || 0;
+  const previousStamp = Date.parse(retainedOperationProgress?.started_at || '') || 0;
+  if (!authoritative && stamp && stamp < operationStartedFloor) return false;
+  if (stamp && previousStamp && stamp < previousStamp) return false;
+  if (!authoritative && retainedOperationProgress && !retainedOperationProgress.running
+      && ['completed','error','canceled'].includes(retainedOperationProgress.phase)
+      && progress.running && stamp && stamp === previousStamp) return false;
+  if (!stamp && retainedOperationProgress?.started_at && progress.phase === 'idle') return false;
+  retainedOperationProgress = progress;
+  operationStatusUnverified = false;
+  lastKnownOperationRunning = !!progress.running;
+  lastKnownOperationName = String(progress.operation_name || '').toLowerCase();
+  presentOperationStatus();
+  applyActionAvailability();
+  return true;
+}
+
+function beginOperationRequest() {
+  operationRequestGeneration += 1;
+  runtimeRefreshGeneration += 1;
+  operationStartedFloor = Date.now();
+  retainedOperationProgress = null;
+  operationStatusUnverified = false;
+  presentOperationStatus();
+}
+
+function statusUnavailable() {
+  operationStatusUnverified = true;
+  presentOperationStatus();
+}
+
+async function finishOperationRequest(response, generation) {
+  if (generation !== operationRequestGeneration) return;
+  // The response progress was captured while the backend still held its lock.
+  if (response?.progress) {
+    if (acceptOperationProgress(response.progress, true)) {
+      renderCheckProgress(response.progress);
+      if (!response.progress.running && !lastKnownParallelCheckRunning) stopProgressPolling();
+      return;
+    }
+  }
+  try {
+    const payload = await window.brewApp.getProgress();
+    if (generation !== operationRequestGeneration) return;
+    if (!payload?.progress || !acceptOperationProgress(payload.progress)) throw new Error('Unverified operation status');
+    renderCheckProgress(payload.progress);
+    await syncParallelCheckState(payload.parallel_check, {showFeedback:false});
+    if (!payload.progress.running && !payload.parallel_check?.running) stopProgressPolling();
+  } catch {
+    if (generation !== operationRequestGeneration) return;
+    statusUnavailable();
+    if (!progressPollTimer) startProgressPolling();
+  }
+}
+
+function migrationReasonLabel(reason) {
+  const labels = {
+    source_required:['אין מסלול בינארי מלא','No complete binary route'],
+    inventory_unavailable:['נדרש אימות ההתקנה','Installation verification required'],
+    binary_route_unavailable:['המסלול הבינארי אינו מאומת','Binary route is unverified'],
+    excluded:['מוחרג','Excluded'],not_outdated:['כבר מעודכן','Already current'],
+    canceled:['בוטל','Canceled'],failed:['נכשל','Failed'],not_attempted:['לא בוצע','Not attempted'],
+    service_definition_or_registration:['הוגדר שירות','Service definition or registration'],
+    documented_installed_consumers:['נמצאו תלויים מותקנים','Installed consumers found'],
+    exported_library_interface:['ממשק ספרייה משותף','Exported library interface'],
+    development_environment_interface:['ממשק סביבת פיתוח','Development environment interface'],
+    complete_local_evidence_without_shared_roles:['הראיות המקומיות הושלמו ללא תפקיד משותף','Local evidence complete without shared roles'],
+    required_evidence_incomplete:['חסרות ראיות נדרשות','Required evidence is incomplete'],
+  };
+  return (labels[reason] || [reason,reason])[i18n.lang==='he'?0:1];
+}
+
 function setLoading(on, messageKey = 'message.loadingState', params = {}) {
   busyLoading = !!on;
-  loaderTextEl.textContent = i18n.t(messageKey, params);
+  if (on) loaderTextEl.textContent = i18n.t(messageKey, params);
   if (on) {
     resetLoaderProgress();
     if (loaderEl) {
@@ -464,10 +607,7 @@ function setLoading(on, messageKey = 'message.loadingState', params = {}) {
 
   applyActionAvailability();
 
-  if (!on && !lastKnownOperationRunning) {
-    resetLoaderProgress();
-    setOperationStatusBadge('idle');
-  }
+  presentOperationStatus();
 }
 
 function showMessage(text, error = false) {
@@ -540,27 +680,19 @@ function isUpdateOperationRunning() {
 }
 
 function setOperationStatusBadge(status) {
-  if (!operationStatusBadgeEl) return;
-
-  const normalized = operationBadgeClassName(status);
-  const labelMap = {
-    idle: i18n.t('actions.statusIdle'),
-    running: i18n.t('actions.statusRunning'),
-    completed: i18n.t('actions.statusCompleted'),
-    error: i18n.t('actions.statusFailed'),
-  };
-
-  operationStatusBadgeEl.className = `status-badge ${normalized}`;
-  operationStatusBadgeEl.textContent = labelMap[normalized] || labelMap.idle;
+  presentOperationStatus();
 }
 
 async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } = {}) {
+  const generation = ++runtimeRefreshGeneration;
+  const actionGeneration = operationRequestGeneration;
   if (refreshStatusBtn) {
     refreshStatusBtn.disabled = true;
   }
 
   try {
     const progressPayload = await window.brewApp.getProgress();
+    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;
     const progress = progressPayload?.progress || null;
     const parallelCheck = progressPayload?.parallel_check || null;
 
@@ -600,6 +732,9 @@ async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } 
       await loadState({ showLoader: false });
     }
   } catch (err) {
+    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;
+    statusUnavailable();
+    if (!progressPollTimer) startProgressPolling();
     if (showFeedback) {
       showMessage(i18n.t('message.refreshFailed', { error: err.message }), true);
     }
@@ -618,6 +753,7 @@ async function syncParallelCheckState(parallelCheck, { showFeedback = false } = 
 
   if (running) {
     lastKnownParallelCheckRunning = true;
+    presentOperationStatus();
     if (showFeedback) {
       showMessage(i18n.t('message.checkParallelRunning'));
     }
@@ -627,12 +763,14 @@ async function syncParallelCheckState(parallelCheck, { showFeedback = false } = 
   const justFinished = !!finishedAt && finishedAt !== lastKnownParallelCheckFinishedAt;
   if (!justFinished) {
     lastKnownParallelCheckRunning = false;
+    presentOperationStatus();
     return;
   }
 
   lastKnownParallelCheckFinishedAt = finishedAt;
   const wasRunning = lastKnownParallelCheckRunning;
   lastKnownParallelCheckRunning = false;
+  presentOperationStatus();
 
   await loadState({ showLoader: false });
 
@@ -953,8 +1091,8 @@ function renderUpdateLivePanel(progress) {
   updateLivePanelEl.classList.add('visible');
 
   const total = planned.length || Number(progress?.total || 0);
-  const done = completed.length || Number(progress?.done || 0);
-  const remainingCount = remaining.length || Math.max(0, total - done);
+  const done = completed.filter(item => item.ok && !item.skipped).length;
+  const remainingCount = remaining.length;
   const failedCount = failed.length;
 
   if (updateLiveTotalEl) updateLiveTotalEl.textContent = i18n.formatNumber(total);
@@ -1267,18 +1405,22 @@ function renderLoaderSteps(phase) {
 }
 
 function renderCheckProgress(progress) {
-  if (!progress || !loaderEl) {
+  if (!progress || !acceptOperationProgress(progress) || !loaderEl) {
     return;
   }
 
   lastKnownOperationRunning = !!progress.running;
   lastKnownOperationName = String(progress.operation_name || '').trim().toLowerCase();
-  if (progress.running || (String(progress.operation_name || '').startsWith('update') &&
-      ((progress.planned_packages || []).length || (progress.deferred_packages || []).length))) {
+  if (progress.running) {
     loaderEl.classList.add('visible');
   }
 
-  if (!loaderEl.classList.contains('visible') && !busyLoading) {
+  if (!progress.running) {
+    renderUpdateLivePanel(progress);
+    if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = '—';
+    if (loaderEtaValueEl) loaderEtaValueEl.textContent = progress.phase === 'completed' ? i18n.t('progress.doneNow') : '—';
+    if (loaderCancelBtn) loaderCancelBtn.disabled = true;
+    presentOperationStatus();
     return;
   }
 
@@ -1343,11 +1485,13 @@ async function pollCheckProgress() {
     const payload = await window.brewApp.getProgress();
     if (epoch !== progressPollEpoch) return;
     if (payload?.progress) {
+      if (!acceptOperationProgress(payload.progress)) return;
       renderCheckProgress(payload.progress);
     }
     await syncParallelCheckState(payload?.parallel_check, { showFeedback: false });
+    if (!busyLoading && !payload?.progress?.running && !payload?.parallel_check?.running && payload?.progress) stopProgressPolling();
   } catch {
-    // Ignore transient polling errors while check is in progress.
+    if (epoch === progressPollEpoch) statusUnavailable();
   } finally {
     if (epoch === progressPollEpoch) progressPollInFlight = false;
   }
@@ -1527,7 +1671,7 @@ function updateSelectionSummary(filteredList = null) {
 
   const visibleList = Array.isArray(filteredList) ? filteredList : getFilteredPackages();
   const visibleOutdated = visibleList.filter((pkg) => pkg?.outdated && !pkg.excluded && !pkg.update_block_reason).length;
-  const operationRunning = !!lastKnownOperationRunning;
+  const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;
 
   if (selectVisibleOutdatedBtn) {
     selectVisibleOutdatedBtn.disabled = busyLoading || operationRunning || !isBrewPathConfigured() || visibleOutdated === 0;
@@ -2115,11 +2259,17 @@ function renderTable() {
 
     const tdCurrentVersion = document.createElement('td');
     tdCurrentVersion.className = 'mono small';
-    tdCurrentVersion.textContent = pkg.installed_version || i18n.t('common.unknown');
+    const tdCurrentVersionValue = document.createElement('bdi');
+    tdCurrentVersionValue.dir = pkg.installed_version && pkg.installed_version !== 'unknown' ? 'ltr' : 'auto';
+    tdCurrentVersionValue.textContent = pkg.installed_version || i18n.t('common.unknown');
+    tdCurrentVersion.appendChild(tdCurrentVersionValue);
 
     const tdLatestVersion = document.createElement('td');
     tdLatestVersion.className = 'mono small';
-    tdLatestVersion.textContent = pkg.latest_version || i18n.t('common.unknown');
+    const tdLatestVersionValue = document.createElement('bdi');
+    tdLatestVersionValue.dir = pkg.latest_version && pkg.latest_version !== 'unknown' ? 'ltr' : 'auto';
+    tdLatestVersionValue.textContent = pkg.latest_version || i18n.t('common.unknown');
+    tdLatestVersion.appendChild(tdLatestVersionValue);
 
     const tdCurrentDate = document.createElement('td');
     tdCurrentDate.className = 'small';
@@ -2310,9 +2460,12 @@ async function checkNow() {
   }
 
   setLoading(true, 'message.runningCheck');
+  beginOperationRequest();
+  const actionGeneration = operationRequestGeneration;
+  let operationResponse = null;
   startProgressPolling();
   try {
-    const res = await window.brewApp.runCheckNow();
+    const res = operationResponse = await window.brewApp.runCheckNow();
     if (res?.canceled) {
       showMessage(i18n.t('message.checkCanceled'));
       return;
@@ -2328,11 +2481,7 @@ async function checkNow() {
       await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
     }
   } finally {
-    stopProgressPolling();
-    try {
-      const finalStatus = await window.brewApp.getProgress();
-      if (finalStatus?.progress) renderCheckProgress(finalStatus.progress);
-    } catch { /* Keep the last known status when the service is unavailable. */ }
+    await finishOperationRequest(operationResponse, actionGeneration);
     setLoading(false, 'message.loadingState');
   }
 }
@@ -2348,10 +2497,13 @@ async function updateOne(name, kind, sourceBtn = null) {
   clearMessage();
   showMessage(i18n.t('message.updatingOne', { name }));
   setLoading(true, 'message.updatingOne', { name });
+  beginOperationRequest();
+  const actionGeneration = operationRequestGeneration;
+  let operationResponse = null;
   startProgressPolling();
 
   try {
-    const res = await window.brewApp.updateOne(name, kind);
+    const res = operationResponse = await window.brewApp.updateOne(name, kind);
     snapshot = res.snapshot;
     renderCards(snapshot);
     renderTable();
@@ -2384,7 +2536,7 @@ async function updateOne(name, kind, sourceBtn = null) {
       await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
     }
   } finally {
-    stopProgressPolling();
+    await finishOperationRequest(operationResponse, actionGeneration);
     setLoading(false, 'message.loadingState');
     if (sourceBtn) {
       sourceBtn.textContent = i18n.t('buttons.update');
@@ -2410,10 +2562,13 @@ async function updateSelected() {
   clearMessage();
   showMessage(i18n.t('message.updatingSelected', { count: i18n.formatNumber(selected.length) }));
   setLoading(true, 'message.updatingSelected', { count: i18n.formatNumber(selected.length) });
+  beginOperationRequest();
+  const actionGeneration = operationRequestGeneration;
+  let operationResponse = null;
   startProgressPolling();
 
   try {
-    const res = await window.brewApp.updateSelected(selected);
+    const res = operationResponse = await window.brewApp.updateSelected(selected);
     snapshot = res.snapshot;
     pruneSelectedPackages();
     renderCards(snapshot);
@@ -2468,7 +2623,7 @@ ${i18n.t('message.inventoryRefreshWarning', {
       await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
     }
   } finally {
-    stopProgressPolling();
+    await finishOperationRequest(operationResponse, actionGeneration);
     setLoading(false, 'message.loadingState');
     updateSelectionSummary();
   }
@@ -2483,9 +2638,12 @@ async function updateAll() {
   clearMessage();
   showMessage(i18n.t('message.updatingAll'));
   setLoading(true, 'message.updatingAll');
+  beginOperationRequest();
+  const actionGeneration = operationRequestGeneration;
+  let operationResponse = null;
   startProgressPolling();
   try {
-    const res = await window.brewApp.updateAll();
+    const res = operationResponse = await window.brewApp.updateAll();
     snapshot = res.snapshot;
     renderCards(snapshot);
     renderTable();
@@ -2518,7 +2676,7 @@ async function updateAll() {
       await refreshRuntimeStatus({ showFeedback: true, reloadState: false });
     }
   } finally {
-    stopProgressPolling();
+    await finishOperationRequest(operationResponse, actionGeneration);
     setLoading(false, 'message.loadingState');
     updateAllBtn.textContent = i18n.t('actions.updateAll');
   }

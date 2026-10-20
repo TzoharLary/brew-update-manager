@@ -1311,6 +1311,16 @@ def check(s, offers, packages, catalog_fresh, report=False):''')
     for p in ['package.json','package-lock.json']:
         changes[p]=changes[p].replace('"version": "1.3.0"','"version": "1.3.1"')
     changes['docs/MAC_MANAGER.md'] += '\n\n## 1.3.1 installed-version baseline\n\nAlternative updates compare the mapped MacPorts upstream component versions with the actual Homebrew installation, not with Homebrew latest. All mapped components must avoid a downgrade and at least one must be newer. A version below Homebrew latest can qualify after complete binary closure checks; it is never described as the last Intel-supported release without upstream evidence. Equal upstream versions and unknown comparisons remain distinct from updates. Cached recommendations are invalidated on policy or installed-version changes. Every approved migration repeats the same policy with a fresh inventory. The primary action is labeled Update all / עדכן הכול.\n'
+    changes['docs/MAC_MANAGER.md'] += '''
+
+## Agreed next work
+
+- Generalize the supported automatic migration transaction to suitable standalone CLI tools: install binary dependencies, verify commands, activate the chosen provider, verify usage, and remove the previous copy only when managed dependencies permit it. Libraries and services retain their own migration requirements.
+- Add Pixi/conda-forge as an automatic alternative provider alongside Homebrew and MacPorts. Reuse existing Pixi installations and records; evaluate compatible osx-64 binary closures and versions against the installed baseline, with no source-build fallback or unrequested duplicate installations.
+- User-owned scripts referring to old Homebrew paths are explicitly not a migration blocker. The user accepts responsibility for adjusting such scripts when discovered. This does not waive checks for dependencies recorded by package managers, service configuration, or data handling.
+
+These are pending tasks, not completed capabilities. Pixi already manages selected tools; its automatic alternative discovery and generalized migration execution still require implementation.
+'''
     return changes
 
 ALTERNATIVE_VERSION_TESTS = '''import tempfile,unittest
@@ -1827,6 +1837,10 @@ def install():
         try:
             with urllib.request.urlopen(f'http://127.0.0.1:{port}/health',timeout=.2) as response: state=json.load(response)
         except Exception: continue
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/progress',timeout=2) as response:
+            activity=json.load(response)
+        if activity.get('parallel_check',{}).get('running'):
+            raise RuntimeError('Active parallel check; installation deferred')
         if state.get('operation',{}).get('running'):
             if state['operation'].get('name')=='initial_snapshot' and state.get('app')=='Mac Update Manager':
                 interrupted_scans.append((port,state['project_root']))
@@ -2093,9 +2107,282 @@ def restore_removed():
         'completed_at':time.time()},indent=2))
     print('Original seven formula versions restored. Six linkage checks passed; the previously documented merve linkage issue is recorded unchanged.')
 
+TASKS_DOCUMENT = '''# מנהל עדכוני Mac — משימות והמשך עבודה
+
+עודכן: 20 באוקטובר 2026. מצב הפרויקט שנבדק: 1.3.1.
+
+זהו מסמך ההמשך לשיחות אחרות. תיבות לא מסומנות הן עבודה שטרם הושלמה;
+מציאת קובץ התקנה אינה אישור שבוצעו התקנה, מעבר או בדיקת שימוש.
+
+## המטרה
+
+מערכת אחת שמזהה את ההתקנות במחשב ה־Mac Intel של המשתמש, בוחרת לכל התקנה
+מסלול עדכון מתאים עם כל התלויות, ומנהלת עדכונים בלי בנייה מקוד מקור.
+המועמדות צריכות להיבדק אוטומטית; המשתמש אינו צריך לבדוק חבילות אחת־אחת
+או להחליט בעצמו מתי מידע מנהל החבילות דורש רענון.
+
+## החלטות שאושרו
+
+- Homebrew, MacPorts ו־Pixi ישמשו יחד כספקים לפי התאמה. ספקים רשמיים עצמאיים
+  נשארים אפשרות נוספת; אין כוונה להחליף הכול במנהל יחיד.
+- לבדוק חבילות מוכנות ואת כל תלויות ההרצה, בגרסאות ובארכיטקטורה המתאימות.
+  אין מעבר אוטומטי לבנייה כשאין מסלול בינארי מלא.
+- להשוות חלופה למה שמותקן בפועל. לדוגמה: מותקנת 1, חלופה מוכנה 2,
+  ויעד Homebrew הוא 3 — חלופה 2 יכולה להתאים. אין להסיק מכך שהיא הגרסה
+  האחרונה הנתמכת ב־Intel. ירידה בגרסה חסומה; גרסה זהה אינה עדכון חדש.
+- מעבר בין מנהלים דורש אישור חד־פעמי לפעולה. לאחר מעבר מוצלח,
+  הספק החדש מנהל את העדכונים הבאים לפי הקטלוג שלו.
+- סקריפטים פרטיים שמפנים לנתיב Homebrew הישן **לא יחסמו מעבר**.
+  המשתמש מקבל אחריות לתקן אותם כאשר יתגלו. אין צורך לבקש ממנו אישור נוסף
+  רק בגלל אפשרות כזו. תלויות מתועדות, שירותים ונתוני משתמש עדיין מחייבים טיפול.
+- לשמר התקנות עצמאיות ונתיבים שכבר נבחרו; להימנע מהתקנות כפולות לא נחוצות.
+- `ngrok` נשאר מוחרג מסריקה לעדכון, מתכנון, ממעבר ומבקשות עדכון ישירות.
+- כל שינויי הקוד והתיעוד ייכתבו דרך `tools/implement-mac-manager.py`;
+  את הסקריפט עצמו עורכים ב־apply_patch. לשמר עבודה קיימת ולבדוק תנאי קדם.
+- כל פקודות הטרמינל בסשן אינטראקטיבי. אם נעזרים ב־subagents, לתת משימה
+  מוגדרת והקשר מצומצם, ולבחור מודל ומאמץ בהתאם לצורך.
+
+## מה כבר קיים
+
+- [x] אפליקציה בשם Mac Update Manager / מנהל עדכוני Mac, גרסה 1.3.1.
+- [x] מלאי משולב של Homebrew, MacPorts וכלים עצמאיים, עם זהות ספק.
+- [x] סריקה משותפת של חלופות MacPorts ממופות ובדיקת שרשרת התלויות.
+- [x] רענון קטלוג MacPorts לפי מדיניות של 24 שעות. בהרצה ידנית נדרשת
+  הזדהות macOS כשצריך; הרצה מתוזמנת אינה פותחת חלון הזדהות unattended.
+- [x] השוואת חלופות לגרסה המותקנת, בדיקה חוזרת בתוכנית המעבר,
+  וביטול שימוש בהמלצה שמורה אם הגרסה המותקנת או מדיניות ההשוואה השתנו.
+- [x] פיילוט מעבר `terminal-notifier` הושלם. זה עדיין המעבר היחיד הנתמך
+  לביצוע במנגנון המעבר של MacPorts; אין לסמן את האחרים כמועברים.
+- [x] Pixi כבר מנהל את Ansible ואת Pandoc. Node ו־Deno מנוהלים במסלולים
+  עצמאיים, ו־uv בהתקנה עצמאית קיימת. יש לאמת את הרישומים לפני שינויים.
+- [x] הכפתור הראשי נקרא ״עדכן הכול״. הוא מבצע עדכונים במסלולים נתמכים;
+  הוא עדיין אינו מבצע מעברים כלליים בין ספקים.
+- [x] בבדיקת גרסה 1.3.1 עברו 61 בדיקות Python, בדיקות ממשק בעברית ובאנגלית
+  וסריקה אמיתית. אלה תוצאות היסטוריות, לא תחליף לבדיקת השינוי הבא.
+
+## משימות פתוחות לפי סדר עבודה
+
+### T01 — אמינות המלאי והתצוגה
+
+**מניע:** מסך שמציג טעינה אחרי סיום, או גרסה שאינה זו הפעילה, גורם למשתמש
+להסיק מסקנות שגויות ועלול לגרום למתכנן לבחור מסלול על בסיס נתונים לא נכונים.
+
+**תנאי השלמה:** התאמה בין מצב השירות לממשק אחרי הצלחה, כשל, ביטול וריצה
+ללא עדכונים; פערי מלאי רלוונטיים מתוקנים או מסומנים כלא מאומתים וחוסמים
+רק את הפעולה שתלויה בהם. לבדוק גם את הפעולה האמיתית שהפיקה את צילום המסך.
+
+- [ ] לבדוק ולתקן חיווי ״ממתין״ שנשאר משמאל לכפתור ״רענון סטטוס״ אחרי
+  ״התחל בדיקה״: בדיווח המשתמש מ־20.10.2026 נראה שהבדיקה הסתיימה, אך
+  החיווי נשאר. לאמת את מצב השירות מול הממשק, לשחזר את התרחיש ולוודא
+  שהחיווי מתעדכן בסיום, בכשל ובביטול. סיום הבדיקה בפועל טרם אומת.
+- [ ] לתקן את מצב הטעינה שנשאר אחרי פעולת ״עדכן הכול״ שהסתיימה בלי
+  התקנות: בצילום מ־19.10.2026 ב־17:06 הופיעו 0%, ״מכין נתונים״ ו״מחשב זמן״,
+  אף שהשירות כבר דיווח completed, עם 0 עדכונים ו־26 שנדחו.
+- [ ] להציג סיום ברור: כמה עודכנו, כמה דולגו ולמה; אין פעולה פעילה כשאין כזו.
+- [ ] לאמת התאמה בין המלאי המדווח, receipt, הקובץ הפעיל וגרסתו בפועל,
+  במיוחד לפני מעבר של LLVM. בדוחות הקודמים תועד פער שדורש אימות טרי.
+- [ ] להבדיל בין עדכון תוכנה לבין שינוי revision/אריזה; גרסת upstream זהה
+  אינה מוכיחה שאין תיקון אריזה חשוב, ואינה מוכיחה התאמה בין שני מנהלים.
+
+### T02 — מיון אוטומטי של מועמדות למעבר
+
+**מניע:** החסימה הכללית הנוכחית מערבבת כלים שאפשר להעביר בתהליך משותף
+עם ספריות ושירותים שדורשים טיפול נוסף. רוצים לקדם את הראשונים בלי להמתין לאחרונים.
+
+**תנאי השלמה:** לכל מועמדת יש סיווג, נימוק וראיות שניתנים לבדיקה, עם חסם
+מדויק כשהמידע חסר. לוודא שסקריפט פרטי אפשרי אינו הופך לחסם, ושכלי שהוא גם
+ספרייה או שירות אינו מסווג אוטומטית כעצמאי רק בגלל שיש לו פקודת CLI.
+
+- [ ] לאסוף תלויות הפוכות של Homebrew, קבצים ופקודות שמותקנים, קישורי
+  ספריות, וריאנטים ושירותים. להשתמש במידע זה למיון ראשוני.
+- [ ] לסווג: כלי עצמאי מתאים לאוטומציה / ספרייה או סביבת פיתוח משותפת /
+  שירות עם הגדרות ונתונים / חסר מידע. אין להציג את המיון כהוכחת שימוש מלאה.
+- [ ] להתייחס להיעדר סקריפטים פרטיים כאל עניין שאינו נדרש להוכחה,
+  בהתאם לאישור המשתמש; לא להפוך חיפוש כזה לחסם.
+
+### T03 — מנגנון מעבר משותף לכלים עצמאיים
+
+**מניע:** המערכת כבר מוצאת קבצים מוכנים אך אינה מסוגלת לבצע רוב המעברים;
+המשתמש נשאר עם רשימת חלופות במקום לקבל עדכון עובד. קוד משותף ופרופילים
+קטנים מאפשרים להוסיף כלים בלי להעתיק את הפיילוט כולו לכל חבילה.
+
+**תנאי השלמה:** לפחות כלי נוסף שסווג כמתאים עובר מקצה לקצה דרך המנגנון
+המשותף במחשב, ממשיך להיסרק ולהתעדכן אצל הספק החדש אחרי הפעלה מחדש,
+ותוצאות כשל וביטול נבדקות. אין סימון הצלחה לפני בדיקת שימוש, ואין הסרת
+עותק קודם כשהמעבר נכשל או כשיש תלויים מתועדים שלא טופלו.
+
+- [ ] להוציא את הקוד המשותף מהפיילוט של terminal-notifier למנגנון כללי:
+  תוכנית, גיבוי, התקנה בינארית, אימות, הפעלה, ניקוי ורישום ספק חדש.
+- [ ] להגדיר לכל כלי פרופיל קטן: ספק ושם חבילה, פקודות ונתיבים, בדיקת גרסה,
+  בדיקת שימוש, וקבצי הגדרות/נתונים אם קיימים. לא להסתפק ב־`--version` תמיד.
+- [ ] להשלים הפעלה מסודרת דרך הנתיב שנבחר; לשמור ספק קודם פעיל עד אימות.
+- [ ] להסיר עותק ישן רק לפי התוכנית ואחרי בדיקת תלויים מתועדים;
+  למנוע autoremove או ניקוי גורף בלתי מתוכנן.
+- [ ] לבדוק כשל, ביטול, דחיית הרשאה, מעבר חלקי, שחזור והמשך אחרי הפעלה מחדש.
+- [ ] להציג תוכנית ואישור חד־פעמי מתוך הממשק. לאחר מעבר, סריקה ועדכון
+  רגילים צריכים להמשיך גם בלי עותק Homebrew.
+
+### T04 — Pixi כספק חלופות אוטומטי
+
+**מניע:** תכולת המאגרים וזמינות קבצי Intel שונות בין הספקים. Pixi כבר קיים
+במערכת, ובדיקת Poppler הראתה חלופה שהחיפוש המוגבל ל־MacPorts אינו מציע.
+
+**תנאי השלמה:** סריקה רגילה מגלה חלופה דרך Pixi עם גרסת יעד ותלויות,
+המשתמש רואה מדוע נבחרה, ופיילוט מתאים מותקן ונבדק דרך מסלול המעבר.
+סריקה חוזרת אינה יוצרת התקנה כפולה, ועדכון הבא מסתמך על הספק החדש.
+כשל ב־Pixi אינו משבית סריקת Homebrew או MacPorts.
+
+- [ ] להרחיב את חיפוש החלופות ל־Pixi/conda-forge לצד MacPorts,
+  מעבר למסלולים הפרטניים שכבר קיימים.
+- [ ] למצוא גרסאות osx-64 חדשות מהמותקנת, גם אם אינן יעד Homebrew המדויק;
+  לפתור ולנעול את כל התלויות ולבדוק זמינות בינארית לפני התקנה.
+- [ ] לשלב בתוכנית העדכון, בהסברי בחירת המסלול ובמנגנון המעבר המשותף.
+- [ ] לשמר סביבות ונתיבי משתמש קיימים, ולהציג התקנות מקבילות במקום להסתירן.
+- [ ] לגלות גרסאות יעד מהספק שמנהל את הכלי, במקום להסתמך תמיד על Homebrew.
+
+### T05 — מסלולים רשמיים עצמאיים
+
+**מניע:** קובץ Intel רשמי עשוי להיות זמין גם כשאינו זמין במנהלי החבילות;
+Nmap הוא מועמד קונקרטי שנמצא בבדיקה. אין צורך להמתין למאגר אם קיים מסלול
+רשמי שניתן לנהל ולאמת, אך אין להניח מראש שלכל תוכנה יש עדכון עצמי.
+
+**תנאי השלמה:** מסלול רשמי אחד לפחות עובר גילוי, אימות קובץ, התקנה,
+בדיקת שימוש ורישום בעלות; אחרי הפעלה מחדש ניתן לגלות ולעדכן אותו שוב.
+יש לבדוק נתיבים, תלויים מתועדים ותאימות למחשב, ולא להסתפק בקישור להורדה.
+
+- [ ] לבדוק מסלול Nmap מהמפיץ: בבדיקה בשיחה נמצא מתקין רשמי
+  ל־macOS x86-64 בגרסה 7.992. טרם אומתו התקנה ותפקוד במחשב במסלול זה.
+- [ ] להגדיר אימות קובץ/חתימה או checksum, גרסה, הסרה ובעלות על ההתקנה.
+- [ ] להשתמש בעדכון עצמי רק כשקיימת פקודה רשמית מתאימה להתקנה המסוימת.
+  אין נתון שמבסס הנחה של־95% מהתוכנות יש פקודה כזו.
+
+### T06 — טיפול במועמדות ובחסמים הקיימים
+
+**מניע:** המשתמש צריך פתרונות לחבילות המותקנות אצלו, מעבר למנגנון כללי.
+חסם משותף עשוי להסביר כמה חבילות, וחלק מהממצאים הקודמים עלולים להתיישן.
+
+**תנאי השלמה:** לכל אחת מהמועמדות העדכניות יש החלטה עם ראיות ותאריך:
+עודכנה או הועברה ונבדקה; אין עדכון חדש במסלול שנבדק; או חסומה מסיבה
+מפורשת עם פעולה הבאה אפשרית. אין חובה מלאכותית לעדכן את כל ה־26 אם אין
+חלופה מתאימה, ואין לסגור חסם באמצעות בנייה או ירידה בגרסה שלא אושרו.
+
+- [ ] להתחיל מכלים שמתאימים למנגנון הכללי, לפי המיון בפועל, ולא להעביר
+  ספריות או שירותים רק מפני שנמצא עבורם קובץ מוכן.
+- [ ] לקדם בדיקת שימוש והתקנה מבודדת של Poppler דרך Pixi: בשיחה הצליח
+  פתרון תלויות עבור 26.09.0 על osx-64, מול גרסה מותקנת שדווחה כ־26.04.0
+  ויעד Homebrew 26.10.0. זו בדיקת lock בלבד; לא בוצעו התקנה ואימות תפקוד.
+- [ ] לחקור את החסם המשותף `libunistring 1.5`: הוא זוהה בתוצאות הבדיקה
+  עבור gnupg, gpgme, gpgmepp, php ו־tesseract. לבדוק זמינות מחדש או מסלול
+  חלופי מלא; לא לערבב ספריות ממנהלים שונים באופן שרירותי.
+- [ ] לבדוק מחדש קבצים חסרים של nmap ושל socat, מיפויים לא מאומתים
+  ל־libtensorflow ול־merve, וכשל פתרון התלויות של whisper.cpp.
+- [ ] להכין תוכניות נפרדות לספריות, לסביבות פיתוח ולשירותים, לרבות נתונים,
+  הגדרות, הרחבות, ABI ותוכנות שמשתמשות בהם. ממצאי הקישוריות ההיסטוריים
+  של merve ו־LLVM דורשים אימות לפני החלטה.
+
+### T07 — ממשק אחיד ותנאי השלמה
+
+**מניע:** המשתמש אינו אמור להבין קטלוגים, לבדוק כל חבילה בנפרד או לנחש
+אם ״נמצאה חלופה״ פירושו שאפשר כבר להתקין אותה. הממשק צריך לשקף יכולת
+ביצוע אמיתית ולהבהיר איזו פעולה נדרשת ממנו, אם בכלל.
+
+**תנאי השלמה:** תרחיש רגיל בעברית ובאנגלית עובר מסריקה לתוצאות,
+לסקירה ולאישור כשנדרש, לעדכון ולסיכום אמין. זמינות בינארית, מוכנות למעבר
+והשלמת התקנה הן מצבים נפרדים. המונים, הכפתורים וההסברים תואמים לתוכנית
+ולפעולה בפועל, גם במקרה של ספק כושל, היעדר עדכונים וביטול.
+
+- [ ] ״התחל בדיקה״ בודק את הספקים הרלוונטיים ומציג ליד כל התקנה:
+  ניתנת לעדכון / מעבר מוכן לסקירה ולאישור / חסומה עם סיבה מדויקת.
+- [ ] לא להציג ״לא קיים״ כשיש רק מיפוי חסר, שגיאת תקשורת או בדיקה חלקית.
+- [ ] להראות גרסה מותקנת, יעד הספק שנבחר ויעד Homebrew להשוואה כשנחוץ.
+- [ ] ״עדכן הכול״ יעדכן חבילות במסלולים נתמכים ומעברים שכבר אושרו והושלמו;
+  לא לבצע מעבר לא מאושר, לא לבנות מקוד מקור ולא לכלול ngrok.
+- [ ] להשלים בדיקות רגרסיה, ממשק בשתי השפות ופיילוט אמיתי לכל מסלול חדש;
+  לארוז ולהתקין רק לאחר שהבדיקות עברו, בלי לאבד הגדרות והיסטוריה.
+
+## סדר ותלות בין המשימות
+
+- T01 ו־T02 מספקות את בסיס האמינות והמיון. פער במלאי יחסום רק מועמדת
+  שתלויה בנתון הבעייתי; אין להפוך אותו לעצירה גורפת של יתר העבודה.
+- T03 נשענת על המיון ב־T02 ועל מלאי מאומת עבור כלי הפיילוט.
+- אפשר לפתח גילוי חלופות ב־T04 וב־T05 במקביל; ביצוע מעבר בפועל ישתמש
+  במנגנון T03. יש לבחור פיילוט ראשון לפי התאמה וראיות, ולא לפי שם מנהל מועדף.
+- T06 מתחילה באימות הממצאים ויכולה להתקדם במקביל. העברות בפועל נשענות
+  על המסלול שהושלם ב־T03–T05; ספריות ושירותים מקבלים תוכנית נפרדת.
+- T07 מיושמת יחד עם כל שינוי התנהגות ומקבלת בדיקת קבלה משולבת בסוף.
+- כל משימה יכולה להתפצל לצעדים קטנים. להשאיר תיבה פתוחה כל עוד תנאי
+  ההשלמה שלה לא הוכחו; לעדכן ליד משימה שהושלמה תאריך וקישור לראיות ולבדיקות.
+
+## תמונת מצב אחרונה בשיחה — אינה דו״ח חי
+
+דווחו 236 התקנות ו־26 חבילות מיושנות. חלופות MacPorts סווגו כך:
+
+| מצב | מספר |
+| --- | ---: |
+| זמינות בינארית נמצאה; מעבר טרם מומש עבורן | 8 |
+| קובץ חבילה, תלות או חתימה חסר באתרים שנבדקו | 7 |
+| אותה גרסת upstream כמו המותקנת | 5 |
+| גרסה ישנה מהמותקנת | 3 |
+| מיפוי לא מאומת | 2 |
+| כשל פתרון תלויות | 1 |
+
+שמונה המועמדות עם זמינות שנמצאה: include-what-you-use, nss, open-mpi,
+p11-kit, pango, postgresql@17, py3cairo, unbound. יש לאמת מחדש זמינות
+ולמיין שימושים; הרשימה אינה אישור שהן כלים עצמאיים או מוכנות למעבר.
+
+מקורות לבדיקה חוזרת:
+
+- [תיעוד המערכת](MAC_MANAGER.md)
+- [דוחות האבחון והמיפוי](audit-2026-10-19/README.md)
+- [בדיקת MacPorts הבינארית הקודמת](macports-binary-coverage-2026-10-19/README.md)
+- [חבילות Poppler ב־conda-forge](https://anaconda.org/conda-forge/poppler/files)
+- [הורדות Nmap הרשמיות](https://nmap.org/download)
+- קובצי מצב, הגדרות ויומנים: `~/Library/Application Support/Homebrew Update Manager/`.
+- רשומות ספקים: `~/.local/share/brew-update-manager/installed.json`.
+- גיבויי המימוש ותוצאות האימות: `~/.local/share/brew-update-manager/recovery/implementation-v2/`.
+
+## איך להמשיך בשיחה אחרת
+
+1. לקרוא מסמך זה ואת MAC_MANAGER.md, הוראות AGENTS החלות ומצב Git העדכני.
+2. לאמת גרסה מותקנת, פעולות פעילות, מלאי וממצאים רלוונטיים לפני שינוי.
+3. לבחור משימה ממוספרת, לעדכן מצב והחלטות במסמך זה, ולשמור עבודה קיימת.
+4. לפני הרצה רחבה של סקריפט המימוש, לבדוק תנאי קדם. בניסיון קודם הסקריפט
+   עצר בגלל שינוי README.md מאז הגיבוי; אין לאפס Git או לדרוס את README
+   כדי לעקוף זאת. יש להתאים חבילת שינוי לבסיס הנוכחי כשנדרשת עבודת קוד.
+5. להבדיל בדיווח בין נמצא במאגר, פתרון תלויות הצליח, קובץ זמין,
+   חתימה אומתה, הותקן, נבדק לשימוש, ומעבר הושלם.
+
+אפשר לפתוח שיחה חדשה עם: ״קרא את docs/MAC_MANAGER_TASKS.md והמשך ממשימה T02,
+תוך שמירה על ההחלטות וההחרגות המתועדות.״
+'''
+
+def document_tasks():
+    """Documentation-only transaction; never replays source bundles or README."""
+    path = ROOT / 'docs/MAC_MANAGER_TASKS.md'
+    journal_path = RECOVERY / 'task-document.json'
+    desired = TASKS_DOCUMENT.encode()
+    before = path.read_bytes() if path.exists() else None
+    if before == desired:
+        print('Task document already current: '+str(path))
+        return
+    record = json.loads(journal_path.read_text()) if journal_path.exists() else {}
+    if before is not None and digest(before) != record.get('after'):
+        raise RuntimeError('Task document has independent edits; preserve and incorporate them before rewriting')
+    RECOVERY.mkdir(parents=True, exist_ok=True)
+    if before is not None:
+        (RECOVERY / ('task-document.'+str(time.time_ns())+'.md')).write_bytes(before)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.task-document-')
+    with os.fdopen(fd, 'wb') as stream: stream.write(desired)
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+    journal_path.write_text(json.dumps({'path':str(path),'after':digest(desired),'updated_at':time.time()},indent=2))
+    if path.read_bytes() != desired: raise RuntimeError('Task document verification failed')
+    print('Created and verified: '+str(path))
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode',choices=['check','apply','verify','pack','install','pilot','restore','selftest','recover-stalled','restore-removed'])
+    parser.add_argument('mode',choices=['check','apply','verify','pack','install','pilot','restore','selftest','recover-stalled','restore-removed','document-tasks'])
     mode=parser.parse_args().mode
     if mode=='check':check_or_apply()
     elif mode=='apply':check_or_apply(True);verify()
@@ -2107,6 +2394,7 @@ def main():
     elif mode=='selftest':selftest()
     elif mode=='recover-stalled':recover_stalled()
     elif mode=='restore-removed':restore_removed()
+    elif mode=='document-tasks':document_tasks()
 
 AUTO_ALTERNATIVES_MODULE = r'''"""Read-only, batched MacPorts archive observations for automatic recommendations.
 
@@ -2487,7 +2775,1351 @@ if __name__ == '__main__':
     unittest.main()
 '''
 
+# Bundle 002 is deliberately based on the current checkout, including the
+# independently edited README. It never replays bundle 001 over that work.
+RELIABILITY_BASE = {
+    'backend/brew-updates-service.py': '5bc1d525462fb8f4078be5bb95f703020273862d7b3afada22407377ce6bb2e5',
+    'backend/mac_manager.py': '228cbe706b79435ebfeb43e9bcb397cbf870c977ce94232d45f75680a5e47026',
+    'backend/update_engine.py': '087092557ecd3743162507de3a97f1290c0f0c03f12e037a3c76411f853d130a',
+    'renderer/app.js': 'be9fac4823485b004cec05b6431f4c4cae15236f3e0d5b8fbad156a7ee60d638',
+    'renderer/mac-manager.js': '1c1291259e55dc97880950f1850cbf623748b9b56dc8c56ebbf1bdac33f639f8',
+    'renderer/i18n.js': '6a1db3b27e66c6832bce37b71566e07030c4dfdebef920510bd72719310e19ff',
+    'tests/progress-ui.cjs': '00ad43eccbe0fa21d1d853764e6e14ac8a47e5fe241fbf3bf5ff0fb7928ba60a',
+    'tests/test_update_policy.py': '34b6a87f5cc9f0aac3c3e90e35f251be0a74415345902d31ffe0149e3d29034d',
+    'package.json': 'a8e9be76d9f3a89b86c6bbfa3b10d0d54266162f565e8fc38073aa73d0f0b3b6',
+    'package-lock.json': '20226bb15946de020ad8756f8e7e4ccec3f8acd6b7bc2ac7eac0b0f7d5f4c7c2',
+    'docs/MAC_MANAGER.md': 'e40655ba8f0106cf4fc9ed52642012a79dc613dd300524168062276757c63105',
+    'docs/MAC_MANAGER_TASKS.md': '8e38366e9ff8aed7cfdb328eccbecc58d54b6c0629ede59b0900ba65122e17ca',
+    'README.md': '9535c24ddc31d586ec29093aa4b4bb5d914c62597c4e9a8af7a9431faaf44ef5',
+}
+RELIABILITY_ACCEPTED = True
+
+INSTALLATION_EVIDENCE = r'''"""Bounded local installation evidence; classification never authorizes migration."""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import threading
+import time
+
+CONTEXT = threading.local()
+POLICY = 'local-evidence-v1'
+# Only explicitly known, read-only version probes are executed.
+VERSION_PROBES = {'llvm': ('clang', ['--version'], r'clang version (\d+\.\d+\.\d+)')}
+DEVELOPMENT_MARKERS = {'node.h', 'Python.h', 'ruby.h', 'jvm.h', 'jni.h', 'rustc', 'llvm-config',
+                       'pg_config', 'go', 'gofmt', 'javac', 'clang', 'clang++', 'gcc', 'g++', 'swiftc', 'ghc'}
+
+def reset():
+    CONTEXT.inventory = None
+
+def command(s, args, timeout=30):
+    s.raise_if_cancel_requested()
+    result = s.run_cmd(args, timeout=timeout, cancellable=True,
+                       env_override={'HOMEBREW_NO_AUTO_UPDATE':'1', 'HOMEBREW_NO_AUTOREMOVE':'1'})
+    s.raise_if_cancel_requested()
+    return result
+
+def read_receipt(path):
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+def versions(version):
+    text = str(version or 'unknown')
+    match = re.fullmatch(r'(.+?)_(\d+)', text)
+    return {'package_version':text, 'upstream_version':match[1] if match else text,
+            'revision':int(match[2]) if match else 0}
+
+def fingerprint(audit):
+    return hashlib.sha256(json.dumps({k:v for k,v in audit.items() if k!='checked_at'},sort_keys=True).encode()).hexdigest()
+
+def inspect(s, row, prefix, cellar):
+    name = row['name']
+    entries = row.get('installed') or []
+    listed = [str(e['version']) for e in entries if isinstance(e, dict) and e.get('version')]
+    base = cellar / name
+    opt = prefix / 'opt' / name
+    issues, warnings, receipts = [], [], []
+    for version in sorted(set(listed) | ({p.name for p in base.iterdir() if p.is_dir()} if base.is_dir() else set())):
+        s.raise_if_cancel_requested()
+        path = base / version / 'INSTALL_RECEIPT.json'
+        data = read_receipt(path)
+        receipts.append({'version':version, 'path':str(path), 'present':path.is_file(),
+                         'sha256':hashlib.sha256(path.read_bytes()).hexdigest() if data is not None else None,
+                         'runtime_dependencies':(data or {}).get('runtime_dependencies'),
+                         'used_options':(data or {}).get('used_options', []),
+                         'bottle_rebuild':((data or {}).get('source') or {}).get('bottle', {}).get('rebuild')})
+    active = None
+    if opt.is_symlink() or opt.exists():
+        resolved = opt.resolve()
+        if resolved.is_dir() and resolved.parent == base.resolve():
+            active = resolved
+        else:
+            issues.append('active_link_missing_or_outside_installation')
+    linked = str(row.get('linked_keg') or '')
+    if active is None and not issues:
+        if linked and (base / linked).is_dir():
+            active = base / linked
+        elif len(listed) == 1 and (base / listed[0]).is_dir():
+            active = base / listed[0]
+        else:
+            issues.append('active_keg_unverified')
+    if active and linked and linked != active.name:
+        issues.append('linked_keg_disagrees_with_opt')
+    active_receipt = next((r for r in receipts if active and r['version']==active.name), None)
+    if active and (not active_receipt or active_receipt['runtime_dependencies'] is None):
+        issues.append('active_receipt_missing_or_incomplete')
+    if active and active.name not in listed:
+        issues.append('active_keg_missing_from_manager_inventory')
+    for record in receipts:
+        if not record['present'] and (not active or record['version'] != active.name):
+            warnings.append('inactive_receipt_missing:'+record['version'])
+    value = active.name if active else listed[0] if len(listed)==1 else 'unknown'
+    result = dict(status='verified' if not issues else 'unverified', checked_at=s.now_iso(),
+                  manager_versions=listed, manager_linked_keg=linked or None,
+                  active_keg=str(active) if active else None, opt_path=str(opt),
+                  receipts=receipts, issues=issues, warnings=warnings, **versions(value))
+    if name in VERSION_PROBES and active:
+        executable, args, pattern = VERSION_PROBES[name]
+        path = active/'bin'/executable
+        resolved = shutil.which(executable)
+        result['command_resolution'] = {'name':executable, 'path':resolved,
+            'resolved_path':str(Path(resolved).resolve()) if resolved else None,
+            'installation_executable':str(path)}
+        if path.is_file():
+            probe = command(s, [str(path), *args])
+            text = probe.stdout + probe.stderr
+            match = re.search(pattern, text)
+            result['version_probe'] = {'path':str(path), 'code':probe.code,
+                                       'version':match[1] if match else None, 'output':text[-2000:]}
+            if probe.code or not match:
+                result['warnings'].append('version_probe_unavailable')
+                result['functional_status']='failed' if probe.code else 'unverified'
+            elif match[1] != result['upstream_version']:
+                result['status']='conflict'
+                result['issues'].append('executable_version_disagrees_with_receipt')
+        else:
+            result['warnings'].append('version_probe_executable_missing')
+    return result
+
+def collect(s, payload):
+    prefix_result = command(s, [s.brew_bin(), '--prefix'])
+    cellar_result = command(s, [s.brew_bin(), '--cellar'])
+    if prefix_result.code or cellar_result.code:
+        raise RuntimeError('Homebrew installation roots could not be verified')
+    prefix, cellar = Path(prefix_result.stdout.strip()), Path(cellar_result.stdout.strip())
+    if not prefix.is_absolute() or not cellar.is_absolute() or not cellar.is_dir():
+        raise RuntimeError('Homebrew returned an invalid installation root')
+    rows = {r['name']:r for r in payload.get('formulae', []) if isinstance(r,dict) and r.get('name')}
+    omitted=[]
+    # Reconcile only the Cellar's two installation levels, never user projects.
+    for directory in sorted(cellar.iterdir()):
+        s.raise_if_cancel_requested()
+        if directory.is_dir() and directory.name not in rows:
+            installed=[{'version':p.name} for p in directory.iterdir() if p.is_dir() and (p/'INSTALL_RECEIPT.json').is_file()]
+            if installed:
+                row=dict(name=directory.name,installed=installed,versions={},audit_metadata_missing=True)
+                rows[directory.name]=row
+                omitted.append(row)
+    audits, reverse, gaps = {}, {}, []
+    for name, row in rows.items():
+        s.raise_if_cancel_requested()
+        try:
+            audits[name] = inspect(s,row,prefix,cellar)
+            active=audits[name]['active_keg']
+            for receipt in audits[name]['receipts']:
+                if receipt['runtime_dependencies'] is None:
+                    if active and receipt['version']==Path(active).name:
+                        gaps.append(name+':runtime_dependencies_unavailable')
+                for dep in receipt['runtime_dependencies'] or []:
+                    key=str(dep.get('full_name') or dep.get('name') or '').split('/')[-1]
+                    if key:
+                        reverse.setdefault(key,[]).append({'name':name,'source':receipt['path'],'installed_version':receipt['version'],
+                            'declared_directly':dep.get('declared_directly'), 'version':dep.get('version')})
+            if audits[name]['issues']:
+                gaps.extend(name+':'+x for x in audits[name]['issues'])
+        except s.OperationCancelledError:
+            raise
+        except Exception as error:
+            audits[name]=dict(status='unverified',package_version='unknown',issues=[str(error)],
+                             warnings=[],receipts=[],active_keg=None,checked_at=s.now_iso())
+            gaps.append(name+':inventory_unverified')
+    for row in payload.get('casks',[]):
+        for dependency in (row.get('depends_on') or {}).get('formula',[]):
+            reverse.setdefault(dependency.split('/')[-1],[]).append(dict(name=row.get('token'),kind='cask',
+                source='current_cask_dependency_metadata',installed_version=row.get('installed')))
+    CONTEXT.inventory = dict(rows=rows,audits=audits,reverse=reverse,gaps=gaps,
+                             prefix=str(prefix),cellar=str(cellar),omitted=omitted)
+    return CONTEXT.inventory
+
+def inventory_fields(s, row, context):
+    audit = context['audits'].get(row['name']) if context else None
+    if not audit:
+        audit=dict(status='unverified',package_version='unknown',issues=['inventory_evidence_unavailable'],checked_at=s.now_iso())
+    fields=dict(installed_version=audit['package_version'], inventory_verification=audit,
+                manager_installed_versions=[str(x.get('version')) for x in row.get('installed',[]) if isinstance(x,dict)],
+                installed_upstream_version=audit.get('upstream_version'),installed_revision=audit.get('revision'),
+                latest_upstream_version=(row.get('versions') or {}).get('stable'),latest_revision=row.get('revision'))
+    if audit['status'] != 'verified' or row.get('audit_metadata_missing'):
+        fields.update(inventory_stale=True,update_block_reason='inventory_unavailable')
+    if audit.get('functional_status')=='failed':
+        fields.update(inventory_stale=True,update_block_reason='inventory_unavailable')
+    return fields
+
+def verified_dependencies(s, payload):
+    context=getattr(CONTEXT,'inventory',None)
+    if context is None:context=collect(s,payload)
+    result={}
+    for name,audit in context['audits'].items():
+        valid=[r for r in audit.get('receipts',[]) if r['present'] and r['runtime_dependencies'] is not None]
+        result[name]={'versions':[r['version'] for r in valid],
+                      'options':[x for r in valid for x in r.get('used_options',[])]}
+    return result
+
+def file_evidence(s, root):
+    evidence=dict(commands=[],libraries=[],headers=[],pkg_config=[],development=[],mach_o=[],
+                  formula_source=None,service_definition=None,config_paths=[],data_paths=[],gaps=[])
+    started=time.monotonic()
+    scanned=0
+    # Bounded installation tree only. Do not follow directory symlinks.
+    for directory, dirs, files in os.walk(root, followlinks=False,
+            onerror=lambda error:evidence['gaps'].append('installation_directory_unreadable:'+str(error))):
+        s.raise_if_cancel_requested()
+        if time.monotonic()-started > 20 or scanned > 20000:
+            evidence['gaps'].append('installation_file_scan_limit')
+            break
+        relative=Path(directory).relative_to(root)
+        for name in dirs:
+            path=Path(directory)/name
+            if path.is_symlink() and not path.resolve().is_relative_to(root.resolve()):
+                evidence['gaps'].append('external_directory_link:'+str(path.relative_to(root)))
+        if relative.parts and relative.parts[0] in {'share','libexec'}:
+            dirs[:]=[d for d in dirs if not d.startswith('.')]
+        for name in files:
+            scanned+=1
+            if scanned % 64 == 0: s.raise_if_cancel_requested()
+            path=Path(directory)/name
+            rel=str(path.relative_to(root))
+            if name in DEVELOPMENT_MARKERS and (name.endswith('.h') or os.access(path,os.X_OK)):
+                evidence['development'].append(rel)
+            if relative.parts and relative.parts[0] in {'bin','sbin'} and os.access(path,os.X_OK):
+                evidence['commands'].append(str(path))
+            if name.endswith(('.dylib','.a')) or re.search(r'\.so(?:\.\d+)*$',name):
+                # Bundled private libraries do not imply an exported library API.
+                if relative.parts and relative.parts[0]=='lib': evidence['libraries'].append(rel)
+            if relative.parts and relative.parts[0]=='include': evidence['headers'].append(rel)
+            if name.endswith('.pc'): evidence['pkg_config'].append(rel)
+    formula_dir=root/'.brew'
+    formula_files=sorted(formula_dir.glob('*.rb')) if formula_dir.is_dir() else []
+    if len(formula_files)==1 and formula_files[0].resolve().is_relative_to(root.resolve()):
+        path=formula_files[0]
+        text=path.read_text(errors='replace')
+        evidence['formula_source']=str(path)
+        evidence['formula_sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
+        evidence['service_definition']=bool(re.search(r'^\s*service\s+do\b',text,re.M))
+        # Only extract literal, formula-owned locations; do not evaluate Ruby.
+        for kind,pattern in [('config_paths',r'\betc\s*/\s*"([^"\n]+)"'),('data_paths',r'\bvar\s*/\s*"([^"\n]+)"')]:
+            evidence[kind]=sorted(set(re.findall(pattern,text)))
+    else:
+        evidence['gaps'].append('installed_formula_service_metadata_unavailable')
+    binaries=[]
+    for raw in evidence['commands']:
+        path=Path(raw)
+        try:
+            if not path.resolve().is_relative_to(root.resolve()):
+                evidence['gaps'].append('external_command_target:'+str(path))
+                continue
+            with path.open('rb') as stream: magic=stream.read(4)
+            if magic in {b'\xcf\xfa\xed\xfe',b'\xfe\xed\xfa\xcf',b'\xca\xfe\xba\xbe',b'\xbe\xba\xfe\xca'}:
+                binaries.append(path)
+        except OSError as error:
+            evidence['gaps'].append('executable_unreadable:'+str(path))
+    for path in binaries[:24]:
+        if time.monotonic()-started>30:
+            evidence['gaps'].append('linkage_inspection_time_limit')
+            break
+        result=command(s,['/usr/bin/otool','-L',str(path)],timeout=10)
+        evidence['mach_o'].append(dict(path=str(path),code=result.code,output=result.stdout[-12000:]))
+        if result.code: evidence['gaps'].append('linkage_inspection_failed:'+str(path))
+    if len(binaries)>24: evidence['gaps'].append('linkage_inspection_limit')
+    return evidence
+
+def classify(evidence):
+    roles=[]
+    files=evidence.get('files',{})
+    if files.get('service_definition') or evidence.get('service'):
+        roles.append('service')
+    if evidence.get('consumers') or files.get('libraries') or files.get('headers') or files.get('pkg_config') or files.get('development'):
+        roles.append('shared_environment')
+    gaps=list(dict.fromkeys(evidence.get('gaps',[])+files.get('gaps',[])))
+    audit=evidence.get('inventory',{})
+    if audit.get('status')!='verified': gaps.append('installation_unverified')
+    if audit.get('functional_status')=='failed': gaps.append('known_command_probe_failed')
+    if not roles and not files.get('commands'): gaps.append('no_verified_command')
+    # Positive roles survive incomplete evidence; automation always requires completeness.
+    category=roles[0] if roles else 'insufficient_information' if gaps else 'standalone_candidate'
+    if category=='standalone_candidate': roles.append('standalone')
+    reasons=[]
+    if 'service' in roles: reasons.append('service_definition_or_registration')
+    if evidence.get('consumers'): reasons.append('documented_installed_consumers')
+    if any(files.get(k) for k in ('libraries','headers','pkg_config')): reasons.append('exported_library_interface')
+    if files.get('development'): reasons.append('development_environment_interface')
+    if category=='standalone_candidate': reasons.append('complete_local_evidence_without_shared_roles')
+    if gaps: reasons.append('required_evidence_incomplete')
+    return dict(category=category,roles=roles,reasons=reasons,consumers=evidence.get('consumers',[]),
+                gaps=sorted(set(gaps)),automation_candidate=category=='standalone_candidate',policy=POLICY)
+
+def annotate(s, offers, packages, refresh, report=False):
+    context=getattr(CONTEXT,'inventory',None)
+    previous={o['name']:o for o in (s.read_json(s.STATE_FILE) or {}).get('migrations',[])}
+    by_name={p['name']:p for p in packages if p.get('provider')=='homebrew' and p.get('kind')=='formula'}
+    services=None
+    if refresh and context and offers:
+        try:
+            result=command(s,[s.brew_bin(),'services','list','--json'],timeout=45)
+            services=json.loads(result.stdout) if not result.code else None
+            if not isinstance(services,list): services=None
+        except s.OperationCancelledError: raise
+        except Exception: services=None
+    for offer in offers:
+        s.raise_if_cancel_requested()
+        name=offer['name']
+        if name=='ngrok' or s.is_excluded(name,'formula'): continue
+        if report:
+            s.set_check_progress(current_package=name,message='Checking installation role: '+name,eta_seconds=None)
+        pkg=by_name.get(name,{})
+        audit=pkg.get('inventory_verification',{})
+        if not refresh:
+            prior=previous.get(name,{})
+            if prior.get('classification',{}).get('inventory_fingerprint')==fingerprint(audit):
+                offer['classification']=prior['classification']
+            else:
+                offer['classification']=dict(category='unclassified',roles=[],gaps=['fresh_classification_required'],reasons=[],consumers=[])
+            continue
+        evidence=dict(name=name,installation_id=pkg.get('installation_id'),checked_at=s.now_iso(),
+                      inventory=audit,consumers=(context or {}).get('reverse',{}).get(name,[]),
+                      gaps=[],service=None)
+        try:
+            if context is None:
+                evidence['gaps'].append('installed_dependency_graph_unavailable')
+            else:
+                evidence['gaps'].extend(context['gaps'])
+                root=audit.get('active_keg')
+                if root: evidence['files']=file_evidence(s,Path(root))
+                row=context['rows'].get(name,{})
+                evidence['options']=[r.get('used_options',[]) for r in audit.get('receipts',[])]
+                evidence['variants']=row.get('used_options',[])
+                if services is None: evidence['gaps'].append('service_registry_unavailable')
+                else: evidence['service']=next((r for r in services if r.get('name')==name),None)
+                # A Homebrew service row may merely describe a stopped service.
+                files=evidence.get('files',{})
+                prefix=Path(context['prefix'])
+                evidence['owned_paths']=[dict(path=str(prefix/base/value),exists=(prefix/base/value).exists())
+                    for key,base in [('config_paths','etc'),('data_paths','var')] for value in files.get(key,[])
+                    if not Path(value).is_absolute() and '..' not in Path(value).parts]
+            classification=classify(evidence)
+        except s.OperationCancelledError: raise
+        except Exception as error:
+            evidence['gaps'].append('collection_failed:'+str(error))
+            classification=classify(evidence)
+        inventory_fingerprint=fingerprint(audit)
+        data=json.dumps(evidence,sort_keys=True,ensure_ascii=False).encode()
+        key=hashlib.sha256(data).hexdigest()
+        path=s.DATA_DIR/'migration-evidence'/(key+'.json')
+        s.raise_if_cancel_requested()
+        references=[]
+        try:
+            path.parent.mkdir(parents=True,exist_ok=True)
+            s.atomic_write_json(path,evidence)
+            references=[str(path)]
+        except OSError as error:
+            classification['gaps'].append('evidence_persistence_failed:'+str(error))
+            classification['automation_candidate']=False
+            if classification['category']=='standalone_candidate':classification['category']='insufficient_information'
+        classification.update(checked_at=evidence['checked_at'],inventory_fingerprint=inventory_fingerprint,
+                              evidence_refs=references)
+        offer['classification']=classification
+    return offers
+'''
+
+RUNTIME_UI = r'''
+// Operation presentation is independent of the busy overlay.
+let retainedOperationProgress = null;
+let operationStatusUnverified = false;
+let operationRequestGeneration = 0;
+let operationStartedFloor = 0;
+let runtimeRefreshGeneration = 0;
+
+function runtimeText(he, en) { return i18n.lang === 'he' ? he : en; }
+
+function presentOperationStatus() {
+  const p = retainedOperationProgress;
+  const terminal = p && !p.running && ['completed','error','canceled'].includes(p.phase);
+  const reportStatus = terminal ? p.phase === 'error' ? 'failed' : p.phase === 'canceled' ? 'canceled'
+    : p.partial || p.error || (p.deferred_packages || []).length ? 'warning' : 'completed' : 'idle';
+  let status = p?.running || lastKnownParallelCheckRunning || (busyLoading && !terminal) ? 'running' : terminal ? reportStatus : 'idle';
+  if (operationStatusUnverified) status = 'unverified';
+  const labels = {
+    idle:i18n.t('actions.statusIdle'),running:i18n.t('actions.statusRunning'),
+    completed:i18n.t('actions.statusCompleted'),failed:i18n.t('actions.statusFailed'),
+    warning:runtimeText('הושלם עם אזהרות','Completed with warnings'),
+    canceled:runtimeText('בוטל','Canceled'),unverified:runtimeText('לא ניתן לאמת סטטוס','Status could not be verified'),
+  };
+  operationStatusBadgeEl.removeAttribute('data-i18n');
+  operationStatusBadgeEl.className = `status-badge ${status === 'warning' || status === 'unverified' ? 'idle' : status === 'failed' ? 'error' : status === 'canceled' ? 'completed' : status}`;
+  operationStatusBadgeEl.dataset.status = status;
+  operationStatusBadgeEl.textContent = labels[status];
+  // A completed report has its own persistent panel, never an active loader.
+  if (loaderEl) loaderEl.classList.toggle('visible', !terminal && (busyLoading || !!p?.running) && !operationStatusUnverified);
+  let panel = document.getElementById('operationResultSummary');
+  if (!panel) {
+    panel = document.createElement('section'); panel.id = 'operationResultSummary'; panel.className = 'panel';
+    panel.style.padding = '16px'; panel.style.marginBlock = '12px'; panel.setAttribute('aria-live','polite');
+    document.querySelector('.tabs').before(panel);
+  }
+  panel.hidden = !terminal;
+  if (!terminal) return;
+  panel.replaceChildren();
+  const heading = document.createElement('strong'); heading.textContent = labels[reportStatus]; panel.appendChild(heading);
+  if (String(p.operation_name || '').startsWith('update')) {
+    const items = p.completed_packages || [];
+    const skipped = items.filter(x => x.skipped);
+    const updated = items.filter(x => x.ok && !x.skipped);
+    const failed = items.filter(x => !x.ok && !x.skipped && !x.canceled);
+    const canceled = items.filter(x => x.canceled);
+    const deferred = p.deferred_packages || [];
+    const remaining = p.remaining_packages || [];
+    const text = document.createElement('p');
+    text.textContent = runtimeText(
+      `עודכנו: ${updated.length} · נכשלו: ${failed.length} · דולגו: ${skipped.length + deferred.length} · הופסקו: ${canceled.length} · לא בוצעו: ${remaining.length}`,
+      `Updated: ${updated.length} · Failed: ${failed.length} · Skipped: ${skipped.length + deferred.length} · Canceled: ${canceled.length} · Not attempted: ${remaining.length}`);
+    panel.appendChild(text);
+    const list = document.createElement('ul');
+    for (const item of [...deferred,...skipped,...failed,...canceled,...remaining]) {
+      const line = document.createElement('li');
+      const reason = item.reason || (item.canceled ? 'canceled' : !item.ok && !remaining.includes(item) ? 'failed' : 'not_attempted');
+      line.textContent = `${item.name || '—'}: ${migrationReasonLabel(reason)}`;
+      if (item.blockers?.length) line.textContent += ' · ' + item.blockers.map(b=>`${b.name}: ${migrationReasonLabel(b.reason)}`).join(', ');
+      list.appendChild(line);
+    }
+    if (list.children.length) panel.appendChild(list);
+  } else {
+    const text = document.createElement('p');
+    text.textContent = p.phase === 'completed' ? i18n.t(p.partial ? 'message.checkPartial' : 'message.checkSuccess')
+      : p.phase === 'canceled' ? i18n.t('message.checkCanceled') : (p.error || i18n.t('actions.statusFailed'));
+    panel.appendChild(text);
+  }
+}
+
+function acceptOperationProgress(progress, authoritative = false) {
+  if (!progress) return false;
+  const stamp = Date.parse(progress.started_at || '') || 0;
+  const previousStamp = Date.parse(retainedOperationProgress?.started_at || '') || 0;
+  if (!authoritative && stamp && stamp < operationStartedFloor) return false;
+  if (stamp && previousStamp && stamp < previousStamp) return false;
+  if (!authoritative && retainedOperationProgress && !retainedOperationProgress.running
+      && ['completed','error','canceled'].includes(retainedOperationProgress.phase)
+      && progress.running && stamp && stamp === previousStamp) return false;
+  if (!stamp && retainedOperationProgress?.started_at && progress.phase === 'idle') return false;
+  retainedOperationProgress = progress;
+  operationStatusUnverified = false;
+  lastKnownOperationRunning = !!progress.running;
+  lastKnownOperationName = String(progress.operation_name || '').toLowerCase();
+  presentOperationStatus();
+  applyActionAvailability();
+  return true;
+}
+
+function beginOperationRequest() {
+  operationRequestGeneration += 1;
+  runtimeRefreshGeneration += 1;
+  operationStartedFloor = Date.now();
+  retainedOperationProgress = null;
+  operationStatusUnverified = false;
+  presentOperationStatus();
+}
+
+function statusUnavailable() {
+  operationStatusUnverified = true;
+  presentOperationStatus();
+}
+
+async function finishOperationRequest(response, generation) {
+  if (generation !== operationRequestGeneration) return;
+  // The response progress was captured while the backend still held its lock.
+  if (response?.progress) {
+    if (acceptOperationProgress(response.progress, true)) {
+      renderCheckProgress(response.progress);
+      if (!response.progress.running && !lastKnownParallelCheckRunning) stopProgressPolling();
+      return;
+    }
+  }
+  try {
+    const payload = await window.brewApp.getProgress();
+    if (generation !== operationRequestGeneration) return;
+    if (!payload?.progress || !acceptOperationProgress(payload.progress)) throw new Error('Unverified operation status');
+    renderCheckProgress(payload.progress);
+    await syncParallelCheckState(payload.parallel_check, {showFeedback:false});
+    if (!payload.progress.running && !payload.parallel_check?.running) stopProgressPolling();
+  } catch {
+    if (generation !== operationRequestGeneration) return;
+    statusUnavailable();
+    if (!progressPollTimer) startProgressPolling();
+  }
+}
+
+function migrationReasonLabel(reason) {
+  const labels = {
+    source_required:['אין מסלול בינארי מלא','No complete binary route'],
+    inventory_unavailable:['נדרש אימות ההתקנה','Installation verification required'],
+    binary_route_unavailable:['המסלול הבינארי אינו מאומת','Binary route is unverified'],
+    excluded:['מוחרג','Excluded'],not_outdated:['כבר מעודכן','Already current'],
+    canceled:['בוטל','Canceled'],failed:['נכשל','Failed'],not_attempted:['לא בוצע','Not attempted'],
+    service_definition_or_registration:['הוגדר שירות','Service definition or registration'],
+    documented_installed_consumers:['נמצאו תלויים מותקנים','Installed consumers found'],
+    exported_library_interface:['ממשק ספרייה משותף','Exported library interface'],
+    development_environment_interface:['ממשק סביבת פיתוח','Development environment interface'],
+    complete_local_evidence_without_shared_roles:['הראיות המקומיות הושלמו ללא תפקיד משותף','Local evidence complete without shared roles'],
+    required_evidence_incomplete:['חסרות ראיות נדרשות','Required evidence is incomplete'],
+  };
+  return (labels[reason] || [reason,reason])[i18n.lang==='he'?0:1];
+}
+'''
+
+def reliability_outputs(read):
+    out = {'backend/installation_evidence.py': INSTALLATION_EVIDENCE}
+    p='backend/brew-updates-service.py';t=read(p)
+    t=replace(t,'import mac_manager','import mac_manager\nimport installation_evidence\nimport copy')
+    t=replace(t,'def normalize_stale_progress_state(operation: dict[str, Any] | None = None) -> dict[str, Any]:', '''def runtime_status_payload():
+    # Same lock order as operation startup: ownership first, then progress.
+    # A stale caller snapshot must never terminate a newly started operation.
+    with CURRENT_OPERATION_LOCK:
+        operation = dict(CURRENT_OPERATION)
+        progress = _normalize_stale_progress_locked(operation)
+    return {'ok':True,'operation':operation,'progress':progress,'parallel_check':read_parallel_check_state()}
+
+
+def normalize_stale_progress_state(operation: dict[str, Any] | None = None) -> dict[str, Any]:
+    return runtime_status_payload()['progress']
+
+
+def _normalize_stale_progress_locked(operation: dict[str, Any]) -> dict[str, Any]:''')
+    t=replace(t,'        canceled=bool(progress.get("canceled")) or interrupted,',
+        '        current_package=None,\n        canceled=bool(progress.get("canceled")),')
+    t=replace(t,'''        if self.path == "/api/progress":
+            operation = read_current_operation()
+            progress = normalize_stale_progress_state(operation)
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "progress": progress,
+                    "operation": operation,
+                    "parallel_check": read_parallel_check_state(),
+                },
+            )''', '''        if self.path == "/api/progress":
+            self._send_json(200, runtime_status_payload())''')
+    t=replace(t,'    payload = json.loads(res.stdout or "{}")\n    packages: list[dict[str, Any]] = []', '''    payload = json.loads(res.stdout or "{}")
+    try:
+        evidence_context = installation_evidence.collect(sys.modules[__name__], payload)
+        payload.setdefault('formulae', []).extend(evidence_context['omitted'])
+    except OperationCancelledError:
+        raise
+    except Exception as error:
+        evidence_context = None
+        installation_evidence.reset()
+        append_service_log('Installation evidence unavailable: ' + str(error))
+    packages: list[dict[str, Any]] = []''')
+    t=replace(t,'        installed_version = installed_versions[-1] if installed_versions else str(row.get("linked_keg") or "unknown")',
+        '''        installation_fields = installation_evidence.inventory_fields(sys.modules[__name__], row, evidence_context)
+        installed_version = installation_fields['installed_version']''')
+    # Casks keep their own inventory semantics; only change the formula block.
+    start=t.index('def fetch_installed_inventory(');end=t.index('    for row in payload.get("casks", [])',start)
+    block=t[start:end]
+    block=replace(block,'            installed_version = outdated_meta.get("installed_version") or installed_version',
+        "            installation_fields['manager_outdated_version'] = outdated_meta.get('installed_version')")
+    block=replace(block,'                "kind": "formula",','                "kind": "formula",\n                **installation_fields,')
+    t=t[:start]+block+t[end:]
+    marker='def run_exclusive(op_name: str, fn):'
+    wrapper='''def run_with_progress(op_name, fn, *, snapshot=False):
+    """Capture a deep final progress snapshot before releasing the operation lock."""
+    def operation():
+        try:
+            value = fn()
+        except OperationCancelledError:
+            set_check_progress(running=False, phase='canceled', canceled=True,
+                               current_package=None, eta_seconds=None, completed_at=now_iso())
+            return {'ok':False, 'canceled':True, 'snapshot':read_json(STATE_FILE) or {},
+                    'progress':copy.deepcopy(read_check_progress())}
+        except Exception as error:
+            set_check_progress(running=False, phase='error', error=str(error),
+                               current_package=None, eta_seconds=None, completed_at=now_iso())
+            error.operation_progress=copy.deepcopy(read_check_progress())
+            raise
+        progress=copy.deepcopy(read_check_progress())
+        progress['partial']=bool(value.get('partial')) if snapshot else bool(value.get('inventory_refresh_error'))
+        return {'ok':True,'snapshot':value,'progress':progress} if snapshot else {**value,'progress':progress}
+    return run_exclusive(op_name, operation)
+
+
+'''
+    t=replace(t,marker,wrapper+marker)
+    t=replace(t,'''                snapshot = run_exclusive(
+                    "check_now",
+                    lambda: compute_snapshot(run_brew_update=True, track_progress=True),
+                )
+                self._send_json(200, {"ok": True, "snapshot": snapshot})''', '''                payload = run_with_progress(
+                    "check_now",
+                    lambda: compute_snapshot(run_brew_update=True, track_progress=True), snapshot=True,
+                )
+                self._send_json(200, payload)''')
+    t=replace(t,'payload = run_exclusive(f"update_one:{kind}:{name}", _operation)', 'payload = run_with_progress(f"update_one:{kind}:{name}", _operation)')
+    t=replace(t,'payload = run_exclusive("update_all", lambda: run_update_all(track_progress=True))', 'payload = run_with_progress("update_all", lambda: run_update_all(track_progress=True))')
+    t=replace(t,'payload = run_exclusive(\n                    f"update_selected:', 'payload = run_with_progress(\n                    f"update_selected:')
+    for error_name in ['check_failed','update_failed','update_all_failed','update_selected_failed']:
+        old='self._send_json(500, {"ok": False, "error": "'+error_name+'", "detail": str(exc)})'
+        new='self._send_json(500, {"ok": False, "error": "'+error_name+'", "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})'
+        t=replace(t,old,new)
+    # Store the last terminal result for refresh/reload as well as HTTP response.
+    t=replace(t,"        return {'ok':True,'snapshot':value,'progress':progress} if snapshot else {**value,'progress':progress}",
+        "        with CHECK_PROGRESS_LOCK:\n            CHECK_PROGRESS['partial']=progress['partial']\n        return {'ok':True,'snapshot':value,'progress':progress} if snapshot else {**value,'progress':progress}")
+    out[p]=t
+    p='backend/mac_manager.py';t=read(p)
+    t=replace(t,'import automatic_alternatives','import automatic_alternatives\nimport installation_evidence')
+    t=replace(t,'    previous = s.read_json(s.STATE_FILE) or {}','    installation_evidence.reset()\n    previous = s.read_json(s.STATE_FILE) or {}')
+    t=replace(t,"    journal = s.read_json(s.DATA_DIR / 'migration-journal.json')",'''    offers = installation_evidence.annotate(s, offers, packages, refresh, report=track_progress)
+    journal = s.read_json(s.DATA_DIR / 'migration-journal.json')''')
+    # Revalidate installation evidence when planning the already-supported pilot.
+    t=replace(t,"    if not pkg or pkg.get('brew_installation_present') is False:","    if pkg and (pkg.get('inventory_stale') or pkg.get('inventory_verification', {}).get('status', 'verified') != 'verified'):\n        raise ValueError('Installation evidence is unverified; scan and resolve the reported inventory gap')\n    if not pkg or pkg.get('brew_installation_present') is False:")
+    out[p]=t
+    p='backend/update_engine.py';t=read(p)
+    t=replace(t,'import macports_provider','import macports_provider\nimport installation_evidence')
+    t=replace(t,'''        return {row["name"]: {"versions": [x["version"] for x in row.get("installed", [])],
+                              "options": [option for x in row.get("installed", []) for option in x.get("used_options", [])]}
+                for row in json.loads(result.stdout).get("formulae", [])}''',
+        '''        return installation_evidence.verified_dependencies(self.s, json.loads(result.stdout))''')
+    t=replace(t,'"deferred_count": len(deferred), "remaining_count": len(remaining), "results": results,','"deferred_count": len(deferred), "skipped_count": sum(bool(r.get("skipped")) for r in results) + len(deferred),\n                "remaining_count": len(remaining), "results": results,')
+    out[p]=t
+    p='renderer/app.js';t=read(p)
+    t=replace(t,'function setLoading(on, messageKey',RUNTIME_UI+'\nfunction setLoading(on, messageKey')
+    t=replace(t,"  loaderTextEl.textContent = i18n.t(messageKey, params);","  if (on) loaderTextEl.textContent = i18n.t(messageKey, params);")
+    t=replace(t,"  if (!on && !lastKnownOperationRunning) {\n    resetLoaderProgress();\n    setOperationStatusBadge('idle');\n  }","  presentOperationStatus();")
+    t=replace(t,"function renderCheckProgress(progress) {\n  if (!progress || !loaderEl) {", "function renderCheckProgress(progress) {\n  if (!progress || !acceptOperationProgress(progress) || !loaderEl) {")
+    t=replace(t,"  if (progress.running || (String(progress.operation_name || '').startsWith('update') &&\n      ((progress.planned_packages || []).length || (progress.deferred_packages || []).length))) {", "  if (progress.running) {")
+    t=replace(t,"  if (!loaderEl.classList.contains('visible') && !busyLoading) {\n    return;\n  }", "  if (!progress.running) {\n    renderUpdateLivePanel(progress);\n    if (loaderCurrentValueEl) loaderCurrentValueEl.textContent = '—';\n    if (loaderEtaValueEl) loaderEtaValueEl.textContent = progress.phase === 'completed' ? i18n.t('progress.doneNow') : '—';\n    if (loaderCancelBtn) loaderCancelBtn.disabled = true;\n    presentOperationStatus();\n    return;\n  }")
+    # Old status writers delegate to the same retained operation presentation.
+    start=t.index('function setOperationStatusBadge(status) {');end=t.index('\nasync function refreshRuntimeStatus',start)
+    t=t[:start]+'''function setOperationStatusBadge(status) {
+  presentOperationStatus();
+}
+'''+t[end:]
+    t=replace(t,"  const operationRunning = !!lastKnownOperationRunning;", "  const operationRunning = !!lastKnownOperationRunning || operationStatusUnverified;", count=2)
+    # Runtime refresh and polling share generation protection with action responses.
+    t=replace(t,'async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } = {}) {',
+        'async function refreshRuntimeStatus({ showFeedback = true, reloadState = true } = {}) {\n  const generation = ++runtimeRefreshGeneration;\n  const actionGeneration = operationRequestGeneration;')
+    t=replace(t,'    const progressPayload = await window.brewApp.getProgress();',
+        '    const progressPayload = await window.brewApp.getProgress();\n    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;')
+    t=replace(t,"  } catch (err) {\n    if (showFeedback) {\n      showMessage(i18n.t('message.refreshFailed'", "  } catch (err) {\n    if (generation !== runtimeRefreshGeneration || actionGeneration !== operationRequestGeneration) return;\n    if (showFeedback) {\n      showMessage(i18n.t('message.refreshFailed'")
+    t=replace(t,"    if (showFeedback) {\n      showMessage(i18n.t('message.refreshFailed', { error: err.message }), true);", "    statusUnavailable();\n    if (!progressPollTimer) startProgressPolling();\n    if (showFeedback) {\n      showMessage(i18n.t('message.refreshFailed', { error: err.message }), true);")
+    t=replace(t,'    // Ignore transient polling errors while check is in progress.','    if (epoch === progressPollEpoch) statusUnavailable();')
+    t=replace(t,"    if (payload?.progress) {\n      renderCheckProgress(payload.progress);\n    }", "    if (payload?.progress) {\n      if (!acceptOperationProgress(payload.progress)) return;\n      renderCheckProgress(payload.progress);\n    }")
+    t=replace(t,'    await syncParallelCheckState(payload?.parallel_check, { showFeedback: false });\n  } catch {',
+        '''    await syncParallelCheckState(payload?.parallel_check, { showFeedback: false });
+    if (!busyLoading && !payload?.progress?.running && !payload?.parallel_check?.running && payload?.progress) stopProgressPolling();
+  } catch {''')
+    # Action-local response is authoritative; finally fetch is only a compatibility fallback.
+    for name,next_name in [('checkNow','updateOne'),('updateOne','updateSelected'),('updateSelected','updateAll'),('updateAll','loadSavedColumnWidths')]:
+        start=t.index(('async function ' if name!='loadSavedColumnWidths' else 'function ')+name+'(')
+        end=t.index('\n'+('function ' if next_name=='loadSavedColumnWidths' else 'async function ')+next_name+'(',start)
+        block=t[start:end]
+        marker='  startProgressPolling();'
+        block=replace(block,marker,"  beginOperationRequest();\n  const actionGeneration = operationRequestGeneration;\n  let operationResponse = null;\n"+marker)
+        block=block.replace('    const res = await window.brewApp.', '    const res = operationResponse = await window.brewApp.')
+        if name=='checkNow':
+            old='''    stopProgressPolling();
+    try {
+      const finalStatus = await window.brewApp.getProgress();
+      if (finalStatus?.progress) renderCheckProgress(finalStatus.progress);
+    } catch { /* Keep the last known status when the service is unavailable. */ }'''
+            block=replace(block,old,'    await finishOperationRequest(operationResponse, actionGeneration);')
+        else:
+            block=replace(block,'    stopProgressPolling();','    await finishOperationRequest(operationResponse, actionGeneration);')
+        t=t[:start]+block+t[end:]
+    t=replace(t,'  const done = completed.length || Number(progress?.done || 0);','  const done = completed.filter(item => item.ok && !item.skipped).length;')
+    t=replace(t,'  const remainingCount = remaining.length || Math.max(0, total - done);','  const remainingCount = remaining.length;')
+    for variable,field in [('tdCurrentVersion','installed_version'),('tdLatestVersion','latest_version')]:
+        t=replace(t,f"    {variable}.textContent = pkg.{field} || i18n.t('common.unknown');",f'''    const {variable}Value = document.createElement('bdi');
+    {variable}Value.dir = pkg.{field} && pkg.{field} !== 'unknown' ? 'ltr' : 'auto';
+    {variable}Value.textContent = pkg.{field} || i18n.t('common.unknown');
+    {variable}.appendChild({variable}Value);''')
+    # Switching languages must not reset a completed badge to the HTML default.
+    t=replace(t,'    lastKnownParallelCheckRunning = true;','    lastKnownParallelCheckRunning = true;\n    presentOperationStatus();')
+    t=replace(t,'    lastKnownParallelCheckRunning = false;\n    return;', '    lastKnownParallelCheckRunning = false;\n    presentOperationStatus();\n    return;')
+    t=replace(t,'  lastKnownParallelCheckRunning = false;\n\n  await loadState', '  lastKnownParallelCheckRunning = false;\n  presentOperationStatus();\n\n  await loadState')
+    out[p]=t
+    p='renderer/mac-manager.js';t=read(p)
+    anchor="    row.appendChild(detail);\n    if(offer.status==='binary_available') {"
+    t=replace(t,anchor,'''    row.appendChild(detail);
+    const classification = offer.classification || {category:'unclassified'};
+    const installation=(snapshot?.packages||[]).find(p=>p.provider==='homebrew'&&p.kind==='formula'&&p.name===offer.name)?.inventory_verification;
+    if(installation) {
+      const evidence=document.createElement('details');const title=document.createElement('summary');
+      title.textContent=he?'ראיות ההתקנה':'Installation evidence';
+      const text=document.createElement('p');text.style.whiteSpace='pre-wrap';
+      text.textContent=(he?'גרסה לפי ההתקנה הפעילה: ':'Active installation version: ')+installation.package_version+'\\n'+
+        (he?'גרסאות שדווחו: ':'Manager versions: ')+(installation.manager_versions||[]).join(', ')+'\\n'+
+        (installation.active_keg||'')+'\\n'+(installation.command_resolution?.resolved_path||'')+'\\n'+
+        [...(installation.issues||[]),...(installation.warnings||[])].join(' · ');
+      if(installation.version_probe?.code)text.textContent+='\\n'+installation.version_probe.output;
+      evidence.append(title,text);row.appendChild(evidence);
+    }
+    const classificationLabels = {
+      service:['שירות עם הגדרות ונתונים','Service with configuration and data'],
+      shared_environment:['ספרייה או סביבת פיתוח משותפת','Shared library or development environment'],
+      standalone_candidate:['כלי עצמאי מועמד לאוטומציה','Standalone automation candidate'],
+      insufficient_information:['חסר מידע לסיווג','Insufficient classification evidence'],
+      unclassified:['טרם סווג','Not yet classified'],
+    };
+    const classificationText=document.createElement('p');
+    classificationText.className='migration-classification';
+    classificationText.textContent=(he?'סיווג: ':'Classification: ')+(classificationLabels[classification.category]||classificationLabels.unclassified)[he?0:1];
+    row.appendChild(classificationText);
+    const reasons=document.createElement('p');
+    reasons.textContent=(classification.reasons||[]).map(migrationReasonLabel).join(' · ');
+    if(classification.checked_at) reasons.textContent+=' · '+classification.checked_at;
+    row.appendChild(reasons);
+    if(classification.consumers?.length) {
+      const consumers=document.createElement('p');consumers.textContent=(he?'תלויים מתועדים: ':'Documented consumers: ')+classification.consumers.map(c=>c.name).join(', ');row.appendChild(consumers);
+    }
+    for(const [label,values] of [[he?'מידע חסר':'Missing evidence',classification.gaps],[he?'קובצי ראיות':'Evidence files',classification.evidence_refs]]) {
+      if(values?.length) {const evidence=document.createElement('details');const title=document.createElement('summary');title.textContent=label;const text=document.createElement('p');text.textContent=values.join(' · ');evidence.append(title,text);row.appendChild(evidence);}
+    }
+    if(offer.status==='binary_available') {''')
+    t=replace(t,"blocked.textContent=he?'המעבר עדיין דורש תוכנית לצרכנים ולנתונים; אינו מבוצע בעדכון רגיל.':'Migration still requires a consumer and data plan; regular updates do not perform it.';",
+        "blocked.textContent=classification.category==='standalone_candidate'?(he?'מנגנון המעבר לכלי זה טרם מומש.':'The migration mechanism for this tool is not implemented yet.'):(he?'המעבר דורש טיפול בצרכנים, בנתונים או במידע החסר; אינו מבוצע בעדכון רגיל.':'Migration needs consumer, data or missing-evidence review; regular updates do not perform it.');")
+    out[p]=t
+    for p in ['package.json','package-lock.json']:
+        data=json.loads(read(p));data['version']='1.3.2'
+        if 'packages' in data and '' in data['packages']: data['packages']['']['version']='1.3.2'
+        out[p]=json.dumps(data,ensure_ascii=False,indent=2)+'\n'
+    out['docs/MAC_MANAGER.md']=read('docs/MAC_MANAGER.md')+'''\n\n## 1.3.2 operation results and installation evidence
+
+Operation responses include a final progress copy captured before the operation lock is released. Completed, partial, canceled and failed reports remain visible independently of the busy overlay. Unreachable service status is unverified, never inferred success.
+
+Homebrew inventory reconciles manager metadata with active opt links and local receipts, including retained Cellar installations omitted by brew info. Upstream version, package revision, inactive receipt gaps and PATH command resolution stay separate. Only the explicit LLVM clang probe is executed. Evidence conflicts block the affected installation.
+
+Full checks collect local migration classifications independently of binary availability. Installed receipt reverse dependencies, exported interfaces, formula service definitions, registered services, options and bounded Mach-O linkage checks determine service/shared-environment/standalone-candidate/insufficient-information roles. Private projects are not searched. Classification evidence is retained under migration-evidence in the application data directory. A classification never enables migration: only the existing terminal-notifier pilot remains executable. Old classifications are unclassified until fresh evidence is available.
+'''
+    out['docs/MAC_MANAGER_TASKS.md']=read('docs/MAC_MANAGER_TASKS.md').replace('מצב הפרויקט שנבדק: 1.3.1.','מצב בסיס הפרויקט: 1.3.1; מימוש 1.3.2 בבדיקות קבלה.')+'''\n\n## התקדמות T01 ו־T02 — 20.10.2026
+
+מימוש 1.3.2 כולל חיווי וסיכום פעולה אחידים, ראיות מלאי וסיווג מועמדות אוטומטי.
+תיבות המשימות נשארות פתוחות עד בדיקות הקבלה באפליקציה. ראו דוח האימות
+ב־docs/T01_T02_VALIDATION.md; אין במימוש זה הרחבת מעברים מעבר לפיילוט הקיים.
+'''
+    out['docs/T01_T02_VALIDATION.md']='''# T01 / T02 — local acceptance record
+
+Target: 1.3.2, 2026-10-20. Implementation is not acceptance evidence.
+Pending: bundle replay/restore, Python, transport, bilingual button-flow fixtures,
+fresh machine inventory/classification, packaged-app Start Check and final status,
+and a real zero-install update execution. No new package migrations are authorized.
+'''
+    out['tests/test_update_policy.py']=replace(read('tests/test_update_policy.py'),
+        '            packages = service.fetch_installed_inventory({})',
+        '''            with patch('installation_evidence.collect',return_value={'omitted':[]}):
+                packages = service.fetch_installed_inventory({})''')
+    if RELIABILITY_ACCEPTED:
+        tasks=read('docs/MAC_MANAGER_TASKS.md')
+        start=tasks.index('### T01');end=tasks.index('### T03')
+        completed=tasks[start:end].replace('- [ ]','- [x]')
+        completed=completed.replace('### T02','הושלם: 20.10.2026, גרסה 1.3.2. [ראיות ובדיקות](T01_T02_VALIDATION.md).\n\n### T02')
+        completed+='הושלם: 20.10.2026, גרסה 1.3.2. [ראיות ובדיקות](T01_T02_VALIDATION.md).\n\n'
+        tasks=tasks[:start]+completed+tasks[end:]
+        tasks=tasks.replace('מצב הפרויקט שנבדק: 1.3.1.','מצב הפרויקט שנבדק והותקן: 1.3.2.')
+        tasks+='''\n\n## מסירת T01 ו־T02 — 20.10.2026
+
+שתי המשימות הושלמו ונבדקו בגרסה המקומית 1.3.2. ראו [דוח האימות](T01_T02_VALIDATION.md).
+הסריקה המלאה שנבדקה מצאה 239 התקנות ו־28 מועמדות למעבר; לכולן נוסף סיווג
+או פער מידע מפורש עם ראיות. אלה נתוני הבדיקה המתועדת, ולא מונים קבועים.
+LLVM הפעיל מזוהה כ־22.1.5; גרסת 23.1.3_2 ללא receipt אינה נבחרת כפעילה.
+פקודת clang הקיימת נכשלת בגלל ספריית Z3 חסרה; הפעולה התלויה בה חסומה.
+תיקון החבילה עצמה נשאר ב־T06. לא נוספה הרשאת ביצוע למעברים חדשים.
+
+לחבילה החדשה משתמשים ב־`tools/implement-mac-manager.py` עם המצבים
+`t01-check`, `t01-apply`, `t01-verify`, `t01-install`, `t01-restore`.
+`t01-restore` משחזר קובצי פרויקט בלבד; גיבויי האפליקציה וההגדרות נשמרים בנפרד.
+המשימה הבאה לפי הסדר היא T03, על בסיס המיון שכבר נוסף ב־T02.
+'''
+        out['docs/MAC_MANAGER_TASKS.md']=tasks
+        out['docs/T01_T02_VALIDATION.md']='''# T01 ו־T02 — אימות ומסירה של 1.3.2
+
+תאריך: 20 באוקטובר 2026. גרסת Intel המקומית 1.3.2 נבנתה, הותקנה ונפתחה.
+
+## תוצאות
+
+- 80 בדיקות Python עברו, כולל מלאי, סיווג, ביטול, אפס התקנות ומרוץ בין התחלת פעולה לקריאת סטטוס ישנה.
+- עברו בדיקות תחביר JavaScript, תעבורת HTTP ושני תרחישי Electron בעברית ובאנגלית. נבדקו לחיצות כפתור, IPC, תשובה סופית ו־finally; כשל, ביטול, נתונים חלקיים, דילוגים, תשובות מאוחרות, ניתוק וחזרה לתקשורת ובדיקה מקבילה.
+- חבילת השינוי נבדקה על העתק של הקבצים המקוריים: בדיקה ללא כתיבה, החלה חוזרת זהה, שחזור מדויק וסירוב לדרוס עריכה מאוחרת. README הקיים נשמר.
+- תאים של גרסאות מבודדים בכיוון LTR, כך ש־23.1.3_2 מוצג בסדר הנכון גם בעברית.
+- בדיקת הקבלה השתמשה ב־renderer וב־preload מהאפליקציה הארוזה מול השירות המותקן. ״התחל בדיקה״ הסתיים עם 239 התקנות ו־28 מועמדות, לכולן סיווג. החיווי נשאר סופי והטעינה נעלמה, גם אחרי ״רענון סטטוס״ ובשתי השפות.
+- ״עדכן הכול״ נבדק מול backend מהחבילה המותקנת בפרופיל נתונים מבודד: שאר ההתקנות הוחרגו בפרופיל הבדיקה בלבד, LLVM נשאר כמועמד חסום, והוצבה הגנה נוספת האוסרת כל התקנה. התוצאה: 0 ניסיונות התקנה, 0 עדכונים, דילוג אחד עם סיבה, ״הושלם עם אזהרות״ וללא טעינה. זהו מסלול הביצוע האמיתי עם סריקת המחשב, ולא ציור של מצב סופי בלבד.
+- הגדרות המשתמש המקוריות הושוו לגיבוי ונשמרו. לא בוצעו מעבר ספק, הסרת חבילות או עדכון חבילות במסגרת המסירה.
+
+## ראיות
+
+קובצי JSON וצילומי מסך נשמרו בתיקיית השחזור המקומית:
+
+- [תוצאות האימות האוטומטי](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2/verification.json)
+- [בדיקת ״התחל בדיקה״ מהחבילה הארוזה](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2/packaged-check-accepted/ui-acceptance.json)
+- [תשובת הסריקה וכל סיווגי המועמדות](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2/packaged-check-accepted/response.json)
+- [בדיקת אפס התקנות](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2/packaged-zero-install-accepted/ui-acceptance.json)
+- [תשובת אפס התקנות](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2/packaged-zero-install-accepted/response.json)
+- [גיבויים, מניפסט וקובצי המקור הקודמים](/Users/tzoharlary/.local/share/brew-update-manager/recovery/t01-t02-1.3.2)
+
+כל בדיקת קבלה רושמת גרסה ו־SHA-256 של קוד הממשק, השירות ורכיב הראיות שבחבילה. ראיות הסיווג עצמן נשמרות ב־migration-evidence תחת תיקיית נתוני האפליקציה.
+
+## ממצא שנשאר לטיפול
+
+LLVM הפעיל הוא 22.1.5. תיקיית 23.1.3_2 ללא receipt מתועדת כעותק לא מאומת ואינה משמשת כגרסה הפעילה או כתלות בינארית מסופקת. clang הקיים נכשל בטעינת libz3.4.15.dylib; הגרסה הידועה נשמרת במלאי והפעולה התלויה באימות תפקודו נחסמת. תיקון LLVM או מעבר שלו שייכים ל־T06.
+
+סיווג מועמדת אינו בדיקת שימוש מלאה או אישור מעבר. רק פיילוט terminal-notifier הקיים נשאר נתמך לביצוע; מנגנון המעבר הכללי הוא T03.
+'''
+    return out
+
+RELIABILITY_RECOVERY = Path.home()/'.local/share/brew-update-manager/recovery/t01-t02-1.3.2'
+
+def reliability_manifest():
+    path=RELIABILITY_RECOVERY/'manifest.json'
+    return json.loads(path.read_text()) if path.exists() else None
+
+def reliability_source(relative):
+    old=reliability_manifest()
+    if old and relative in old['files']:
+        before=RELIABILITY_RECOVERY/'before'/relative
+        return before.read_text() if old['files'][relative]['before'] is not None else ''
+    return (ROOT/relative).read_text()
+
+def reliability_apply(apply=False):
+    old=reliability_manifest()
+    if old:
+        for relative,record in old['files'].items():
+            path=ROOT/relative
+            if not path.is_file() or digest(path.read_bytes())!=record['after']:
+                raise RuntimeError('Bundle 002 refuses later edits: '+relative)
+        # README is protected even though bundle 002 does not modify it.
+        if digest((ROOT/'README.md').read_bytes())!=RELIABILITY_BASE['README.md']:
+            raise RuntimeError('Protected README changed; incorporate before proceeding')
+    else:
+        for relative,expected in RELIABILITY_BASE.items():
+            path=ROOT/relative
+            if not path.is_file() or digest(path.read_bytes())!=expected:
+                raise RuntimeError('Bundle 002 baseline differs: '+relative)
+    outputs=reliability_outputs(reliability_source)
+    outputs.update(RELIABILITY_TESTS)
+    data={p:text.encode() for p,text in outputs.items()}
+    if old:
+        if set(data)!=set(old['files']) or any(digest(value)!=old['files'][p]['after'] for p,value in data.items()):
+            if not apply: raise RuntimeError('Bundle 002 contains pending script changes; run t01-apply')
+        elif all((ROOT/p).read_bytes()==value for p,value in data.items()):
+            print('Bundle 002 already applied; all hashes verified.');return
+    if not apply:
+        print('Bundle 002 preconditions passed; '+str(len(outputs))+' outputs prepared without mutation.');return
+    RELIABILITY_RECOVERY.mkdir(parents=True,exist_ok=True)
+    journal=old or dict(bundle='002',created_at=time.time(),files={})
+    # Detect collisions before preserving or publishing any file.
+    for relative in data:
+        path=ROOT/relative
+        if not old and relative not in RELIABILITY_BASE and path.exists():
+            raise RuntimeError('Untracked output already exists; preserve it first: '+relative)
+    for relative,value in data.items():
+        path=ROOT/relative;before=path.read_bytes() if path.exists() else None
+        if relative not in journal['files']:
+            journal['files'][relative]={'before':digest(before) if before is not None else None}
+            if before is not None:
+                saved=RELIABILITY_RECOVERY/'before'/relative;saved.parent.mkdir(parents=True,exist_ok=True);saved.write_bytes(before)
+        journal['files'][relative]['after']=digest(value)
+    (RELIABILITY_RECOVERY/'manifest.json').write_text(json.dumps(journal,indent=2))
+    for relative,value in data.items():
+        path=ROOT/relative;path.parent.mkdir(parents=True,exist_ok=True)
+        fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.bundle002-')
+        with os.fdopen(fd,'wb') as stream:stream.write(value)
+        os.chmod(tmp,path.stat().st_mode&0o777 if path.exists() else 0o644)
+        os.replace(tmp,path)
+    print('Applied bundle 002; exact prior working files preserved at '+str(RELIABILITY_RECOVERY))
+
+def reliability_restore():
+    old=reliability_manifest()
+    if not old: raise RuntimeError('Bundle 002 is not applied')
+    for relative,record in old['files'].items():
+        path=ROOT/relative
+        if not path.is_file() or digest(path.read_bytes())!=record['after']:
+            raise RuntimeError('Protected restore refuses later edits: '+relative)
+    for relative,record in old['files'].items():
+        path=ROOT/relative
+        if record['before'] is None:path.unlink()
+        else:shutil.copyfile(RELIABILITY_RECOVERY/'before'/relative,path)
+    (RELIABILITY_RECOVERY/'manifest.json').rename(RELIABILITY_RECOVERY/('restored.'+str(time.time_ns())+'.json'))
+    print('Bundle 002 restored; prior working files retained exactly.')
+
+def reliability_replay():
+    global ROOT,RELIABILITY_RECOVERY
+    actual_root,actual_recovery=ROOT,RELIABILITY_RECOVERY
+    old=reliability_manifest()
+    if not old:raise RuntimeError('Apply bundle 002 before replay')
+    with tempfile.TemporaryDirectory(prefix='mac-manager-bundle002-') as tmp:
+        checkout=Path(tmp)/'checkout';checkout.mkdir()
+        for relative in RELIABILITY_BASE:
+            path=checkout/relative;path.parent.mkdir(parents=True,exist_ok=True)
+            src=actual_recovery/'before'/relative
+            shutil.copyfile(src if src.exists() else actual_root/relative,path)
+        ROOT,RELIABILITY_RECOVERY=checkout,Path(tmp)/'recovery'
+        try:
+            baseline={str(p.relative_to(ROOT)):digest(p.read_bytes()) for p in ROOT.rglob('*') if p.is_file()}
+            reliability_apply(False)
+            assert not RELIABILITY_RECOVERY.exists(),'check wrote recovery metadata'
+            reliability_apply(True);reliability_apply(True)
+            target=ROOT/'renderer/app.js';data=target.read_bytes();target.write_text('later independent edit')
+            try:reliability_restore()
+            except RuntimeError:pass
+            else:raise RuntimeError('restore overwrote later work')
+            target.write_bytes(data);reliability_restore()
+            after={str(p.relative_to(ROOT)):digest(p.read_bytes()) for p in ROOT.rglob('*') if p.is_file()}
+            assert baseline==after,'restore was not byte-for-byte lossless'
+        finally:ROOT,RELIABILITY_RECOVERY=actual_root,actual_recovery
+    print('Bundle 002 check, replay, idempotency and protected restore: PASS')
+
+def reliability_verify():
+    reliability_apply(False)
+    reliability_replay()
+    run(['/usr/local/bin/python3.14','-m','unittest','discover','-s','tests','-p','test_*.py'])
+    for path in ['electron/main.js','electron/preload.js','renderer/app.js','renderer/mac-manager.js','renderer/i18n.js']:
+        run(['node','--check',path])
+    run(['node','tests/service-http.cjs'])
+    run([str(ROOT/'node_modules/.bin/electron'),'tests/progress-ui.cjs'])
+    run([str(ROOT/'node_modules/.bin/electron'),'tests/operation-results-ui.cjs'])
+    run(['git','diff','--check'])
+    log=RECOVERY/'run.log'
+    import re
+    counts=re.findall(r'Ran (\d+) tests',log.read_text() if log.exists() else '')
+    RELIABILITY_RECOVERY.mkdir(parents=True,exist_ok=True)
+    (RELIABILITY_RECOVERY/'verification.json').write_text(json.dumps(dict(version='1.3.2',verified_at=time.time(),
+        python_tests=int(counts[-1]) if counts else None,bundle_replay=True,syntax=True,http=True,
+        bilingual_progress_fixture=True,bilingual_button_fixture=True,diff_check=True,
+        outputs={p:r['after'] for p,r in reliability_manifest()['files'].items()}),indent=2))
+
+def reliability_main(mode):
+    global RECOVERY,verify
+    if mode=='t01-check':reliability_apply(False)
+    elif mode=='t01-apply':reliability_apply(True)
+    elif mode=='t01-verify':reliability_verify()
+    elif mode=='t01-restore':reliability_restore()
+    elif mode=='t01-install':
+        # Reuse the existing protected installer, with bundle 002 verification.
+        preserved=RELIABILITY_RECOVERY/('app-data-before-'+str(time.time_ns()))
+        source=Path.home()/'Library/Application Support/Homebrew Update Manager'
+        for name in ['settings.json','state.json','update-history.json','last-update-run.json','migration-journal.json','notifier-route.json']:
+            path=source/name
+            if path.is_file():preserved.mkdir(parents=True,exist_ok=True);shutil.copy2(path,preserved/name)
+        records=Path.home()/'.local/share/brew-update-manager/installed.json'
+        if records.is_file():preserved.mkdir(parents=True,exist_ok=True);shutil.copy2(records,preserved/'installed-tools.json')
+        RECOVERY=RELIABILITY_RECOVERY
+        verify=reliability_verify
+        install()
+    else:raise RuntimeError('Unknown bundle 002 mode')
+
+RELIABILITY_TESTS = {}
+RELIABILITY_TESTS['tests/test_installation_evidence.py'] = r'''import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+from test_update_policy import service as s
+import installation_evidence as e
+import mac_manager as mm
+
+
+class InstallationEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.cellar=self.root/'Cellar';self.cellar.mkdir()
+        self.data=self.root/'data'
+        self.patches=[]
+        for key,value in [('DATA_DIR',self.data),('STATE_FILE',self.data/'state.json'),('SERVICE_LOG_FILE',self.data/'service.log')]:
+            p=patch.object(s,key,value);p.start();self.patches.append(p)
+        self.addCleanup(lambda:[p.stop() for p in reversed(self.patches)])
+        p=patch.object(s,'brew_bin',return_value='/fixture/brew');p.start();self.patches.append(p)
+        e.reset();s.reset_cancel_state();self.addCleanup(s.reset_cancel_state)
+
+    def keg(self,name,version='1.0',deps=None,receipt=True,active=True,formula='class Tool < Formula\nend\n'):
+        root=self.cellar/name/version;root.mkdir(parents=True,exist_ok=True)
+        if receipt:(root/'INSTALL_RECEIPT.json').write_text(json.dumps({'runtime_dependencies':deps or [],'used_options':[]}))
+        (root/'.brew').mkdir(exist_ok=True);(root/'.brew'/f'{name}.rb').write_text(formula)
+        if active:
+            opt=self.root/'opt'/name;opt.parent.mkdir(exist_ok=True);opt.unlink(missing_ok=True);opt.symlink_to(root)
+        return root
+
+    def row(self,name,versions=('1.0',),linked=None):
+        return dict(name=name,installed=[dict(version=v) for v in versions],linked_keg=linked)
+
+    def command(self,args,**kw):
+        self.assertTrue(kw.get('cancellable'))
+        if args[-1]=='--prefix':return s.CommandResult(0,str(self.root),'')
+        if args[-1]=='--cellar':return s.CommandResult(0,str(self.cellar),'')
+        if 'services' in args:return s.CommandResult(0,'[]','')
+        return s.CommandResult(0,'','')
+
+    def test_opt_receipt_selects_active_not_last_manager_entry(self):
+        self.keg('llvm','22.1.5');self.keg('llvm','23.1.3_2',receipt=False,active=False)
+        audit=e.inspect(s,self.row('llvm',('23.1.3_2','22.1.5')),self.root,self.cellar)
+        self.assertEqual(audit['package_version'],'22.1.5')
+        self.assertEqual(audit['status'],'verified')
+        self.assertIn('inactive_receipt_missing:23.1.3_2',audit['warnings'])
+
+    def test_missing_active_receipt_and_broken_link_are_unverified(self):
+        root=self.keg('tool',receipt=False)
+        audit=e.inspect(s,self.row('tool'),self.root,self.cellar)
+        self.assertEqual(audit['status'],'unverified')
+        (self.root/'opt/tool').unlink();(self.root/'opt/tool').symlink_to(root/'missing')
+        audit=e.inspect(s,self.row('tool'),self.root,self.cellar)
+        self.assertIn('active_link_missing_or_outside_installation',audit['issues'])
+
+    def test_revision_and_llvm_probe_and_foreign_path_are_separate(self):
+        root=self.keg('llvm','22.1.5_2');(root/'bin').mkdir();(root/'bin/clang').write_text('fixture')
+        with patch.object(e.shutil,'which',return_value='/usr/bin/clang'),patch.object(e,'command',return_value=s.CommandResult(0,'clang version 22.1.5','')):
+            audit=e.inspect(s,self.row('llvm',('22.1.5_2',)),self.root,self.cellar)
+        self.assertEqual(audit['upstream_version'],'22.1.5');self.assertEqual(audit['revision'],2)
+        self.assertEqual(audit['status'],'verified');self.assertEqual(audit['command_resolution']['path'],'/usr/bin/clang')
+        with patch.object(e,'command',return_value=s.CommandResult(0,'clang version 21.0.0','')):
+            audit=e.inspect(s,self.row('llvm',('22.1.5_2',)),self.root,self.cellar)
+        self.assertEqual(audit['status'],'conflict')
+
+    def test_failed_version_probe_retains_installation_but_blocks_dependent_action(self):
+        root=self.keg('llvm','22.1.5');(root/'bin').mkdir();(root/'bin/clang').write_text('fixture')
+        with patch.object(e,'command',return_value=s.CommandResult(-6,'','dyld: library missing')):
+            audit=e.inspect(s,self.row('llvm',('22.1.5',)),self.root,self.cellar)
+        self.assertEqual(audit['package_version'],'22.1.5');self.assertEqual(audit['functional_status'],'failed')
+        fields=e.inventory_fields(s,self.row('llvm',('22.1.5',)),dict(audits={'llvm':audit}))
+        self.assertTrue(fields['inventory_stale']);self.assertEqual(fields['installed_version'],'22.1.5')
+
+    def test_incomplete_keg_is_not_a_satisfied_binary_dependency(self):
+        self.keg('llvm','22.1.5');self.keg('llvm','23.1.3_2',receipt=False,active=False)
+        with patch.object(s,'run_cmd',side_effect=self.command):e.collect(s,dict(formulae=[self.row('llvm',('22.1.5','23.1.3_2'))]))
+        result=e.verified_dependencies(s,{})
+        self.assertEqual(result['llvm']['versions'],['22.1.5'])
+
+    def test_receipts_reconcile_omitted_install_and_retained_consumer(self):
+        self.keg('tool');self.keg('consumer','1',deps=[dict(full_name='tool',version='1.0')],active=False)
+        self.keg('consumer','2',active=True)
+        with patch.object(s,'run_cmd',side_effect=self.command):ctx=e.collect(s,dict(formulae=[self.row('tool')]))
+        self.assertEqual(ctx['omitted'][0]['name'],'consumer')
+        self.assertEqual(ctx['reverse']['tool'][0]['installed_version'],'1')
+
+    def evidence(self,**kw):
+        return dict(inventory={'status':'verified'},gaps=[],consumers=[],files=dict(commands=['tool'],gaps=[],**kw))
+
+    def test_categories_and_role_precedence_and_no_private_script_requirement(self):
+        self.assertEqual(e.classify(self.evidence())['category'],'standalone_candidate')
+        self.assertEqual(e.classify(self.evidence(libraries=['lib/tool.dylib']))['category'],'shared_environment')
+        self.assertEqual(e.classify(self.evidence(development=['bin/llvm-config']))['category'],'shared_environment')
+        result=e.classify(self.evidence(service_definition=True,libraries=['lib/tool.dylib']))
+        self.assertEqual(result['category'],'service');self.assertEqual(result['roles'],['service','shared_environment'])
+        result=e.classify({**self.evidence(),'gaps':['otool_failed']})
+        self.assertEqual(result['category'],'insufficient_information');self.assertFalse(result['automation_candidate'])
+        result=e.classify({**self.evidence(service_definition=True),'gaps':['receipt_gap']})
+        self.assertEqual(result['category'],'service');self.assertIn('receipt_gap',result['gaps'])
+
+    def test_stopped_service_remains_service(self):
+        result=e.classify({**self.evidence(),'service':dict(name='tool',status='none')})
+        self.assertEqual(result['category'],'service')
+
+    def test_compiler_cli_is_a_development_environment(self):
+        root=self.keg('go');(root/'bin').mkdir();p=root/'bin/go';p.write_text('fixture');p.chmod(0o755)
+        files=e.file_evidence(s,root)
+        result=e.classify(dict(inventory={'status':'verified'},gaps=[],files=files))
+        self.assertEqual(result['category'],'shared_environment')
+
+    def test_external_command_target_prevents_standalone_classification(self):
+        root=self.keg('tool');(root/'bin').mkdir();(root/'bin/tool').symlink_to('/usr/bin/true')
+        files=e.file_evidence(s,root)
+        self.assertTrue(any(x.startswith('external_command_target:') for x in files['gaps']))
+        self.assertEqual(e.classify(dict(inventory={'status':'verified'},files=files,gaps=[]))['category'],'insufficient_information')
+
+    def test_file_inspection_is_installation_scoped_and_cancellable(self):
+        root=self.keg('tool',formula='class Tool < Formula\n service do\n run opt_bin/"tool"\n end\nend')
+        (root/'bin').mkdir();p=root/'bin/tool';p.write_text('#!/bin/sh\n');p.chmod(0o755)
+        external=self.root/'private';external.mkdir();(external/'secret.h').write_text('not inspected')
+        (root/'include').symlink_to(external)
+        files=e.file_evidence(s,root)
+        self.assertTrue(files['service_definition']);self.assertEqual(files['headers'],[])
+        s.mark_cancel_requested()
+        with self.assertRaises(s.OperationCancelledError):e.file_evidence(s,root)
+
+    def test_annotation_preserves_execution_policy_and_exclusion(self):
+        root=self.keg('tool');(root/'bin').mkdir();p=root/'bin/tool';p.write_text('fixture');p.chmod(0o755)
+        with patch.object(s,'run_cmd',side_effect=self.command):ctx=e.collect(s,dict(formulae=[self.row('tool')]))
+        pkg=dict(name='tool',provider='homebrew',kind='formula',installation_id='homebrew:formula:tool',inventory_verification=ctx['audits']['tool'])
+        offers=[dict(name='tool',executable=False,status='archive_unknown'),dict(name='ngrok',executable=False)]
+        with patch.object(s,'run_cmd',side_effect=self.command):e.annotate(s,offers,[pkg],True)
+        c=offers[0]['classification'];self.assertEqual(c['category'],'standalone_candidate')
+        self.assertFalse(offers[0]['executable']);self.assertNotIn('classification',offers[1])
+        self.assertTrue(Path(c['evidence_refs'][0]).is_file())
+        s.atomic_write_json(s.STATE_FILE,dict(migrations=offers))
+        pkg['inventory_verification']['checked_at']='new timestamp'
+        result=e.annotate(s,[dict(name='tool')],[pkg],False)
+        self.assertEqual(result[0]['classification']['category'],'standalone_candidate')
+        pkg['inventory_verification']['package_version']='changed'
+        self.assertEqual(e.annotate(s,[dict(name='tool')],[pkg],False)[0]['classification']['category'],'unclassified')
+
+    def test_one_candidate_failure_does_not_erase_other_classification(self):
+        offers=[dict(name='first',executable=False),dict(name='second',executable=False)]
+        audits={n:dict(status='verified',active_keg=str(self.keg(n)),package_version='1.0') for n in ('first','second')}
+        e.CONTEXT.inventory=dict(rows={},reverse={},gaps=[],prefix=str(self.root))
+        packages=[dict(name=n,provider='homebrew',kind='formula',inventory_verification=a) for n,a in audits.items()]
+        with patch.object(e,'file_evidence',side_effect=[OSError('unreadable'),dict(commands=['second'],gaps=[])]),patch.object(s,'run_cmd',side_effect=self.command):
+            e.annotate(s,offers,packages,True)
+        self.assertEqual(offers[0]['classification']['category'],'insufficient_information')
+        self.assertEqual(offers[1]['classification']['category'],'standalone_candidate')
+
+    def test_real_update_engine_zero_installs_keeps_deferred_reasons(self):
+        from update_engine import Engine
+        packages=[dict(name=n,kind='formula',provider='homebrew',outdated=True,inventory_stale=True,
+                       installed_version='1',latest_version='2') for n in ['first','second']]
+        state=dict(packages=packages)
+        with patch.object(s,'RUN_JOURNAL_FILE',self.data/'run.json'),patch.object(s,'UPDATE_PLAN_FILE',self.data/'plan.json'), \
+             patch.object(s,'compute_snapshot',return_value=state),patch.object(s,'safe_refresh_snapshot',return_value=(state,None)), \
+             patch.object(s,'append_update_history_entries'),patch.object(s,'maybe_schedule_deferred_check'), \
+             patch.object(Engine,'catalog',return_value={}),patch.object(Engine,'installed',return_value={}), \
+             patch.object(s,'run_upgrade',side_effect=AssertionError('Unexpected installation')) as upgrade:
+            result=s.run_with_progress('update_all',lambda:Engine(s).run(track_progress=True))
+        upgrade.assert_not_called()
+        self.assertEqual(result['updated_count'],0);self.assertEqual(result['deferred_count'],2)
+        self.assertFalse(result['progress']['running']);self.assertEqual(result['progress']['phase'],'completed')
+        self.assertTrue(all(x['reason']=='inventory_unavailable' for x in result['progress']['deferred_packages']))
+
+
+class FinalProgressTests(unittest.TestCase):
+    def setUp(self):
+        s.reset_cancel_state();s.reset_check_progress_for_run()
+        self.addCleanup(s.reset_cancel_state)
+
+    def test_final_copy_captured_under_lock_and_not_mutated_by_next_run(self):
+        def operation():
+            self.assertTrue(s.OP_LOCK.locked())
+            s.set_check_progress(running=False,phase='completed',completed_packages=[dict(name='first',ok=True)])
+            return dict(partial=True,packages=[])
+        with patch.object(s,'maybe_schedule_deferred_check'):
+            payload=s.run_with_progress('check_now',operation,snapshot=True)
+        s.reset_check_progress_for_run()
+        self.assertEqual(payload['progress']['phase'],'completed');self.assertTrue(payload['progress']['partial'])
+        self.assertEqual(payload['progress']['completed_packages'][0]['name'],'first')
+        self.assertFalse(s.OP_LOCK.locked())
+
+    def test_stale_caller_snapshot_cannot_finish_a_new_operation(self):
+        with patch.dict(s.CURRENT_OPERATION,dict(running=True,name='check_now',started_at=s.now_iso())):
+            s.set_check_progress(running=True,phase='preflight',current_package='new-operation')
+            result=s.normalize_stale_progress_state({'running':False})
+            self.assertTrue(result['running']);self.assertEqual(result['current_package'],'new-operation')
+            payload=s.runtime_status_payload()
+            self.assertTrue(payload['operation']['running']);self.assertTrue(payload['progress']['running'])
+
+    def test_orphaned_progress_is_an_error_without_invented_user_cancellation(self):
+        with patch.dict(s.CURRENT_OPERATION,dict(running=False,name=None)),patch.object(s,'append_service_log'):
+            s.set_check_progress(running=True,phase='preflight',done=0,total=3,current_package='stale')
+            result=s.normalize_stale_progress_state()
+        self.assertEqual(result['phase'],'error');self.assertFalse(result['canceled']);self.assertIsNone(result['current_package'])
+
+    def test_unexpected_update_failure_finishes_progress_before_unlock(self):
+        def fail():raise OSError('fixture failure')
+        with patch.object(s,'maybe_schedule_deferred_check'):
+            with self.assertRaises(OSError) as caught:s.run_with_progress('update_all',fail)
+        self.assertEqual(caught.exception.operation_progress['phase'],'error')
+        self.assertFalse(s.read_check_progress()['running']);self.assertEqual(s.read_check_progress()['phase'],'error')
+        self.assertFalse(s.OP_LOCK.locked())
+
+    def test_cancellation_captures_terminal_state(self):
+        def cancel():raise s.OperationCancelledError('fixture cancel')
+        with patch.object(s,'maybe_schedule_deferred_check'):
+            result=s.run_with_progress('check_now',cancel,snapshot=True)
+        self.assertTrue(result['canceled']);self.assertEqual(result['progress']['phase'],'canceled')
+'''
+
+RELIABILITY_TESTS['tests/operation-results-ui.cjs'] = r'''// Button/IPC/finally regression fixture. Never invokes a package manager.
+const { app, BrowserWindow, ipcMain } = require('electron');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const root = process.env.BREW_PROGRESS_APP_ROOT || path.resolve(__dirname,'..');
+app.setPath('userData',fs.mkdtempSync(path.join(os.tmpdir(),'mac-results-ui-')));
+const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
+let ready; const initialized = new Promise(resolve=>{ready=resolve;});
+let model={progress:{running:false,phase:'idle'}, response:null, error:null, offline:false, calls:0};
+const state={updated_at:new Date().toISOString(),counts:{outdated_total:1},packages:[
+  {name:'llvm',kind:'formula',provider:'homebrew',outdated:true,installed_version:'22.1.5',latest_version:'23.1.3_2',update_block_reason:'source_required'}]};
+ipcMain.handle('state:get',()=>state);
+ipcMain.handle('settings:get',()=>({settings:{brew_path:'/fixture/brew',binary_only:true},scheduler:{enabled:false}}));
+ipcMain.handle('updates:history:get',()=>({items:[]}));
+ipcMain.handle('app-update:check',()=>{ready();return {ok:true,updateAvailable:false};});
+ipcMain.handle('progress:get',()=>{if(model.offline)throw Error('fixture offline');return {progress:model.progress,parallel_check:model.parallel||{running:false}};});
+for(const channel of ['check:run','update:all','update:one','update:selected'])ipcMain.handle(channel,async()=>{
+  model.calls++;
+  await delay(30);
+  model.progress=model.response?.progress||model.progress;
+  if(model.error)throw Error(model.error);
+  return model.response;
+});
+const watchdog=setTimeout(()=>{console.error('Operation fixture timed out');app.exit(1);},60000);
+app.whenReady().then(async()=>{
+  const win=new BrowserWindow({show:false,width:1100,height:1100,webPreferences:{preload:path.join(root,'electron/preload.js'),contextIsolation:true,backgroundThrottling:false}});
+  const js=code=>win.webContents.executeJavaScript(code);
+  try {
+    await win.loadFile(path.join(root,'renderer/index.html'));await initialized;
+    await js(`window.confirm=()=>true;window.alert=()=>{};void 0;`);
+    for(const lang of ['he','en']) {
+      await js(`(async()=>{i18n.setLang(${JSON.stringify(lang)});refreshStaticText();await loadState({showLoader:false});})()`);
+      const versions=await js(`(()=>{const row=Array.from(tbodyEl.rows).find(r=>r.textContent.includes('llvm'));return Array.from(row.querySelectorAll('bdi')).map(e=>({dir:e.dir,value:e.textContent}));})()`);
+      assert.deepEqual(versions,[{dir:'ltr',value:'22.1.5'},{dir:'ltr',value:'23.1.3_2'}],lang+': isolated package revisions');
+      for(const scenario of ['check','partial','cancel','error','zero','deferred','mixed']) {
+        const phase=scenario==='cancel'?'canceled':scenario==='error'?'error':'completed';
+        const update=['zero','deferred','mixed'].includes(scenario);
+        const stamp=new Date().toISOString();
+        const completed=scenario==='mixed'?[{name:'done',ok:true},{name:'bad',ok:false},{name:'same',ok:true,skipped:true,reason:'not_outdated'}]:[];
+        const progress={running:false,operation_name:update?'update_all':'check',phase,started_at:stamp,
+          current_package:null,partial:scenario==='partial',error:scenario==='error'?'fixture failure':null,
+          completed_packages:completed,failed_packages:completed.filter(x=>!x.ok),remaining_packages:[],
+          deferred_packages:scenario==='deferred'?[{name:'llvm',reason:'source_required'}]:[],planned_packages:[],done:0,total:0};
+        model={progress:{running:false,phase:'idle'},response:{ok:true,snapshot:state,progress,canceled:phase==='canceled',updated_count:scenario==='mixed'?1:0,failed_count:scenario==='mixed'?1:0,results:[]},calls:0};
+        await js(`retainedOperationProgress=null;operationStartedFloor=0;operationStatusUnverified=false;lastKnownOperationRunning=false;setLoading(false);`);
+        await js(`document.getElementById('${update?'updateAllBtn':'checkNowBtn'}').click();`);
+        for(let attempt=0;attempt<100 && !model.calls;attempt++)await delay(10);
+        await js(`(async()=>{const until=Date.now()+4000;while(busyLoading&&Date.now()<until)await new Promise(r=>setTimeout(r,10));if(busyLoading)throw Error('busy did not finish');})()`);
+        assert.equal(model.calls,1,lang+': button IPC '+scenario);
+        const actual=await js(`({status:operationStatusBadgeEl.dataset.status,loader:loaderEl.classList.contains('visible'),summary:document.getElementById('operationResultSummary').textContent,hidden:document.getElementById('operationResultSummary').hidden,disabled:checkNowBtn.disabled})`);
+        const expected=scenario==='cancel'?'canceled':scenario==='error'?'failed':['partial','deferred'].includes(scenario)?'warning':'completed';
+        assert.equal(actual.status,expected,lang+': '+scenario);assert.equal(actual.loader,false,lang+': loader '+scenario);
+        assert.equal(actual.hidden,false);assert.equal(actual.disabled,false);
+        if(scenario==='deferred')assert.ok(actual.summary.includes('llvm'));
+        if(scenario==='mixed')assert.match(actual.summary,/1/);
+        await js(`document.getElementById('refreshStatusBtn').click();`);await delay(70);
+        assert.equal(await js(`operationStatusBadgeEl.dataset.status`),expected,lang+': refresh retained '+scenario);
+        await js(`refreshStaticText();`);
+        assert.equal(await js(`operationStatusBadgeEl.dataset.status`),expected,lang+': localization retained '+scenario);
+      }
+      // Polling can arrive late from a prior operation, or regress the same finished run.
+      const stale=await js(`(()=>{const stamp=new Date().toISOString();operationStartedFloor=0;
+        retainedOperationProgress=null;renderCheckProgress({running:false,phase:'completed',operation_name:'check',started_at:stamp});
+        renderCheckProgress({running:true,phase:'preparing',operation_name:'check',started_at:stamp});
+        renderCheckProgress({running:true,phase:'preparing',operation_name:'check',started_at:'2000-01-01T00:00:00Z'});
+        return operationStatusBadgeEl.dataset.status;})()`);
+      assert.equal(stale,'completed',lang+': late progress ignored');
+      // A rejected request plus unreachable status remains unverified, then recovers.
+      model={progress:{running:false,phase:'idle'},response:null,error:'fixture network failure',offline:false,calls:0};
+      await js(`retainedOperationProgress=null;operationStartedFloor=0;operationStatusUnverified=false;lastKnownOperationRunning=false;setLoading(false);`);
+      // Initial live-status read succeeds; switch off service when action is received.
+      ipcMain.removeHandler('check:run');ipcMain.handle('check:run',async()=>{model.calls++;model.offline=true;throw Error('fixture network failure');});
+      await js(`checkNowBtn.click();`);await delay(100);
+      assert.equal(await js(`operationStatusBadgeEl.dataset.status`),'unverified',lang+': offline');
+      model.offline=false;model.progress={running:false,phase:'completed',operation_name:'check',started_at:new Date().toISOString()};
+      await js(`pollCheckProgress();`);await delay(50);
+      assert.equal(await js(`operationStatusBadgeEl.dataset.status`),'completed',lang+': reconnect');
+      ipcMain.removeHandler('check:run');ipcMain.handle('check:run',async()=>{model.calls++;await delay(30);model.progress=model.response.progress;return model.response;});
+      // A background check does not overwrite the foreground update's progress.
+      const parallel=await js(`(async()=>{retainedOperationProgress=null;operationStartedFloor=0;
+        renderCheckProgress({running:true,phase:'updating_packages',operation_name:'update_all',started_at:new Date().toISOString()});
+        await syncParallelCheckState({running:true,started_at:new Date().toISOString()});
+        return {name:lastKnownOperationName,status:operationStatusBadgeEl.dataset.status};})()`);
+      assert.equal(parallel.name,'update_all');assert.equal(parallel.status,'running');
+      const classifications=await js(`(()=>{snapshot={counts:{},packages:[],migrations:[
+        {name:'tool',status:'binary_available',executable:false,classification:{category:'standalone_candidate',reasons:['complete_local_evidence_without_shared_roles'],gaps:[],consumers:[]}},
+        {name:'service',status:'archive_unknown',executable:false,classification:{category:'service',gaps:['fixture_gap'],consumers:[{name:'consumer'}]}},
+        {name:'old',status:'archive_missing',executable:false}]};renderMacManager();const panel=document.getElementById('macManagerPanel');
+        return {count:panel.querySelectorAll('.migration-classification').length,text:panel.textContent,buttons:panel.querySelectorAll('button').length};})()`);
+      assert.equal(classifications.count,3);assert.equal(classifications.buttons,0);assert.ok(classifications.text.includes('consumer'));assert.ok(classifications.text.includes('fixture_gap'));
+      await js(`stopProgressPolling();retainedOperationProgress=null;lastKnownOperationRunning=false;lastKnownParallelCheckRunning=false;setLoading(false);`);
+      console.log(lang+': button completion, zero/deferred/mixed, refresh, cancel/error, stale, offline recovery, parallel and classification: PASS');
+    }
+    clearTimeout(watchdog);app.exit(0);
+  } catch(error) {console.error(error);app.exit(1);}
+});
+'''
+
+RELIABILITY_TESTS['tests/live-operation-ui.cjs'] = r'''// Explicit opt-in acceptance against an installed backend. No migration calls.
+const {app,BrowserWindow,ipcMain}=require('electron');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');const path=require('node:path');const os=require('node:os');const http=require('node:http');
+const root=process.env.BREW_PROGRESS_APP_ROOT;
+const base=process.env.LIVE_SERVICE_URL;
+const output=process.env.LIVE_ARTIFACT_DIR;
+if(!root||!base||!output)throw Error('Set BREW_PROGRESS_APP_ROOT, LIVE_SERVICE_URL and LIVE_ARTIFACT_DIR explicitly');
+if(!/^http:\/\/127\.0\.0\.1:\d+$/.test(base))throw Error('Local backend required');
+app.setPath('userData',fs.mkdtempSync(path.join(os.tmpdir(),'mac-live-ui-')));
+fs.mkdirSync(output,{recursive:true});
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function api(route,body){return new Promise((resolve,reject)=>{
+ const data=body===undefined?null:JSON.stringify(body);
+ const req=http.request(base+route,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{},timeout:0},res=>{
+  let text='';res.setEncoding('utf8');res.on('data',c=>text+=c);res.on('end',()=>{try{const result=JSON.parse(text);if(res.statusCode>=400)reject(Error(result.detail||result.error));else resolve(result);}catch(e){reject(e);}});
+ });req.on('error',reject);if(data)req.write(data);req.end();
+});}
+let ready;const initialized=new Promise(resolve=>{ready=resolve;});
+let requests=0,finished=0,lastResponse=null;
+for(const [channel,route] of [['state:get','/api/state'],['settings:get','/api/settings'],['updates:history:get','/api/update-history'],['progress:get','/api/progress']])ipcMain.handle(channel,()=>api(route));
+ipcMain.handle('app-update:check',()=>{ready();return {ok:true,updateAvailable:false};});
+ipcMain.handle('check:run',async()=>{requests++;try{lastResponse=await api('/api/check',{});return lastResponse;}finally{finished++;}});
+ipcMain.handle('update:all',async()=>{
+ if(process.env.LIVE_ZERO_INSTALL!=='1')throw Error('Real update execution was not opted in');
+ const plan=await api('/api/update-plan',{});
+ if(plan.items.some(p=>p.ready))throw Error('Acceptance refuses updates: at least one installation would be attempted');
+ requests++;try{lastResponse=await api('/api/update-all',{});assert.equal(lastResponse.updated_count,0);assert.equal(lastResponse.attempted_count,0);return lastResponse;}finally{finished++;}
+});
+const watchdog=setTimeout(()=>{console.error('Live acceptance timed out');app.exit(1);},15*60*1000);
+app.whenReady().then(async()=>{
+ const win=new BrowserWindow({show:false,width:1200,height:1100,webPreferences:{preload:path.join(root,'electron/preload.js'),contextIsolation:true,backgroundThrottling:false}});
+ const js=code=>win.webContents.executeJavaScript(code);
+ try{
+  const health=await api('/health');assert.equal(health.operation.running,false);
+  await win.loadFile(path.join(root,'renderer/index.html'));await initialized;
+  await js(`window.confirm=()=>true;window.alert=()=>{};void 0;`);
+  const action=process.env.LIVE_ZERO_INSTALL==='1'?'updateAllBtn':'checkNowBtn';
+  console.log('Invoking packaged renderer button:',action,'against',base);
+  await js(`document.getElementById('${action}').click();`);
+  for(let attempt=0;attempt<1700&&!finished;attempt++){await delay(500);if(attempt%20===0){const p=await api('/api/progress');console.log('Live progress:',p.progress.phase,p.progress.current_package||'—');}}
+  assert.equal(requests,1);assert.equal(finished,1);assert.ok(lastResponse?.progress,'Missing final captured progress');
+  await js(`(async()=>{const until=Date.now()+10000;while(busyLoading&&Date.now()<until)await new Promise(r=>setTimeout(r,20));if(busyLoading)throw Error('Busy state did not finish');})()`);
+  const results=[];
+  for(const lang of ['he','en']){
+   await js(`i18n.setLang('${lang}');refreshStaticText();`);
+   const before=await js(`({status:operationStatusBadgeEl.dataset.status,loader:loaderEl.classList.contains('visible'),summary:document.getElementById('operationResultSummary').textContent,offers:snapshot.migrations?.length,classified:snapshot.migrations?.filter(o=>!!o.classification).length})`);
+   assert.equal(before.loader,false);assert.ok(['completed','warning'].includes(before.status));
+   if(action==='checkNowBtn')assert.equal(before.offers,before.classified);
+   await js(`refreshStatusBtn.click();`);await delay(1000);
+   assert.equal(await js(`operationStatusBadgeEl.dataset.status`),before.status);
+   await js(`(()=>{document.getElementById('operationResultSummary').scrollIntoView({block:'start'});})()`);
+   win.showInactive();
+   await js(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+   await delay(250);fs.writeFileSync(path.join(output,`result-${lang}.png`),(await win.webContents.capturePage()).toPNG());
+   results.push({lang,...before});
+  }
+  fs.writeFileSync(path.join(output,'response.json'),JSON.stringify(lastResponse,null,2));
+  const hash=file=>require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const unpacked=root.endsWith('app.asar')?root+'.unpacked':root;
+  const code={version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,
+    renderer:hash(path.join(root,'renderer/app.js')),backend:hash(path.join(unpacked,'backend/brew-updates-service.py')),
+    evidence:hash(path.join(unpacked,'backend/installation_evidence.py'))};
+  fs.writeFileSync(path.join(output,'ui-acceptance.json'),JSON.stringify({root,base,action,health,results,code},null,2));
+  console.log('Packaged renderer + real backend acceptance: PASS',JSON.stringify(results));
+  clearTimeout(watchdog);app.exit(0);
+ }catch(e){console.error(e);app.exit(1);}
+});
+'''
+
 if __name__=='__main__':
-    try: main()
+    try:
+        if len(sys.argv)==2 and sys.argv[1].startswith('t01-'):reliability_main(sys.argv[1])
+        else:main()
     except Exception as error:
         print('STOP: '+str(error),file=sys.stderr);sys.exit(1)
