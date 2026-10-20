@@ -112,3 +112,8 @@ files. Adapt the next implementation/verification bundle to the current baseline
 ## Branch 1.3.4 — implementation in progress
 
 See [unified implementation status](UNIFIED_IMPLEMENTATION_STATUS.md). The installed 1.3.3 application is unchanged; source and fixtures on the feature branch have not passed user acceptance.
+
+
+## Current 1.3.4 development branch (2026-10-20)
+
+Historical sections above refer to 1.3.3. The [current implementation report](UNIFIED_IMPLEMENTATION_STATUS.md) takes precedence: 1.3.4 already has guarded provider decisions, managed Pixi updates, limited MacPorts migrations, and a `--full` runner **written but not accepted**. Cached-plan expiry is fail-closed. [Focused CI #39449649595](https://github.com/TzoharLary/brew-update-manager/actions/runs/39449649595) passed 10 Python tests, JS helper, bundle no-write check, syntax and packaging smoke only. Full provider discovery, removal of legacy bypass paths, failure suites and native Mac acceptance remain open. No release or local install.
