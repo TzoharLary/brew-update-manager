@@ -193,7 +193,39 @@ def upgrade(s, item):
                     stdout='', stderr=fresh.get('detail', fresh.get('reason', 'Blocked')))
     result = privileged(s, 'upgrade', [item['name']], activity)
     after = next((p for p in inventory(s) if p['name'] == item['name']), None)
-    ok = result.code == 0 and after is not None and not after['outdated']
+    graph = fresh['preflight'].get('nodes', [])
+    root = next((n for n in graph if n.get('name') == item['name']), None)
+    expected = None if root is None else str(root['version']) + (
+        '_' + str(root['revision']) if root.get('revision') not in ('', '0', None) else '')
+    exact = (after is not None and root is not None
+             and after.get('installed_version') == expected
+             and after.get('installed_variants', '') == root.get('variants', ''))
+    ok = result.code == 0 and exact
+    smoke_error = None
+    if ok:
+        import provider_ownership
+        import migration_profiles
+        registry = provider_ownership.load_routes(s.TOOLS_ROOT)
+        if registry.get('error'):
+            ok = False
+            smoke_error = 'Ownership registry could not be verified'
+        else:
+            owner = next((r for r in registry.get('routes', [])
+                          if r.get('target_installation_id') == f"macports:{item['name']}"
+                          and r.get('status') == 'committed'), None)
+            if owner:
+                profile = migration_profiles.get(owner.get('profile_id'))
+                if not profile or owner.get('profile_version') != profile.version:
+                    ok = False
+                    smoke_error = 'Managed profile missing or changed'
+                else:
+                    try:
+                        migration_profiles.smoke(s, profile, root['version'])
+                    except Exception as error:
+                        ok = False
+                        smoke_error = 'Updated package failed usage verification: ' + str(error)
     return dict(name=item['name'], kind='port', provider='macports', ok=ok,
+                installed_version=after.get('installed_version') if after else None,
                 code=result.code if result.code else (0 if ok else 1), stdout=result.stdout,
-                stderr=result.stderr if ok or result.code else 'Installed version verification failed')
+                stderr=smoke_error or (result.stderr if result.code else
+                       '' if ok else 'Exact binary version or variants verification failed'))
