@@ -15,6 +15,7 @@ import update_routes as routes
 import catalog_refresh
 import automatic_alternatives
 import installation_evidence
+import unified_updates
 
 def mapping():
     return json.loads((Path(__file__).with_name('macports-map.json')).read_text())
@@ -104,7 +105,11 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
             'checked_at': previous.get('providers', {}).get('macports', {}).get('checked_at')}
     for pkg in packages:
         provider = pkg.get('provider', 'homebrew')
-        pkg.update(provider=provider, provider_name=pkg['name'], installation_id=f"{provider}:{pkg['kind']}:{pkg['name']}")
+        pkg.update(provider=provider, provider_name=pkg['name'], installation_id=(
+            f"homebrew:{pkg['kind']}:{pkg['name']}" if provider=='homebrew' else
+            f"macports:{pkg['name']}" if provider=='macports' else
+            f"pixi:{pkg['name']}" if provider=='pixi' else
+            f"{provider}:{pkg['kind']}:{pkg['name']}"))
         if provider == 'macports':
             pkg['excluded'] = pkg['name'] == 'ngrok' or s.is_excluded(pkg['name'], 'port')
             if pkg['excluded']: pkg['outdated'] = False
@@ -123,7 +128,7 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
         engine = Engine(s)
         catalog, installed = engine.catalog(), engine.installed()
         for p in packages:
-            if p['provider'] == 'homebrew' and p['kind'] == 'formula' and p.get('outdated') and not p.get('excluded'):
+            if p['provider'] == 'homebrew' and p['kind'] == 'formula' and p['name'] in links and not p.get('excluded'):
                 blockers = routes.bottle_blockers(p['name'], catalog, installed, s.load_settings()['excluded_packages'])
                 if blockers:
                     if s.load_settings()['binary_only']:
@@ -160,7 +165,25 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
                 offer.update(status='checking_pending' if offer['ports'] else 'mapping_unverified')
             pkg.update(alternative_status=offer['status'], alternative_detail=offer.get('detail',''),
                        alternative_target=offer.get('target'), alternative_below_homebrew=offer.get('below_homebrew_target', False))
-    offers = installation_evidence.annotate(s, offers, packages, refresh, report=track_progress)
+    # T02 classifies mapped Homebrew CLI tools even when Brew has a bottle.
+    # Supplemental records are not advertised as MacPorts migration offers.
+    mapped = set(links) | set(routes.PIXI_TOOLS)
+    existing = {offer['name'] for offer in offers}
+    supplemental = [dict(name=p['name'], status='classification_only',
+                         ports=[], executable=False)
+                    for p in packages if p.get('provider') == 'homebrew'
+                    and p.get('kind') == 'formula' and p.get('name') in mapped
+                    and p.get('name') not in existing
+                    and not p.get('excluded') and not p.get('inventory_stale')]
+    augmented = installation_evidence.annotate(
+        s, offers + supplemental, packages, refresh, report=track_progress)
+    classifications = {offer['name']: offer['classification'] for offer in augmented
+                       if offer.get('classification')}
+    for package in packages:
+        if package.get('provider') == 'homebrew' and package.get('kind') == 'formula':
+            if package.get('name') in classifications:
+                package['classification'] = classifications[package['name']]
+    offers = augmented[:len(offers)]
     journal = s.read_json(s.DATA_DIR / 'migration-journal.json')
     state = dict(app=s.APP_NAME, updated_at=s.now_iso(), packages=packages,
                  counts=s.summarize_counts(packages), errors=errors, providers=status,
@@ -168,6 +191,16 @@ def _combined(s, brew_scan, refresh, track_progress=False, enrich_details=True):
                  migration_journal=journal)
     if track_progress:
         s.raise_if_cancel_requested()
+    if refresh:
+        try:
+            unified_updates.generate_plan(s, state)
+        except s.OperationCancelledError:
+            raise
+        except Exception as error:
+            errors.append('Unified plan: ' + str(error))
+            state['partial'] = True
+    else:
+        unified_updates.attach_cached(s, state)
     s.atomic_write_json(s.STATE_FILE, state)
     if track_progress:
         failed = not any(provider['ok'] for provider in status.values())

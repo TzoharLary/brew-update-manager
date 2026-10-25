@@ -28,6 +28,14 @@ def checked(s, args, **kwargs):
         raise RuntimeError(result.stderr or result.stdout or f'Command failed: {args[0]}')
     return result.stdout
 
+def version_parts(value):
+    """Separate MacPorts package revision from upstream for provider comparison."""
+    match = re.fullmatch(r"(.+?)_(\d+)", str(value))
+    if not match:
+        return str(value), 0
+    return match.group(1), int(match.group(2))
+
+
 def inventory(s):
     if not Path(PORT).is_file():
         raise RuntimeError('MacPorts is not installed at /opt/local/bin/port')
@@ -41,9 +49,13 @@ def inventory(s):
     packages = []
     for name, version, variants in re.findall(r'^\s*(\S+)\s+@([^\s+]+)((?:\+[^\s]+)?)\s+\(active\)', raw, re.M):
         valid(name)
+        upstream, revision = version_parts(version)
+        latest_upstream, latest_revision = version_parts(old.get(name, version))
         packages.append(dict(name=name, kind='port', provider='macports', provider_name=name,
             installation_id=f'macports:{name}', display_name=name, description='MacPorts',
             description_he='', installed_version=version, latest_version=old.get(name, version),
+            installed_upstream_version=upstream, installed_revision=revision,
+            latest_upstream_version=latest_upstream, latest_revision=latest_revision,
             installed_variants=variants, outdated=name in old, excluded=False,
             route_reason='installed_owner', homepage='', current_release_date=None,
             latest_release_date=None, days_since_outdated=None))
@@ -193,7 +205,39 @@ def upgrade(s, item):
                     stdout='', stderr=fresh.get('detail', fresh.get('reason', 'Blocked')))
     result = privileged(s, 'upgrade', [item['name']], activity)
     after = next((p for p in inventory(s) if p['name'] == item['name']), None)
-    ok = result.code == 0 and after is not None and not after['outdated']
+    graph = fresh['preflight'].get('nodes', [])
+    root = next((n for n in graph if n.get('name') == item['name']), None)
+    expected = None if root is None else str(root['version']) + (
+        '_' + str(root['revision']) if root.get('revision') not in ('', '0', None) else '')
+    exact = (after is not None and root is not None
+             and after.get('installed_version') == expected
+             and after.get('installed_variants', '') == root.get('variants', ''))
+    ok = result.code == 0 and exact
+    smoke_error = None
+    if ok:
+        import provider_ownership
+        import migration_profiles
+        registry = provider_ownership.load_routes(s.TOOLS_ROOT)
+        if registry.get('error'):
+            ok = False
+            smoke_error = 'Ownership registry could not be verified'
+        else:
+            owner = next((r for r in registry.get('routes', [])
+                          if r.get('target_installation_id') == f"macports:{item['name']}"
+                          and r.get('status') == 'committed'), None)
+            if owner:
+                profile = migration_profiles.get(owner.get('profile_id'))
+                if not profile or owner.get('profile_version') != profile.version:
+                    ok = False
+                    smoke_error = 'Managed profile missing or changed'
+                else:
+                    try:
+                        migration_profiles.smoke(s, profile, root['version'])
+                    except Exception as error:
+                        ok = False
+                        smoke_error = 'Updated package failed usage verification: ' + str(error)
     return dict(name=item['name'], kind='port', provider='macports', ok=ok,
+                installed_version=after.get('installed_version') if after else None,
                 code=result.code if result.code else (0 if ok else 1), stdout=result.stdout,
-                stderr=result.stderr if ok or result.code else 'Installed version verification failed')
+                stderr=smoke_error or (result.stderr if result.code else
+                       '' if ok else 'Exact binary version or variants verification failed'))

@@ -14,7 +14,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORTS = Path.home() / '.local/share/brew-update-manager/recovery/t03-1.3.3'
+REPORTS = Path.home() / '.local/share/brew-update-manager/recovery/unified-intel-1.3.4/runs'
 
 def syntax():
     files = sorted(p for folder in ('backend', 'tools', 'tests')
@@ -29,9 +29,10 @@ def main():
     sources = sorted(p for folder in ('backend', 'tools', 'tests', 'renderer', 'electron')
                      for p in (ROOT / folder).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts
-                     and p.suffix in {'.py', '.js', '.cjs', '.html', '.css'})
+                     and p.suffix in {'.py', '.js', '.cjs', '.html', '.css', '.json', '.tcl'})
     sources += [ROOT / 'package.json', ROOT / 'package-lock.json']
-    hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in sorted(set(sources))}
     report = {'mode': 'isolated_code_checks', 'real_migration': False,
               'started_at': time.time(), 'code_sha256': hashes, 'steps': [],
               'scope': 'Existing source suites only; no installed-app or real-migration acceptance'}
@@ -57,7 +58,9 @@ def main():
     commands = [('python-syntax', [sys.executable, str(Path(__file__).resolve()), '--syntax-only'], 60),
                 ('python-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py'], 600)]
     commands += [('syntax-' + str(p.relative_to(ROOT)).replace('/', '-'), [node, '--check', str(p)], 30) for p in js]
-    commands += [('http', [node, str(ROOT / 'tests/service-http.cjs')], 90),
+    commands += [('recovery-ui', [node, str(ROOT / 'tests/recovery-ui.cjs')], 30),
+                 ('stale-plan-ui', [node, str(ROOT / 'tests/stale-plan-ui.cjs')], 30),
+                 ('http', [node, str(ROOT / 'tests/service-http.cjs')], 90),
                  ('progress-ui', [str(electron), str(ROOT / 'tests/progress-ui.cjs')], 120),
                  ('operation-results-ui', [str(electron), str(ROOT / 'tests/operation-results-ui.cjs')], 120),
                  ('whitespace', ['git', 'diff', '--check'], 30)]

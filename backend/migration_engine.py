@@ -1,86 +1,837 @@
-"""Durable, profile-bound Homebrew to MacPorts transactions."""
+"""Journalled Intel Homebrew migrations to MacPorts/Pixi with guarded recovery.
+
+No source removal is attempted until the source is backed up, binary graph and
+smoke probes have passed, and owned command routing has been verified.
+Unresolved transactions never automatically resume on process startup.
+"""
 from __future__ import annotations
+
+import hashlib
+import json
+import os
 from pathlib import Path
-import hashlib,json,os,platform,shutil,time,uuid
+import shutil
+import stat
+import time
+import uuid
+
+import installation_evidence
 import macports_provider as mp
 import migration_profiles as profiles
+import provider_ownership as ownership
+import routing_activation as routing
+from update_selection import compare_upstream, material_fingerprint
 
-SCHEMA=1
-def _sha(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
-def _root(s): return s.DATA_DIR/'migrations'
-def _write(s,p,v): s.atomic_write_json(p,v)
-def _plan_path(s,pid): return _root(s)/'plans'/(pid+'.json')
-def _transaction_path(s,tid): return _root(s)/'transactions'/tid
-def _profile(name):
- p=profiles.get(name)
- if not p: raise ValueError('No supported migration profile for this package')
- return p
-def _source(s,name):
- rows=s.fetch_installed_inventory(s.fetch_outdated_index()); row=next((x for x in rows if x.get('name')==name and x.get('kind')=='formula'),None)
- if not row or row.get('brew_installation_present') is False: raise ValueError('Homebrew source installation is absent')
- audit=row.get('inventory_verification',{})
- if audit.get('status')!='verified': raise ValueError('Installation evidence is unverified')
- active=Path(audit.get('active_keg') or '')
- receipt=active/'INSTALL_RECEIPT.json'
- if not active.is_dir() or not receipt.is_file(): raise ValueError('Active source keg or receipt is unavailable')
- versions=audit.get('manager_versions',[])
- if len(versions)!=1: raise ValueError('Multiple Homebrew kegs require manual review')
- return row,audit,active,receipt
-def plan(s,name,action='migrate',transaction_id=None):
- profiles.intel_only()
- if action!='migrate': return recovery_plan(s,transaction_id,action)
- if name=='ngrok' or s.is_excluded(name,'formula'): raise ValueError('Package is excluded')
- profile=_profile(name); row,audit,active,receipt=_source(s,name)
- import mac_manager,automatic_alternatives,installation_evidence
- state=s.read_json(s.STATE_FILE) or {}; offer=next((o for o in state.get('migrations',[]) if o.get('name')==name),None)
- cls=(offer or {}).get('classification',{})
- if cls.get('category')!='standalone_candidate' or cls.get('gaps') or cls.get('consumers'): raise ValueError('Current classification does not permit an automatic migration')
- if not offer or offer.get('status')!='binary_available': raise ValueError('A current verified MacPorts binary route is required')
- graph=mp.preflight(s,list(profile.ports)); target=next(x['version'] for x in graph['nodes'] if x['name']==profile.ports[0])
- probe=mp.load_probe(); compared=automatic_alternatives.compare_versions(probe,row['installed_version'],row['latest_version'],{profile.ports[0]:target})
- if compared.get('status')!='version_eligible': raise ValueError(compared.get('detail','Target is not newer'))
- existing={x['name']:x for x in mp.inventory(s)}
- for node in graph['nodes']:
-  old=existing.get(node['name'])
-  if old and (old.get('installed_variants','')!=node['variants'] or old.get('installed_version')!=node['version']+'_'+node['revision']): raise ValueError('Existing MacPorts dependency differs: '+node['name'])
- consumers=mp.checked(s,[s.brew_bin(),'uses','--installed',name],timeout=90).splitlines()
- if consumers: raise ValueError('Documented Homebrew consumers block source removal: '+', '.join(consumers))
- pid=uuid.uuid4().hex; routes=Path(s.TOOLS_ROOT)/'migrations'/'routes.json'; paths=profiles.command_paths(profile)
- for command,path in paths.items():
-  shim=Path(s.TOOLS_ROOT)/'bin'/command
-  if shim.exists() and not shim.is_symlink(): raise ValueError('Unmanaged shim conflict: '+str(shim))
- data={'schema_version':SCHEMA,'id':pid,'action':'migrate','profile':profile.name,'profile_version':1,'created_at':time.time(),'expires_at':time.time()+900,'system':{'machine':platform.machine(),'macos':platform.mac_ver()[0]},'source':{'name':name,'version':row['installed_version'],'keg':str(active),'receipt_sha256':_sha(receipt)},'classification':cls,'target':{'ports':list(profile.ports),'version':target,'graph':graph},'commands':{k:str(v) for k,v in paths.items()},'routes_file':str(routes),'remove_homebrew':True,'consumers':consumers}
- data['fingerprint']=hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest(); _plan_path(s,pid).parent.mkdir(parents=True,exist_ok=True);_write(s,_plan_path(s,pid),data);return data
-def _load(s,pid):
- p=_plan_path(s,pid); data=s.read_json(p)
- if not data or data.get('schema_version')!=SCHEMA: raise ValueError('Migration plan is unavailable or obsolete')
- if data['expires_at']<time.time(): raise ValueError('Migration plan expired; request a new plan')
- return data
-def _stage(s,journal,path,value): journal['stage']=value;journal['updated_at']=s.now_iso();_write(s,path/'journal.json',journal)
-def approve(s,pid):
- old=_load(s,pid)
- if old.get('action')!='migrate': raise ValueError('Use recovery approval for recovery plans')
- fresh=plan(s,old['source']['name'])
- for key in ('source','target','classification','commands','remove_homebrew','consumers'):
-  if old.get(key)!=fresh.get(key): raise ValueError('Migration changed; review a new plan')
- profile=_profile(old['profile']); tid=uuid.uuid4().hex; root=_transaction_path(s,tid); root.mkdir(parents=True); journal={'schema_version':SCHEMA,'transaction_id':tid,'plan_id':pid,'status':'running','stage':'preflight','started_at':s.now_iso(),'plan':old}; _write(s,root/'journal.json',journal)
- active=Path(old['source']['keg']); backup=root/'backup'; routes=Path(old['routes_file']); previous=routes.read_bytes() if routes.exists() else None
- try:
-  _stage(s,journal,root,'backup'); shutil.copytree(active,backup/'keg',symlinks=True); (backup/'source-receipt.sha256').write_text(old['source']['receipt_sha256']);
-  if _sha(backup/'keg'/'INSTALL_RECEIPT.json')!=old['source']['receipt_sha256']: raise RuntimeError('Backup receipt verification failed')
-  _stage(s,journal,root,'install'); result=mp.privileged(s,'install',list(profile.ports));
-  if result.code: raise RuntimeError(result.stderr or result.stdout)
-  _stage(s,journal,root,'verify'); smoke=profiles.smoke(s,profile,old['target']['version']); journal['smoke']=smoke;_write(s,root/'journal.json',journal)
-  _stage(s,journal,root,'activate'); routes.parent.mkdir(parents=True,exist_ok=True); saved=s.read_json(routes) or {}; saved[profile.name]={'provider':'macports','profile':profile.name,'commands':old['commands'],'verified_at':s.now_iso(),'transaction_id':tid};_write(s,routes,saved)
-  _stage(s,journal,root,'cleanup'); consumers=mp.checked(s,[s.brew_bin(),'uses','--installed',profile.name],timeout=90).splitlines()
-  if consumers: raise RuntimeError('Consumers appeared before cleanup: '+', '.join(consumers))
-  out=mp.checked(s,[s.brew_bin(),'uninstall','--formula',profile.name],timeout=120,env_override={'HOMEBREW_NO_AUTO_UPDATE':'1','HOMEBREW_NO_AUTOREMOVE':'1','HOMEBREW_NO_INSTALL_CLEANUP':'1'});journal['brew_uninstall_output']=out[-3000:]
-  _stage(s,journal,root,'postcheck');journal['postcheck']=profiles.smoke(s,profile,old['target']['version']);journal.update(status='completed',completed_at=s.now_iso());_stage(s,journal,root,'completed');return journal
- except Exception as e:
-  journal.update(status='needs_attention',error=str(e),completed_at=s.now_iso());_write(s,root/'journal.json',journal);raise
-def recovery_plan(s,tid,action):
- root=_transaction_path(s,tid);j=s.read_json(root/'journal.json')
- if not j or j.get('status')=='completed': raise ValueError('No recoverable transaction')
- if action not in ('resume','rollback'): raise ValueError('Unsupported recovery action')
- data={'schema_version':SCHEMA,'id':uuid.uuid4().hex,'action':action,'transaction_id':tid,'created_at':time.time(),'expires_at':time.time()+900,'journal':j}
- _plan_path(s,data['id']).parent.mkdir(parents=True,exist_ok=True);_write(s,_plan_path(s,data['id']),data);return data
+SCHEMA = 2
+FINISHED = {"completed", "rolled_back", "canceled"}
+
+
+class MigrationConflict(ValueError):
+    def __init__(self, code, detail=None):
+        super().__init__(detail or code)
+        self.code = code
+
+
+def _root(s):
+    return Path(s.DATA_DIR) / "migrations"
+
+
+def _plan_path(s, plan_id):
+    return _root(s) / "plans" / (plan_id + ".json")
+
+
+def _transaction_path(s, transaction_id):
+    return _root(s) / "transactions" / transaction_id
+
+
+def _write(path, data):
+    ownership.atomic_write_json(path, data)
+
+
+def _read(s, path):
+    return s.read_json(path)
+
+
+def _hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _check_id(value):
+    if not isinstance(value, str) or len(value) != 32 or any(
+            char not in "0123456789abcdef" for char in value):
+        raise MigrationConflict("invalid_identifier")
+    return value
+
+
+def _source(s, name):
+    inventory = s.fetch_installed_inventory(s.fetch_outdated_index())
+    rows = [r for r in inventory if r.get("name") == name
+            and r.get("kind") == "formula"
+            and r.get("brew_installation_present") is not False]
+    if len(rows) != 1:
+        raise MigrationConflict("source_installation_ambiguous")
+    row = rows[0]
+    audit = row.get("inventory_verification") or {}
+    keg = Path(audit.get("active_keg") or "/nonexistent")
+    receipt = keg / "INSTALL_RECEIPT.json"
+    if (audit.get("status") != "verified" or not keg.is_dir() or
+            keg.is_symlink() or not receipt.is_file() or
+            len(audit.get("manager_versions") or []) != 1):
+        raise MigrationConflict("source_evidence_unverified")
+    return row, audit, keg, receipt
+
+
+def _source_commands(keg, profile):
+    commands = {}
+    for command in profile.commands:
+        path = keg / "bin" / command
+        if not path.is_file():
+            raise MigrationConflict("source_command_missing:" + command)
+        commands[command] = str(path)
+    return commands
+
+
+def _fresh_classification(s, name, row, *, provided=None):
+    """Validate the same T02 classification against a fresh source audit."""
+    if provided is None:
+        state = s.read_json(s.STATE_FILE) or {}
+        entries = [x for x in state.get("packages", [])
+                   if x.get("provider") == "homebrew"
+                   and x.get("kind") == "formula" and x.get("name") == name]
+        provided = entries[0].get("classification") if len(entries) == 1 else None
+        if provided is None:
+            offer = next((x for x in state.get("migrations", [])
+                          if x.get("name") == name), None)
+            provided = (offer or {}).get("classification")
+    cls = provided if isinstance(provided, dict) else {}
+    audit = row.get("inventory_verification") or {}
+    if (cls.get("category") != "standalone_candidate" or cls.get("gaps")
+            or cls.get("consumers") or cls.get("shared_roles")
+            or cls.get("inventory_fingerprint") != installation_evidence.fingerprint(audit)):
+        raise MigrationConflict("standalone_classification_blocked")
+    checked = cls.get("checked_at")
+    if not isinstance(checked, str):
+        raise MigrationConflict("classification_timestamp_missing")
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(checked.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("Timezone is required")
+        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    except (ValueError, TypeError) as error:
+        raise MigrationConflict("classification_timestamp_invalid") from error
+    if age < -60 or age >= 900:
+        raise MigrationConflict("classification_stale")
+    return cls
+
+def _consumers(s, name):
+    check = s.run_cmd([s.brew_bin(), "uses", "--installed", name],
+                      timeout=90, cancellable=True)
+    if check.code:
+        raise MigrationConflict("consumer_check_failed", check.stderr or check.stdout)
+    items = [x.strip() for x in check.stdout.splitlines() if x.strip()]
+    if items:
+        raise MigrationConflict("source_has_consumers", ", ".join(items))
+    return items
+
+
+def _target_graph(s, profile):
+    graph = mp.preflight(s, list(profile.ports))
+    nodes = graph.get("nodes") or []
+    root = next((x for x in nodes if x.get("name") == profile.ports[0]), None)
+    if root is None:
+        raise MigrationConflict("target_graph_missing_root")
+    return graph, root
+
+
+def _route_ownership(s, name):
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("route_registry_unverified")
+    if any(x.get("logical_id") == name for x in registry.get("legacy", [])):
+        raise MigrationConflict("legacy_route_requires_review")
+    prior = next((x for x in registry["routes"] if x.get("logical_id") == name
+                  and x.get("status") == "committed"), None)
+    return prior, registry
+
+
+def _material_pixi(s, name, *, classification=None, candidate=None,
+                   generation_id=None):
+    """Read-only Intel preflight for a fixed-profile Homebrew-to-Pixi route."""
+    from pathlib import Path
+    import pixi_provider
+    import update_routes
+    profiles.intel_only()
+    profile = profiles.pixi_get(name)
+    if not profile:
+        raise MigrationConflict("pixi_migration_profile_missing")
+    if name == "ngrok" or s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    if update_routes.read_records(s.TOOLS_ROOT).get(name):
+        raise MigrationConflict("existing_managed_tool_conflict")
+    row, audit, keg, receipt = _source(s, name)
+    cls = _fresh_classification(s, name, row, provided=classification)
+    _consumers(s, name)
+    fresh = candidate if candidate is not None else pixi_provider.discover(s, name)
+    if (not isinstance(fresh, dict) or fresh.get("provider") != "pixi"
+            or fresh.get("availability") != "verified"
+            or fresh.get("execution_supported") is not True
+            or fresh.get("closure_verified") is not True
+            or fresh.get("system", {}).get("arch") != "x86_64"
+            or fresh.get("system", {}).get("os") != "macos"):
+        raise MigrationConflict("pixi_binary_route_unverified")
+    import update_routes
+    if fresh.get("provider_names") != [update_routes.PIXI_TOOLS[name][0]]:
+        raise MigrationConflict("pixi_package_identity_mismatch")
+    version = fresh.get("upstream_version")
+    current = row.get("installed_upstream_version") or row.get("installed_version")
+    if compare_upstream(version, current) != 1:
+        raise MigrationConflict("migration_downgrade_or_unknown")
+    lock = fresh.get("lock")
+    manifest = fresh.get("manifest")
+    if (not isinstance(lock, str) or not isinstance(manifest, str)
+            or hashlib.sha256(lock.encode()).hexdigest() != fresh.get("lock_sha256")
+            or manifest != pixi_provider.manifest_text(name, version)):
+        raise MigrationConflict("pixi_lock_or_manifest_unverified")
+    closure = fresh.get("closure")
+    if (not isinstance(closure, list) or not closure
+            or any(not isinstance(node, dict)
+                   or node.get("arch") not in ("osx-64", "noarch")
+                   or not node.get("archive_id") or not node.get("checksum")
+                   for node in closure)
+            or not any(n.get("arch") == "osx-64" for n in closure)):
+        raise MigrationConflict("pixi_binary_closure_unverified")
+    generation_id = _check_id(generation_id or uuid.uuid4().hex)
+    directory = Path(s.TOOLS_ROOT) / "environments" / name / ("generation-" + generation_id)
+    if os.path.lexists(directory):
+        raise MigrationConflict("pixi_generation_conflict")
+    prefix = directory / ".pixi" / "envs" / "default"
+    target_commands = {command: str(prefix / "bin" / command)
+                       for command in profile.commands}
+    previous, registry = _route_ownership(s, name)
+    source_commands = _source_commands(keg, profile)
+    owned_shims = (previous or {}).get("owned_shims", {})
+    routing.preflight(s.TOOLS_ROOT, name, target_commands, owned_shims=owned_shims)
+    route = {key: fresh.get(key) for key in (
+        "provider", "availability", "execution_supported", "closure_verified",
+        "upstream_version", "package_version", "revision", "provider_names",
+        "system", "closure", "manifest", "lock", "lock_sha256")}
+    source = {"name": name, "kind": "formula", "provider": "homebrew",
+              "installation_id": "homebrew:formula:" + name,
+              "version": row["installed_version"], "keg": str(keg),
+              "receipt_sha256": _hash(receipt),
+              "manager_versions": audit.get("manager_versions"),
+              "commands": source_commands}
+    target = {"provider": "pixi", "installation_id": "pixi:" + name,
+              "version": version, "revision": None,
+              "generation_id": generation_id, "directory": str(directory),
+              "prefix": str(prefix), "candidate": route,
+              "mapped_name": fresh["provider_names"][0],
+              "commands": target_commands, "ports": []}
+    core = {"source": source, "target": target, "profile": name,
+            "profile_version": profile.version, "classification": cls,
+            "consumers": [], "route_generation": (previous or {}).get("generation", 0),
+            "owned_shims": owned_shims, "system": fresh["system"],
+            "exclusions": s.load_settings().get("excluded_packages", [])}
+    return core, material_fingerprint(source, core, previous or {})
+
+
+def _material(s, name, *, classification=None, provider="macports",
+              pixi_candidate=None, planned_generation=None):
+    if provider == "pixi":
+        return _material_pixi(s, name, classification=classification,
+                              candidate=pixi_candidate,
+                              generation_id=planned_generation)
+    if provider != "macports":
+        raise MigrationConflict("unsupported_target_provider")
+    profiles.intel_only()
+    if name == "ngrok" or s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    profile = profiles.get(name)
+    if not profile or profile.provider != "macports":
+        raise MigrationConflict("unsupported_migration_profile")
+    row, audit, keg, receipt = _source(s, name)
+    cls = _fresh_classification(s, name, row, provided=classification)
+    _consumers(s, name)
+    graph, target = _target_graph(s, profile)
+    installed_upstream = row.get("installed_upstream_version") or row["installed_version"]
+    if compare_upstream(target["version"], installed_upstream) != 1:
+        raise MigrationConflict("migration_downgrade_or_unknown")
+    existing = {x["name"]: x for x in mp.inventory(s)}
+    for node in graph["nodes"]:
+        old = existing.get(node["name"])
+        if old:
+            expected = str(node["version"]) + (
+                "_" + str(node["revision"]) if node.get("revision") not in ("", "0", None)
+                else "")
+            if old["installed_version"] != expected or old.get("installed_variants", "") != node.get("variants", ""):
+                raise MigrationConflict("existing_port_variant_or_version_conflict:" + node["name"])
+    prior, registry = _route_ownership(s, name)
+    source_commands = _source_commands(keg, profile)
+    target_commands = {key: str(path) for key, path in profiles.command_paths(profile).items()}
+    owned_shims = (prior or {}).get("owned_shims", {})
+    routing.preflight(s.TOOLS_ROOT, name, target_commands, owned_shims=owned_shims)
+    source = {
+        "name": name, "kind": "formula", "provider": "homebrew",
+        "installation_id": "homebrew:formula:" + name,
+        "version": row["installed_version"], "keg": str(keg),
+        "receipt_sha256": _hash(receipt),
+        "manager_versions": audit.get("manager_versions"),
+        "commands": source_commands,
+    }
+    target_data = {
+        "provider": "macports", "installation_id": "macports:" + profile.ports[0],
+        "version": target["version"], "revision": target.get("revision"),
+        "graph": graph["nodes"], "commands": target_commands,
+        "ports": list(profile.ports),
+    }
+    core = {"source": source, "target": target_data,
+            "classification": cls, "consumers": [], "profile": name,
+            "profile_version": profile.version,
+            "route_generation": (prior or {}).get("generation", 0),
+            "owned_shims": owned_shims, "system": graph.get("system"),
+            "exclusions": s.load_settings().get("excluded_packages", [])}
+    return core, material_fingerprint(source, core, prior or {})
+
+
+def plan(s, name, action="migrate", transaction_id=None, *,
+         classification=None, provider="macports", pixi_candidate=None):
+    if action != "migrate":
+        return recovery_plan(s, transaction_id, action)
+    core, fingerprint = _material(s, name, classification=classification,
+                                  provider=provider, pixi_candidate=pixi_candidate)
+    plan_id = uuid.uuid4().hex
+    created = time.time()
+    data = {"schema_version": SCHEMA, "id": plan_id,
+            "action": "migrate", "created_at": created,
+            "expires_at": created + 900,
+            "fingerprint": fingerprint, **core}
+    _write(_plan_path(s, plan_id), data)
+    return data
+
+
+def _load_plan(s, plan_id):
+    plan_id = _check_id(plan_id)
+    record = _read(s, _plan_path(s, plan_id))
+    if not record or record.get("schema_version") != SCHEMA:
+        raise MigrationConflict("migration_plan_not_found")
+    if record["expires_at"] <= time.time():
+        raise MigrationConflict("migration_plan_expired")
+    return record
+
+
+def _manifest(root):
+    result = []
+    root = Path(root)
+    for path in sorted(root.rglob("*")):
+        name = str(path.relative_to(root))
+        mode = path.lstat().st_mode
+        kind = "link" if stat.S_ISLNK(mode) else "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "special"
+        if kind == "special":
+            raise MigrationConflict("unsupported_source_file_type:" + name)
+        item = {"path": name, "kind": kind, "mode": stat.S_IMODE(mode)}
+        if kind == "link":
+            item["target"] = os.readlink(path)
+        if kind == "file":
+            item["sha256"] = _hash(path)
+        result.append(item)
+    return result
+
+
+def _backup(s, journal, directory):
+    source = Path(journal["plan"]["source"]["keg"])
+    if not source.is_dir() or source.is_symlink():
+        raise MigrationConflict("source_keg_disappeared")
+    target = directory / "backup" / "keg"
+    if target.exists():
+        raise MigrationConflict("backup_already_exists")
+    initial = _manifest(source)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2)
+    if _manifest(target) != initial:
+        raise MigrationConflict("backup_integrity_failed")
+    manifest_path = directory / "backup" / "manifest.json"
+    _write(manifest_path, {"entries": initial, "source": str(source)})
+    journal["backup"] = {"path": str(target), "manifest": str(manifest_path),
+                         "source_parent": str(source.parent.resolve()),
+                         "manifest_sha256": _hash(manifest_path)}
+    _write(directory / "journal.json", journal)
+
+
+def _phase(journal, directory, phase, state, **values):
+    if state not in ("started", "finished"):
+        raise ValueError("Invalid phase status")
+    journal["stage"] = phase
+    journal.setdefault("phases", {})[phase] = {
+        "status": state, "timestamp": time.time(), **values}
+    journal["updated_at"] = time.time()
+    _write(directory / "journal.json", journal)
+
+
+def _verify_backup(journal):
+    backup = journal.get("backup") or {}
+    manifest_path = Path(backup.get("manifest") or "/nonexistent")
+    saved = Path(backup.get("path") or "/nonexistent")
+    if not manifest_path.is_file() or _hash(manifest_path) != backup.get("manifest_sha256"):
+        raise MigrationConflict("backup_manifest_changed")
+    data = json.loads(manifest_path.read_text())
+    if not saved.is_dir() or _manifest(saved) != data["entries"]:
+        raise MigrationConflict("backup_contents_changed")
+    return saved, data["entries"]
+
+
+def _target_ready(s, plan):
+    target = plan["target"]
+    if target["provider"] == "pixi":
+        import pixi_provider
+        profile = profiles.pixi_get(plan["profile"])
+        if not profile:
+            raise MigrationConflict("pixi_migration_profile_missing")
+        prefix = Path(target["prefix"])
+        if (not prefix.is_dir() or prefix.is_symlink()
+                or not prefix.resolve().is_relative_to(
+                    (Path(s.TOOLS_ROOT) / "environments" / plan["profile"]).resolve())):
+            raise MigrationConflict("pixi_target_prefix_unverified")
+        pixi_provider.installed_record(prefix, target["mapped_name"], target["version"])
+        pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+        return profiles.smoke_pixi(s, profile, prefix, target["version"])
+    profile = profiles.get(plan["profile"])
+    current = {p["name"]: p for p in mp.inventory(s)}
+    root = current.get(profile.ports[0])
+    if not root:
+        raise MigrationConflict("target_installation_missing")
+    expected = plan["target"]["version"]
+    observed = root["installed_version"]
+    expected_revision = str(plan["target"].get("revision") or "0")
+    wanted = expected + ("_" + expected_revision if expected_revision != "0" else "")
+    if (observed != wanted or root.get("installed_variants", "") !=
+            next((n.get("variants", "") for n in plan["target"]["graph"]
+                  if n["name"] == profile.ports[0]), "")):
+        raise MigrationConflict("target_version_or_variant_mismatch")
+    smoke = profiles.smoke(s, profile, expected)
+    return smoke
+
+
+def _source_still_safe(s, plan):
+    name = plan["source"]["name"]
+    current, _, keg, receipt = _source(s, name)
+    if str(keg) != plan["source"]["keg"] or _hash(receipt) != plan["source"]["receipt_sha256"]:
+        raise MigrationConflict("source_installation_changed")
+    _consumers(s, name)
+    if s.is_excluded(name, "formula"):
+        raise MigrationConflict("package_excluded")
+    return current
+
+
+def _target_postcheck(s, journal):
+    target = journal["plan"]["target"]
+    name = journal["plan"]["source"]["name"]
+    activation = journal.get("activation") or {}
+    if not activation:
+        raise MigrationConflict("routing_not_activated")
+    routing.verify_shell(s, s.TOOLS_ROOT, target["commands"])
+    smoke = _target_ready(s, journal["plan"])
+    primary = name
+    managed = Path(s.TOOLS_ROOT) / "bin" / primary
+    profile = (profiles.pixi_get(name) if target["provider"] == "pixi"
+               else profiles.get(name))
+    result = s.run_cmd([str(managed), *profile.version_args],
+                       timeout=30, cancellable=True)
+    if result.code or not profiles.version_matches(result.stdout + result.stderr,
+                                                    target["version"]):
+        raise MigrationConflict("managed_command_postcheck_failed")
+    return smoke
+
+
+def _source_state(source):
+    source = Path(source)
+    if source.is_symlink() or (os.path.lexists(source) and not source.is_dir()):
+        raise MigrationConflict("source_path_changed_independently")
+    return _manifest(source) if source.is_dir() else None
+
+
+def _restore_source(s, journal):
+    """Restore missing entries only; never replace a surviving user edit."""
+    source = Path(journal["plan"]["source"]["keg"])
+    backup, expected = _verify_backup(journal)
+    present = _source_state(source)
+    expected_by_path = {entry["path"]: entry for entry in expected}
+    if any(expected_by_path.get(entry["path"]) != entry for entry in (present or [])):
+        raise MigrationConflict("source_contents_changed_independently")
+    cleanup_started = "cleanup" in journal.get("phases", {})
+    if present != expected and not cleanup_started:
+        raise MigrationConflict("source_changed_before_cleanup")
+    # Existing system aliases (e.g. /var -> /private/var) are legitimate;
+    # refuse a parent whose resolution changed since backup instead.
+    if str(source.parent.resolve()) != journal["backup"].get("source_parent", str(source.parent)):
+        raise MigrationConflict("source_parent_changed_independently")
+    if present != expected:
+        source.mkdir(parents=True, exist_ok=True)
+        for entry in expected:
+            destination = source / entry["path"]
+            if os.path.lexists(destination):
+                continue
+            original = backup / entry["path"]
+            if entry["kind"] == "dir":
+                destination.mkdir()
+                destination.chmod(entry["mode"])
+            elif entry["kind"] == "link":
+                destination.symlink_to(entry["target"])
+            else:
+                shutil.copy2(original, destination)
+    if _manifest(source) != expected:
+        raise MigrationConflict("restored_source_hash_mismatch")
+    # Retry linking even if an earlier recovery restored bytes then lost its process.
+    if cleanup_started:
+        linked = s.run_cmd([s.brew_bin(), "link", journal["plan"]["source"]["name"]],
+                           timeout=180, cancellable=False,
+                           env_override={"HOMEBREW_NO_AUTO_UPDATE": "1",
+                                         "HOMEBREW_NO_AUTOREMOVE": "1",
+                                         "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
+        if linked.code:
+            raise MigrationConflict("source_relink_failed", linked.stderr)
+
+
+def _compensate(s, journal, directory):
+    """Compensation must not inherit scan-wide cancellation from the handler."""
+    import mac_manager
+    prior = getattr(mac_manager.SCAN_CONTEXT, "active", False)
+    mac_manager.SCAN_CONTEXT.active = False
+    try:
+        return _compensate_impl(s, journal, directory)
+    finally:
+        mac_manager.SCAN_CONTEXT.active = prior
+
+
+def _compensate_impl(s, journal, directory):
+    if not journal.get("backup"):
+        # A crash while copying backup precedes all package mutations. Verify
+        # the source against the pre-copy snapshot rather than requiring a
+        # backup receipt which could not yet have been committed.
+        source = journal["plan"]["source"]["keg"]
+        if ("install" in journal.get("phases", {}) or journal.get("activation")
+                or journal.get("source_before_backup") is None
+                or _source_state(source) != journal["source_before_backup"]):
+            raise MigrationConflict("source_unverified_after_backup_failure")
+        return True
+    ownership.rollback_route(s.TOOLS_ROOT, journal, check_only=True)
+    if journal["plan"]["target"]["provider"] == "pixi":
+        _remove_pixi_target_record(s, journal, check_only=True)
+    _restore_source(s, journal)
+    activation = journal.get("activation") or journal.get("activation_pending")
+    if activation and not journal.get("activation_rolled_back"):
+        routing.restore(s.TOOLS_ROOT, activation)
+        journal["activation_rolled_back"] = True
+        _write(directory / "journal.json", journal)
+    if journal["plan"]["target"]["provider"] == "pixi":
+        _remove_pixi_target_record(s, journal)
+    ownership.rollback_route(s.TOOLS_ROOT, journal)
+    return True
+
+
+def _register_pixi_target(s, journal, directory):
+    """Publish physical Pixi evidence only after verified route postcheck."""
+    import pixi_provider
+    import update_routes
+    from provider_ownership import atomic_write_json
+    plan = journal["plan"]
+    target = plan["target"]
+    prefix = Path(target["prefix"])
+    evidence = pixi_provider.installed_record(
+        prefix, target["mapped_name"], target["version"])
+    pixi_provider.verify_generation(prefix, target["candidate"]["closure"])
+    if not evidence.get("name"):
+        raise MigrationConflict("pixi_installed_record_invalid")
+    name = plan["profile"]
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    existing = records.get(name)
+    if existing and (existing.get("transaction_id") != journal["transaction_id"]
+                     or existing.get("prefix") != str(prefix)
+                     or existing != journal.get("pixi_managed_record")):
+        raise MigrationConflict("pixi_managed_record_conflict")
+    record = {"provider": "pixi", "version": target["version"],
+              "prefix": str(prefix), "workspace": target["directory"],
+              "executables": list(target["commands"]),
+              "owned_shims": routing.owned_shim_hashes(
+                  s.TOOLS_ROOT, journal["activation"]),
+              "transaction_id": journal["transaction_id"],
+              "verified_at": time.time(), "probe_output": "transactional migration"}
+    if existing:
+        record = existing  # retain the exact evidence/timestamp across resume
+    journal["pixi_managed_record"] = record
+    _write(directory / "journal.json", journal)
+    if existing != record:
+        records[name] = record
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
+    journal["pixi_managed_record_written"] = True
+    _write(directory / "journal.json", journal)
+    return [{"name": name, "kind": "tool", "provider": "pixi",
+             "installation_id": target["installation_id"],
+             "installed_version": target["version"]}]
+
+
+def _remove_pixi_target_record(s, journal, *, check_only=False):
+    """Rollback only metadata written by this exact transaction."""
+    import update_routes
+    from provider_ownership import atomic_write_json
+    name = journal["plan"]["profile"]
+    target = journal["plan"]["target"]
+    if target["provider"] != "pixi":
+        return
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("pixi_ownership_registry_unreadable")
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    managed = records.get(name)
+    if managed and (managed.get("transaction_id") != journal["transaction_id"]
+                    or managed.get("prefix") != target["prefix"]
+                    or managed != journal.get("pixi_managed_record")):
+        raise MigrationConflict("pixi_managed_record_changed_independently")
+    if check_only:
+        return
+    if managed:
+        records.pop(name)
+        atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
+
+
+def _run(s, journal, directory, *, resume=False):
+    plan_data = journal["plan"]
+    provider = plan_data["target"]["provider"]
+    profile = (profiles.pixi_get(plan_data["profile"]) if provider == "pixi"
+               else profiles.get(plan_data["profile"]))
+    if not profile:
+        raise MigrationConflict("unsupported_migration_profile")
+    try:
+        if not resume:
+            journal["source_before_backup"] = _source_state(plan_data["source"]["keg"])
+            _phase(journal, directory, "backup", "started")
+            _backup(s, journal, directory)
+            _phase(journal, directory, "backup", "finished")
+            s.raise_if_cancel_requested()
+            _phase(journal, directory, "install", "started")
+            if provider == "pixi":
+                import pixi_provider
+                target = plan_data["target"]
+                prefix = pixi_provider.install_locked(
+                    s, target["candidate"], Path(target["directory"]))
+                if str(prefix) != target["prefix"]:
+                    raise MigrationConflict("pixi_target_prefix_changed")
+                _phase(journal, directory, "install", "finished", code=0)
+            else:
+                result = mp.privileged(s, "install", plan_data["target"]["ports"])
+                if result.code:
+                    raise MigrationConflict("target_install_failed", result.stderr or result.stdout)
+                _phase(journal, directory, "install", "finished", code=result.code)
+        else:
+            _verify_backup(journal)
+            if journal.get("activation_rolled_back"):
+                raise MigrationConflict("activation_already_rolled_back")
+            if journal.get("activation_pending") and not journal.get("activation"):
+                raise MigrationConflict("activation_interrupted_needs_manual_recovery")
+            if journal.get("phases", {}).get("install", {}).get("status") != "finished":
+                raise MigrationConflict("target_install_not_completed")
+        s.raise_if_cancel_requested()
+        _phase(journal, directory, "verify", "started")
+        journal["smoke"] = _target_ready(s, plan_data)
+        _phase(journal, directory, "verify", "finished")
+        if not journal.get("activation"):
+            _source_still_safe(s, plan_data)
+            s.raise_if_cancel_requested()
+            _phase(journal, directory, "activate", "started")
+            def routing_progress(state):
+                journal["activation_pending"] = state
+                _write(directory / "journal.json", journal)
+            journal["activation"] = routing.activate(
+                s.TOOLS_ROOT, profile.name, journal["transaction_id"],
+                plan_data["source"]["commands"], plan_data["target"]["commands"],
+                owned_shims=plan_data.get("owned_shims"),
+                progress=routing_progress)
+            journal.pop("activation_pending", None)
+            _phase(journal, directory, "activate", "finished")
+        cleanup_before = journal.get("phases", {}).get("cleanup")
+        source_keg = Path(plan_data["source"]["keg"])
+        present = _source_state(source_keg)
+        _, expected = _verify_backup(journal)
+        if present is None and not cleanup_before:
+            raise MigrationConflict("source_disappeared_before_cleanup")
+        if present is not None and (present != expected or
+                                   (cleanup_before or {}).get("status") == "finished"):
+            raise MigrationConflict("source_changed_before_cleanup")
+        s.raise_if_cancel_requested()
+        _phase(journal, directory, "cleanup", "started")
+        if present is not None:
+            _source_still_safe(s, plan_data)
+            routing.verify_shell(s, s.TOOLS_ROOT, plan_data["target"]["commands"])
+            _verify_backup(journal)
+            result = s.run_cmd(
+                [s.brew_bin(), "uninstall", "--formula", profile.name],
+                timeout=300, cancellable=True,
+                env_override={"HOMEBREW_NO_AUTO_UPDATE": "1",
+                              "HOMEBREW_NO_AUTOREMOVE": "1",
+                              "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
+            if result.code:
+                raise MigrationConflict("source_uninstall_failed", result.stderr or result.stdout)
+            if os.path.lexists(source_keg):
+                raise MigrationConflict("source_uninstall_incomplete")
+        _phase(journal, directory, "cleanup", "finished")
+        _phase(journal, directory, "postcheck", "started")
+        journal["postcheck"] = _target_postcheck(s, journal)
+        _phase(journal, directory, "postcheck", "finished")
+        s.raise_if_cancel_requested()
+        _phase(journal, directory, "ownership", "started")
+        route = {
+            "logical_id": profile.name, "status": "committed",
+            "source_installation_id": plan_data["source"]["installation_id"],
+            "source_name": profile.name,
+            "target_provider": provider,
+            "target_installation_id": plan_data["target"]["installation_id"],
+            "profile_id": profile.name, "profile_version": profile.version,
+            "transaction_id": journal["transaction_id"],
+            "owned_shims": routing.owned_shim_hashes(s.TOOLS_ROOT, journal["activation"]),
+            "active": journal["activation"]["active"],
+            "evidence_path": str(directory / "journal.json"),
+        }
+        if resume:
+            registry = ownership.load_routes(s.TOOLS_ROOT)
+            if registry.get("error") or any(
+                    r.get("logical_id") == profile.name
+                    and r.get("transaction_id") != journal["transaction_id"]
+                    for r in registry.get("routes", [])):
+                raise MigrationConflict("ownership_changed_during_recovery")
+        installed_targets = (_register_pixi_target(s, journal, directory)
+                             if provider == "pixi" else mp.inventory(s))
+        ownership.commit_route(s.TOOLS_ROOT, route, directory / "journal.json",
+                               installed_targets)
+        # commit_route journals its before/after evidence independently.
+        journal.update(_read(s, directory / "journal.json"))
+        _phase(journal, directory, "ownership", "finished")
+        journal.update(status="completed", completed_at=time.time())
+        _phase(journal, directory, "completed", "finished")
+        return journal
+    except BaseException as error:
+        persisted = _read(s, directory / "journal.json") or {}
+        for key in ("ownership_before", "ownership_after", "ownership_pending_sha256",
+                    "ownership_committed_sha256"):
+            if key in persisted:
+                journal[key] = persisted[key]
+        journal.update(status="needs_attention", error=str(error))
+        _write(directory / "journal.json", journal)
+        # Once cleanup has started, retain the target route and require a fresh
+        # recovery preview. The current stage may have moved back to 'verify'
+        # during resume, so it cannot establish that the source still exists.
+        if "cleanup" not in journal.get("phases", {}):
+            try:
+                _compensate(s, journal, directory)
+                journal["status"] = "rolled_back"
+            except BaseException as rollback:
+                journal["compensation_error"] = str(rollback)
+                journal["status"] = "needs_attention"
+            _write(directory / "journal.json", journal)
+        raise
+
+
+def approve(s, plan_id, request_id=None):
+    old = _load_plan(s, plan_id)
+    if old.get("action") in ("resume", "rollback"):
+        return approve_recovery(s, old)
+    if old.get("action") != "migrate":
+        raise MigrationConflict("unsupported_migration_action")
+    target_provider = old["target"]["provider"]
+    # Pixi re-discovers the route here, rather than trusting a saved lock.
+    # The fixed generation ID permits exact material-fingerprint comparison.
+    fresh, fingerprint = _material(
+        s, old["profile"], provider=target_provider,
+        planned_generation=old["target"].get("generation_id"))
+    if fingerprint != old.get("fingerprint"):
+        raise MigrationConflict("plan_changed")
+    tid = uuid.uuid4().hex
+    directory = _transaction_path(s, tid)
+    directory.mkdir(parents=True)
+    journal = {"schema_version": SCHEMA, "transaction_id": tid,
+               "plan_id": plan_id, "request_id": request_id,
+               "status": "running", "stage": "preflight",
+               "started_at": time.time(), "plan": old, "phases": {}}
+    _write(directory / "journal.json", journal)
+    return _run(s, journal, directory)
+
+
+def _recovery_state(s, journal):
+    root = Path(s.TOOLS_ROOT)
+    return {"source": _source_state(journal["plan"]["source"]["keg"]),
+            "metadata": {str(path.relative_to(root)): _hash(path) if path.is_file() else None
+                         for path in (root / "installed.json",
+                                      root / "migrations" / "routes.json")}}
+
+
+def recovery_plan(s, transaction_id, action):
+    tid = _check_id(transaction_id)
+    if action not in ("resume", "rollback"):
+        raise MigrationConflict("unsupported_recovery_action")
+    journal = _read(s, _transaction_path(s, tid) / "journal.json")
+    if not journal or journal.get("schema_version") != SCHEMA:
+        raise MigrationConflict("transaction_not_found")
+    if journal.get("status") in FINISHED:
+        raise MigrationConflict("transaction_already_resolved")
+    source = Path(journal["plan"]["source"]["keg"])
+    preview = {"source_present": source.is_dir(),
+               "routing_active": bool(journal.get("activation")),
+               "last_stage": journal.get("stage"),
+               "backup_verified": False}
+    try:
+        _verify_backup(journal)
+        preview["backup_verified"] = True
+    except Exception as error:
+        preview["backup_error"] = str(error)
+    pid = uuid.uuid4().hex
+    created = time.time()
+    data = {"schema_version": SCHEMA, "id": pid, "action": action,
+            "transaction_id": tid, "created_at": created,
+            "expires_at": created + 900, "preview": preview,
+            "journal_sha256": _hash(_transaction_path(s, tid) / "journal.json"),
+            "recovery_state": _recovery_state(s, journal)}
+    _write(_plan_path(s, pid), data)
+    return data
+
+
+def approve_recovery(s, approved):
+    tid = approved["transaction_id"]
+    directory = _transaction_path(s, tid)
+    journal_path = directory / "journal.json"
+    if _hash(journal_path) != approved["journal_sha256"]:
+        raise MigrationConflict("recovery_plan_changed")
+    journal = _read(s, journal_path)
+    if journal.get("status") in FINISHED:
+        raise MigrationConflict("transaction_already_resolved")
+    if approved.get("expires_at", 0) <= time.time():
+        raise MigrationConflict("migration_plan_expired")
+    if approved.get("recovery_state") != _recovery_state(s, journal):
+        raise MigrationConflict("recovery_state_changed")
+    if approved["action"] == "rollback":
+        try:
+            _compensate(s, journal, directory)
+            journal.update(status="rolled_back", recovery_completed_at=time.time())
+            _write(journal_path, journal)
+            _reconcile_request(s, journal)
+            return journal
+        except Exception as exc:
+            journal.update(status="needs_attention", recovery_error=str(exc))
+            _write(journal_path, journal)
+            raise
+    if approved["action"] == "resume":
+        result = _run(s, journal, directory, resume=True)
+        _reconcile_request(s, result)
+        return result
+    raise MigrationConflict("unsupported_recovery_action")
+
+
+def _reconcile_request(s, journal):
+    request_id = journal.get("request_id")
+    if request_id:
+        import unified_updates
+        try:
+            unified_updates.request_status(s, request_id, transaction=journal, persist=True)
+        except Exception as error:
+            # Physical recovery is already verified. A batch refresh failure must
+            # not turn it back into an unresolved package mutation.
+            journal["request_reconciliation_error"] = str(error)
+            _write(_transaction_path(s, journal["transaction_id"]) / "journal.json", journal)
