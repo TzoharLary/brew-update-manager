@@ -2,7 +2,7 @@
 
 עודכן: 25.10.2026. בסיס סקירת המקור: `0a0849b`, לאחר fetch של ענף
 `feat/unified-intel-134-foundations`. `main` עדיין ב־`a682e4d`.
-זהו עדכון תיעוד בלבד: לא הורצו בדיקות מוצר, לא הוחלפה אפליקציה ולא שונו חבילות.
+אחרי עדכון התיעוד נוסף מימוש שלב 4 ובוצעו בדיקות ממוקדות בלבד, כמתועד ב־[דוח המימוש](UNIFIED_IMPLEMENTATION_STATUS.md). לא הוחלפה אפליקציה ולא שונו חבילות.
 
 [דוח המימוש](UNIFIED_IMPLEMENTATION_STATUS.md) הוא מקור המצב הנוכחי;
 [תוכנית היסוד](INTEL_UPDATE_IMPLEMENTATION_PLAN.md) מגדירה דרישות;
@@ -17,8 +17,8 @@
 | ב — הצעה, החלטה ובעלות | `backend/update_selection.py`, `backend/provider_ownership.py` | `test_update_selection.py`, `test_provider_ownership.py` | כיסוי מלא של מלאי ללא כפילות ועדכון אצל ספק חדש אחרי restart |
 | ג — גילוי ובחירת ספק | `backend/unified_updates.py`, `backend/pixi_provider.py`, `backend/macports_provider.py` | בדיקות unified/selection/Pixi/MacPorts; שלב 3 כולל מקרה Brew עדכני מול Pixi חדש יותר | רגרסיות completeness, מידע חסר ומיפויים; אין כיסוי מעבר לכל חבילה או קבלת Cask |
 | ד — תוכנית, נעילה וחזרתיות | `generate_plan`, `validate_request`, `_revalidate_migration`, `execute` ב־`unified_updates.py`; `backend/operation_lock.py` | `test_unified_updates.py`, `test_operation_lock.py`, `stale-plan-ui.cjs` | ניתוק וחזרה, תחרות תהליכים ותגובה מאוחרת לאורך מסלול HTTP/UI מלא |
-| ה — מנוע מעבר והפעלה | `backend/migration_engine.py`, `backend/routing_activation.py` | `test_migration_engine.py`, `test_routing_activation.py` | תרחיש מלא דרך המבצע המאוחד: backup → install → smoke → activation → cleanup → ownership |
-| ו — כשל ושחזור | `_compensate`, `recovery_plan`, `approve_recovery` ויומן במנוע | בדיקות מניפסט, שינוי עצמאי, lock ומזהים; אינן מכסות את כל רצף ההתאוששות | **שלב העבודה הבא:** fault-injection, הסרה חלקית, restart, resume/rollback ושימור שינוי עצמאי |
+| ה — מנוע מעבר והפעלה | `backend/migration_engine.py`, `backend/routing_activation.py` | `test_migration_engine.py`, `test_migration_recovery.py`, `test_routing_activation.py` | תרחיש מלא דרך המבצע המאוחד: backup → install → smoke → activation → cleanup → ownership |
+| ו — כשל ושחזור | `_compensate`, `recovery_plan`, `approve_recovery` ויומן במנוע | בדיקות מניפסט, שינוי עצמאי, lock ומזהים; אינן מכסות את כל רצף ההתאוששות | 31 בדיקות recovery ותיקונים עברו; המשך: routing וקריסות metadata, ביטול/timeouts ו־rollback לאחר commit |
 | ז — פרופילים ושימוש | `backend/migration_profiles.py`; Pixi מוגבל ל־`jq`/`pandoc`, MacPorts לפרופילים המוגדרים | `test_migration_profiles.py`, בדיקות smoke במנוע | קבלה אמיתית של IWYU ו־Pixi, פקודות ב־PATH הרגיל אחרי restart |
 | ח — מלאי, API וממשק | `backend/brew-updates-service.py`, `electron/preload.js`, `renderer/app.js` | בדיקות transport HTTP ותרחישי Electron קיימים; `stale-plan-ui.cjs` נפרד | bypass של legacy, 409 מובנה, אישור עדכון יחיד, תרגומים ומסלולי selected/all מלאים |
 | ט — בדיקות | `tools/verify-current-code.py`, תיקיית `tests` | unittest discovery, תחביר ותרחישי UI קיימים | השלמת התרחישים המחייבים בתוכנית; קיום קובץ אינו הוכחת כיסוי הדרישה |
@@ -86,11 +86,16 @@
 את `/Applications/Mac Update Manager.app` **לפני** אישור YES לשינוי חבילות.
 אין להריץ אותו לצורך בדיקות קוד או כקבלה מאושרת בשלב הנוכחי.
 
-המשך הפיתוח המדויק הוא שלב 4 ב־fixtures בלבד: בדיקות דרך `unified_updates.execute`
-לכשל בכל נקודת עסקה, ובפרט הסרה חלקית כשה־keg עדיין קיים. במקור הנוכחי
-`_compensate` מעתיק את גיבוי המקור רק אם תיקיית המקור חסרה; קיומה לבדו אינו
-מוכיח שתוכנה שלם. יש להוכיח שחזור בטוח או חסימה עם `needs_attention`, בלי
-לדרוס שינוי עצמאי, ולבחון resume לאחר restart. זהו פער סקירה, לא תוצאת ניסוי כשל.
+שלב 4 התקדם: 31 תרחישי התאוששות חדשים נכללים אוטומטית ב־`--checks`.
+הסרה חלקית נבדקת מול הגיבוי ומשוחזרים קבצים חסרים בלבד; שינוי עצמאי חוסם
+שחזור. נבדק גם תהליך שנפסק אחרי הסרה ו־resume ללא ביצוע כפול.
+[דוח שלב 4](UNIFIED_IMPLEMENTATION_STATUS.md) מתעד את התיקונים והראיות.
+
+נוסף גם כיסוי עם routing אמיתי בנתיבים זמניים וקריסת תהליך אחרי החלפת
+מצביע. המשך שלב 4 הוא יתר נקודות הקריסה ב־activation/metadata,
+ביטול/timeouts וסנכרון recovery עם בקשת העדכון.
+rollback אחרי committed ownership נשאר חסום עד reconciliation מפורש.
+חלק מגבולות הספקים והניתוב בבדיקות החדשות הם mocks; אין כאן קבלת מערכת מלאה.
 
 לאחר מכן: השלמת גילוי/השוואה, API/UI, חבילת בדיקות וגנרטור/אריזה,
 ורק אז קבלת משתמש אמיתית. T03/T04/T07 נשארות פתוחות. T05/T06 מחוץ לשלב זה.

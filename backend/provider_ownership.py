@@ -122,6 +122,12 @@ def commit_route(root, route, journal_path, installed):
                if x.get("source_installation_id") != route.get("source_installation_id")]
     previous = next((x for x in registry["routes"]
                      if x.get("source_installation_id") == route.get("source_installation_id")), None)
+    if previous and previous.get("transaction_id") == route["transaction_id"]:
+        if any(previous.get(key) != value for key, value in route.items()):
+            raise ValueError("Committed ownership changed independently")
+        # A process may have stopped after the atomic registry write and before
+        # marking its transaction complete. Do not create another generation.
+        return previous
     route = dict(route, generation=int((previous or {}).get("generation") or 0) + 1,
                  verified_at=route.get("verified_at") or time.time())
     entries.append(route)

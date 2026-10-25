@@ -46,6 +46,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_macports_provider.py'
           python3 -m unittest discover -s tests -p 'test_pixi_provider.py'
           python3 -m unittest discover -s tests -p 'test_migration_engine.py'
+          python3 -m unittest discover -s tests -p 'test_migration_recovery.py'
           python3 -m unittest discover -s tests -p 'test_migration_profiles.py'
           node tests/stale-plan-ui.cjs
           python3 tools/implement-mac-manager.py unified-check

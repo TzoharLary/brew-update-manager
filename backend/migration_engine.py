@@ -1,4 +1,4 @@
-"""Journalled Intel Homebrew->MacPorts migrations with guarded recovery.
+"""Journalled Intel Homebrew migrations to MacPorts/Pixi with guarded recovery.
 
 No source removal is attempted until the source is backed up, binary graph and
 smoke probes have passed, and owned command routing has been verified.
@@ -340,7 +340,7 @@ def _manifest(root):
 
 def _backup(s, journal, directory):
     source = Path(journal["plan"]["source"]["keg"])
-    if not source.is_dir():
+    if not source.is_dir() or source.is_symlink():
         raise MigrationConflict("source_keg_disappeared")
     target = directory / "backup" / "keg"
     if target.exists():
@@ -353,6 +353,7 @@ def _backup(s, journal, directory):
     manifest_path = directory / "backup" / "manifest.json"
     _write(manifest_path, {"entries": initial, "source": str(source)})
     journal["backup"] = {"path": str(target), "manifest": str(manifest_path),
+                         "source_parent": str(source.parent.resolve()),
                          "manifest_sha256": _hash(manifest_path)}
     _write(directory / "journal.json", journal)
 
@@ -442,21 +443,46 @@ def _target_postcheck(s, journal):
     return smoke
 
 
-def _compensate(s, journal, directory):
-    """Compensate without observing the original cancel flag."""
-    activation = journal.get("activation")
-    if activation:
-        routing.restore(s.TOOLS_ROOT, activation)
-        journal["activation_rolled_back"] = True
+def _source_state(source):
+    source = Path(source)
+    if source.is_symlink() or (os.path.lexists(source) and not source.is_dir()):
+        raise MigrationConflict("source_path_changed_independently")
+    return _manifest(source) if source.is_dir() else None
+
+
+def _restore_source(s, journal):
+    """Restore missing entries only; never replace a surviving user edit."""
     source = Path(journal["plan"]["source"]["keg"])
-    if not source.is_dir():
-        backup, _ = _verify_backup(journal)
-        if os.path.lexists(source):
-            raise MigrationConflict("source_path_changed_independently")
-        source.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(backup, source, symlinks=True, copy_function=shutil.copy2)
-        if _manifest(source) != _manifest(backup):
-            raise MigrationConflict("restored_source_hash_mismatch")
+    backup, expected = _verify_backup(journal)
+    present = _source_state(source)
+    expected_by_path = {entry["path"]: entry for entry in expected}
+    if any(expected_by_path.get(entry["path"]) != entry for entry in (present or [])):
+        raise MigrationConflict("source_contents_changed_independently")
+    cleanup_started = "cleanup" in journal.get("phases", {})
+    if present != expected and not cleanup_started:
+        raise MigrationConflict("source_changed_before_cleanup")
+    # Existing system aliases (e.g. /var -> /private/var) are legitimate;
+    # refuse a parent whose resolution changed since backup instead.
+    if str(source.parent.resolve()) != journal["backup"].get("source_parent", str(source.parent)):
+        raise MigrationConflict("source_parent_changed_independently")
+    if present != expected:
+        source.mkdir(parents=True, exist_ok=True)
+        for entry in expected:
+            destination = source / entry["path"]
+            if os.path.lexists(destination):
+                continue
+            original = backup / entry["path"]
+            if entry["kind"] == "dir":
+                destination.mkdir()
+                destination.chmod(entry["mode"])
+            elif entry["kind"] == "link":
+                destination.symlink_to(entry["target"])
+            else:
+                shutil.copy2(original, destination)
+    if _manifest(source) != expected:
+        raise MigrationConflict("restored_source_hash_mismatch")
+    # Retry linking even if an earlier recovery restored bytes then lost its process.
+    if cleanup_started:
         linked = s.run_cmd([s.brew_bin(), "link", journal["plan"]["source"]["name"]],
                            timeout=180, cancellable=False,
                            env_override={"HOMEBREW_NO_AUTO_UPDATE": "1",
@@ -464,6 +490,27 @@ def _compensate(s, journal, directory):
                                          "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
         if linked.code:
             raise MigrationConflict("source_relink_failed", linked.stderr)
+
+
+def _compensate(s, journal, directory):
+    """Compensate without observing the original cancel flag."""
+    registry = ownership.load_routes(s.TOOLS_ROOT)
+    if registry.get("error"):
+        raise MigrationConflict("ownership_registry_unreadable")
+    # Committed ownership needs reconciliation, not an unjournalled reversal.
+    if any(r.get("logical_id") == journal["plan"]["profile"]
+           for r in registry.get("routes", [])):
+        raise MigrationConflict("ownership_requires_reconciliation")
+    if journal["plan"]["target"]["provider"] == "pixi":
+        _remove_pixi_target_record(s, journal, check_only=True)
+    _restore_source(s, journal)
+    activation = journal.get("activation") or journal.get("activation_pending")
+    if activation and not journal.get("activation_rolled_back"):
+        if not journal.get("activation") and activation.get("state") != "pointer_switch_pending":
+            raise MigrationConflict("activation_interrupted_needs_manual_recovery")
+        routing.restore(s.TOOLS_ROOT, activation)
+        journal["activation_rolled_back"] = True
+        _write(directory / "journal.json", journal)
     if journal["plan"]["target"]["provider"] == "pixi":
         _remove_pixi_target_record(s, journal)
     return True
@@ -486,7 +533,8 @@ def _register_pixi_target(s, journal, directory):
     records = update_routes.read_records(s.TOOLS_ROOT)
     existing = records.get(name)
     if existing and (existing.get("transaction_id") != journal["transaction_id"]
-                     or existing.get("prefix") != str(prefix)):
+                     or existing.get("prefix") != str(prefix)
+                     or existing != journal.get("pixi_managed_record")):
         raise MigrationConflict("pixi_managed_record_conflict")
     record = {"provider": "pixi", "version": target["version"],
               "prefix": str(prefix), "workspace": target["directory"],
@@ -495,6 +543,8 @@ def _register_pixi_target(s, journal, directory):
                   s.TOOLS_ROOT, journal["activation"]),
               "transaction_id": journal["transaction_id"],
               "verified_at": time.time(), "probe_output": "transactional migration"}
+    if existing:
+        record = existing  # retain the exact evidence/timestamp across resume
     journal["pixi_managed_record"] = record
     _write(directory / "journal.json", journal)
     if existing != record:
@@ -507,7 +557,7 @@ def _register_pixi_target(s, journal, directory):
              "installed_version": target["version"]}]
 
 
-def _remove_pixi_target_record(s, journal):
+def _remove_pixi_target_record(s, journal, *, check_only=False):
     """Rollback only metadata written by this exact transaction."""
     import update_routes
     from provider_ownership import atomic_write_json
@@ -522,17 +572,20 @@ def _remove_pixi_target_record(s, journal):
         if route.get("logical_id") == name:
             if route.get("transaction_id") != journal["transaction_id"]:
                 raise MigrationConflict("pixi_ownership_changed_independently")
+    records = update_routes.read_records(s.TOOLS_ROOT)
+    managed = records.get(name)
+    if managed and (managed.get("transaction_id") != journal["transaction_id"]
+                    or managed.get("prefix") != target["prefix"]
+                    or managed != journal.get("pixi_managed_record")):
+        raise MigrationConflict("pixi_managed_record_changed_independently")
+    if check_only:
+        return
     kept = [r for r in registry["routes"]
             if r.get("transaction_id") != journal["transaction_id"]]
     if len(kept) != len(registry["routes"]):
         atomic_write_json(Path(s.TOOLS_ROOT) / "migrations" / "routes.json",
                           dict(registry, routes=kept))
-    records = update_routes.read_records(s.TOOLS_ROOT)
-    managed = records.get(name)
     if managed:
-        if (managed.get("transaction_id") != journal["transaction_id"]
-                or managed.get("prefix") != target["prefix"]):
-            raise MigrationConflict("pixi_managed_record_changed_independently")
         records.pop(name)
         atomic_write_json(Path(s.TOOLS_ROOT) / "installed.json", records)
 
@@ -565,6 +618,12 @@ def _run(s, journal, directory, *, resume=False):
                 _phase(journal, directory, "install", "finished", code=result.code)
         else:
             _verify_backup(journal)
+            if journal.get("activation_rolled_back"):
+                raise MigrationConflict("activation_already_rolled_back")
+            if journal.get("activation_pending") and not journal.get("activation"):
+                raise MigrationConflict("activation_interrupted_needs_manual_recovery")
+            if journal.get("phases", {}).get("install", {}).get("status") != "finished":
+                raise MigrationConflict("target_install_not_completed")
         _phase(journal, directory, "verify", "started")
         journal["smoke"] = _target_ready(s, plan_data)
         _phase(journal, directory, "verify", "finished")
@@ -581,9 +640,17 @@ def _run(s, journal, directory, *, resume=False):
                 progress=routing_progress)
             journal.pop("activation_pending", None)
             _phase(journal, directory, "activate", "finished")
-        _phase(journal, directory, "cleanup", "started")
+        cleanup_before = journal.get("phases", {}).get("cleanup")
         source_keg = Path(plan_data["source"]["keg"])
-        if source_keg.is_dir():
+        present = _source_state(source_keg)
+        _, expected = _verify_backup(journal)
+        if present is None and not cleanup_before:
+            raise MigrationConflict("source_disappeared_before_cleanup")
+        if present is not None and (present != expected or
+                                   (cleanup_before or {}).get("status") == "finished"):
+            raise MigrationConflict("source_changed_before_cleanup")
+        _phase(journal, directory, "cleanup", "started")
+        if present is not None:
             _source_still_safe(s, plan_data)
             routing.verify_shell(s, s.TOOLS_ROOT, plan_data["target"]["commands"])
             _verify_backup(journal)
@@ -595,6 +662,8 @@ def _run(s, journal, directory, *, resume=False):
                               "HOMEBREW_NO_INSTALL_CLEANUP": "1"})
             if result.code:
                 raise MigrationConflict("source_uninstall_failed", result.stderr or result.stdout)
+            if os.path.lexists(source_keg):
+                raise MigrationConflict("source_uninstall_incomplete")
         _phase(journal, directory, "cleanup", "finished")
         _phase(journal, directory, "postcheck", "started")
         journal["postcheck"] = _target_postcheck(s, journal)
@@ -612,6 +681,13 @@ def _run(s, journal, directory, *, resume=False):
             "active": journal["activation"]["active"],
             "evidence_path": str(directory / "journal.json"),
         }
+        if resume:
+            registry = ownership.load_routes(s.TOOLS_ROOT)
+            if registry.get("error") or any(
+                    r.get("logical_id") == profile.name
+                    and r.get("transaction_id") != journal["transaction_id"]
+                    for r in registry.get("routes", [])):
+                raise MigrationConflict("ownership_changed_during_recovery")
         installed_targets = (_register_pixi_target(s, journal, directory)
                              if provider == "pixi" else mp.inventory(s))
         ownership.commit_route(s.TOOLS_ROOT, route, directory / "journal.json",
@@ -623,20 +699,12 @@ def _run(s, journal, directory, *, resume=False):
     except BaseException as error:
         journal.update(status="needs_attention", error=str(error))
         _write(directory / "journal.json", journal)
-        # Do not automatically destroy a potentially changed source after cleanup.
-        # Before cleanup, compensate only ownership-controlled route files.
-        if journal.get("stage") in ("backup", "install", "verify", "activate"):
+        # Once cleanup has started, retain the target route and require a fresh
+        # recovery preview. The current stage may have moved back to 'verify'
+        # during resume, so it cannot establish that the source still exists.
+        if "cleanup" not in journal.get("phases", {}):
             try:
-                activation = journal.get("activation")
-                if not activation:
-                    pending = journal.get("activation_pending") or {}
-                    if pending.get("state") == "pointer_switch_pending":
-                        activation = pending
-                if activation:
-                    routing.restore(s.TOOLS_ROOT, activation)
-                    journal["activation_rolled_back"] = True
-                elif journal.get("activation_pending"):
-                    raise MigrationConflict("activation_interrupted_needs_manual_recovery")
+                _compensate(s, journal, directory)
                 journal["status"] = "rolled_back"
             except BaseException as rollback:
                 journal["compensation_error"] = str(rollback)
@@ -670,6 +738,14 @@ def approve(s, plan_id, request_id=None):
     return _run(s, journal, directory)
 
 
+def _recovery_state(s, journal):
+    root = Path(s.TOOLS_ROOT)
+    return {"source": _source_state(journal["plan"]["source"]["keg"]),
+            "metadata": {str(path.relative_to(root)): _hash(path) if path.is_file() else None
+                         for path in (root / "installed.json",
+                                      root / "migrations" / "routes.json")}}
+
+
 def recovery_plan(s, transaction_id, action):
     tid = _check_id(transaction_id)
     if action not in ("resume", "rollback"):
@@ -694,7 +770,8 @@ def recovery_plan(s, transaction_id, action):
     data = {"schema_version": SCHEMA, "id": pid, "action": action,
             "transaction_id": tid, "created_at": created,
             "expires_at": created + 900, "preview": preview,
-            "journal_sha256": _hash(_transaction_path(s, tid) / "journal.json")}
+            "journal_sha256": _hash(_transaction_path(s, tid) / "journal.json"),
+            "recovery_state": _recovery_state(s, journal)}
     _write(_plan_path(s, pid), data)
     return data
 
@@ -706,6 +783,12 @@ def approve_recovery(s, approved):
     if _hash(journal_path) != approved["journal_sha256"]:
         raise MigrationConflict("recovery_plan_changed")
     journal = _read(s, journal_path)
+    if journal.get("status") in FINISHED:
+        raise MigrationConflict("transaction_already_resolved")
+    if approved.get("expires_at", 0) <= time.time():
+        raise MigrationConflict("migration_plan_expired")
+    if approved.get("recovery_state") != _recovery_state(s, journal):
+        raise MigrationConflict("recovery_state_changed")
     _verify_backup(journal)
     if approved["action"] == "rollback":
         try:
