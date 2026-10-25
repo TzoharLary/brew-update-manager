@@ -164,9 +164,15 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
             if not _owned_file(shim, previous["owned_shims"]):
                 raise RoutingConflict("Shim ownership changed during staging")
             prior = shim.read_bytes() if shim.exists() else None
-            _atomic_bytes(shim, content)
             written[name] = {"prior": prior.hex() if prior is not None else None,
+                             "prior_mode": shim.stat().st_mode & 0o7777 if prior is not None else None,
+                             "after_mode": 0o755,
                              "after_sha256": hashlib.sha256(content).hexdigest()}
+            if progress:
+                progress({"state": "shim_write_pending", "active": str(active),
+                          "source": str(source), "target": str(target),
+                          "previous_pointer": before_pointer, "shims": dict(written)})
+            _atomic_bytes(shim, content)
             if progress:
                 progress({"state": "shim_written", "active": str(active),
                           "source": str(source), "target": str(target),
@@ -180,38 +186,58 @@ def activate(root, logical_id, transaction_id, source_commands, target_commands,
                 "previous_pointer": before_pointer, "shims": written,
                 "commands": list(target_commands)}
     except BaseException:
-        _revert(root, active, before_pointer, written)
+        restore(root, {"state": "activation_pending", "active": str(active),
+                       "source": str(source), "target": str(target),
+                       "previous_pointer": before_pointer, "shims": written})
         raise
 
 
-def _revert(root, active, previous_pointer, written):
-    # If an independent actor changed a generated shim, never overwrite it.
+def _revert(root, active, previous_pointer, written, *, check_only=False):
+    # Preflight every path before any write. A retry may observe a mixture of
+    # restored and un-restored files after interruption of the first attempt.
+    pending = []
     for name, item in written.items():
         path = Path(root) / "bin" / name
-        if not path.is_file() or digest(path) != item["after_sha256"]:
+        prior = bytes.fromhex(item["prior"]) if item["prior"] is not None else None
+        absent = not os.path.lexists(path)
+        regular = not path.is_symlink() and path.is_file()
+        prior_mode = item.get("prior_mode") or 0o755
+        if (absent and prior is None) or (regular and prior is not None
+                and path.read_bytes() == prior and path.stat().st_mode & 0o7777 == prior_mode):
+            continue
+        if (not regular or digest(path) != item["after_sha256"]
+                or path.stat().st_mode & 0o7777 != item.get("after_mode", 0o755)):
             raise RoutingConflict("Cannot restore changed shim: " + name)
+        pending.append((path, prior, prior_mode))
+    if check_only:
+        return
     if previous_pointer is None:
         if active.is_symlink():
             active.unlink()
-    else:
+    elif not active.is_symlink() or os.readlink(active) != previous_pointer:
         _atomic_link(active, previous_pointer)
-    for name, item in written.items():
-        path = Path(root) / "bin" / name
-        if item["prior"] is None:
+    for path, prior, prior_mode in pending:
+        if prior is None:
             path.unlink()
         else:
-            _atomic_bytes(path, bytes.fromhex(item["prior"]))
+            _atomic_bytes(path, prior, mode=prior_mode)
 
 
-def restore(root, activation):
+def restore(root, activation, *, check_only=False):
     active = Path(activation["active"])
-    if not active.is_symlink():
-        raise RoutingConflict("Missing active pointer")
-    current = os.readlink(active)
-    if Path(current).resolve() != Path(activation["target"]).resolve():
+    previous = activation["previous_pointer"]
+    current = os.readlink(active) if active.is_symlink() else None
+    if os.path.lexists(active) and not active.is_symlink():
         raise RoutingConflict("Active route was changed independently")
-    _revert(root, active, activation["previous_pointer"], activation["shims"])
-    return {"restored": True, "source": activation["source"]}
+    # Completed activation, partial publication, and an already restored pointer
+    # are all known states. Any other route belongs to another actor.
+    allowed = {activation["target"], previous}
+    if activation.get("state"):
+        allowed.add(activation["source"])
+    if current not in allowed:
+        raise RoutingConflict("Active route was changed independently")
+    _revert(root, active, previous, activation["shims"], check_only=check_only)
+    return {"restored": not check_only, "source": activation["source"]}
 
 
 def owned_shim_hashes(root, activation):

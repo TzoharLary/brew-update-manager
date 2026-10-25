@@ -18,7 +18,7 @@
 | ג — גילוי ובחירת ספק | `backend/unified_updates.py`, `backend/pixi_provider.py`, `backend/macports_provider.py` | בדיקות unified/selection/Pixi/MacPorts; שלב 3 כולל מקרה Brew עדכני מול Pixi חדש יותר | רגרסיות completeness, מידע חסר ומיפויים; אין כיסוי מעבר לכל חבילה או קבלת Cask |
 | ד — תוכנית, נעילה וחזרתיות | `generate_plan`, `validate_request`, `_revalidate_migration`, `execute` ב־`unified_updates.py`; `backend/operation_lock.py` | `test_unified_updates.py`, `test_operation_lock.py`, `stale-plan-ui.cjs` | ניתוק וחזרה, תחרות תהליכים ותגובה מאוחרת לאורך מסלול HTTP/UI מלא |
 | ה — מנוע מעבר והפעלה | `backend/migration_engine.py`, `backend/routing_activation.py` | `test_migration_engine.py`, `test_migration_recovery.py`, `test_routing_activation.py` | תרחיש מלא דרך המבצע המאוחד: backup → install → smoke → activation → cleanup → ownership |
-| ו — כשל ושחזור | `_compensate`, `recovery_plan`, `approve_recovery` ויומן במנוע | בדיקות מניפסט, שינוי עצמאי, lock ומזהים; אינן מכסות את כל רצף ההתאוששות | 31 בדיקות recovery ותיקונים עברו; המשך: routing וקריסות metadata, ביטול/timeouts ו־rollback לאחר commit |
+| ו — כשל ושחזור | `_compensate`, `recovery_plan`, `approve_recovery` ויומן במנוע | בדיקות מניפסט, שינוי עצמאי, lock ומזהים; אינן מכסות את כל רצף ההתאוששות | שלב 4 עבר באימות מבודד; 100 בדיקות ממוקדות, כולל קריסות, ביטול/timeouts ו־rollback לאחר commit |
 | ז — פרופילים ושימוש | `backend/migration_profiles.py`; Pixi מוגבל ל־`jq`/`pandoc`, MacPorts לפרופילים המוגדרים | `test_migration_profiles.py`, בדיקות smoke במנוע | קבלה אמיתית של IWYU ו־Pixi, פקודות ב־PATH הרגיל אחרי restart |
 | ח — מלאי, API וממשק | `backend/brew-updates-service.py`, `electron/preload.js`, `renderer/app.js` | בדיקות transport HTTP ותרחישי Electron קיימים; `stale-plan-ui.cjs` נפרד | bypass של legacy, 409 מובנה, אישור עדכון יחיד, תרגומים ומסלולי selected/all מלאים |
 | ט — בדיקות | `tools/verify-current-code.py`, תיקיית `tests` | unittest discovery, תחביר ותרחישי UI קיימים | השלמת התרחישים המחייבים בתוכנית; קיום קובץ אינו הוכחת כיסוי הדרישה |
@@ -50,9 +50,9 @@
 - `progress-ui.cjs` ו־`operation-results-ui.cjs` ב־Electron עם נתונים מבודדים.
 - `git diff --check` וחתימות קובצי המקור.
 
-הסקריפט אינו מריץ בנפרד את `stale-plan-ui.cjs`, את `unified-check`, אריזה,
+הסקריפט מריץ כעת גם את `stale-plan-ui.cjs` ואת `recovery-ui.cjs`. הוא אינו מריץ `unified-check`, אריזה,
 או את כל תרחישי הכשל/הממשק שעדיין נדרשים בתוכנית. בדיקת תחביר JS אינה
-הרצת תרחיש JS. הפער הזה צריך להיסגר בשלב הרחבת חבילת הבדיקות לפני מסירת
+הרצת תרחיש JS. כיסוי כלל הדרישות צריך להיבדק בשלב הרחבת חבילת הבדיקות לפני מסירת
 קבלת מוצר מלאה; אין לפרש `--checks=pass` כאישור לכל דרישות התוכנית.
 
 ## דוחות ופירוש תוצאות
@@ -86,16 +86,11 @@
 את `/Applications/Mac Update Manager.app` **לפני** אישור YES לשינוי חבילות.
 אין להריץ אותו לצורך בדיקות קוד או כקבלה מאושרת בשלב הנוכחי.
 
-שלב 4 התקדם: 31 תרחישי התאוששות חדשים נכללים אוטומטית ב־`--checks`.
-הסרה חלקית נבדקת מול הגיבוי ומשוחזרים קבצים חסרים בלבד; שינוי עצמאי חוסם
-שחזור. נבדק גם תהליך שנפסק אחרי הסרה ו־resume ללא ביצוע כפול.
-[דוח שלב 4](UNIFIED_IMPLEMENTATION_STATUS.md) מתעד את התיקונים והראיות.
-
-נוסף גם כיסוי עם routing אמיתי בנתיבים זמניים וקריסת תהליך אחרי החלפת
-מצביע. המשך שלב 4 הוא יתר נקודות הקריסה ב־activation/metadata,
-ביטול/timeouts וסנכרון recovery עם בקשת העדכון.
-rollback אחרי committed ownership נשאר חסום עד reconciliation מפורש.
-חלק מגבולות הספקים והניתוב בבדיקות החדשות הם mocks; אין כאן קבלת מערכת מלאה.
+**שלב 4 הושלם בקוד ובאימות מבודד.** [דוח המסירה](STAGE4_RECOVERY_VALIDATION.md)
+מתעד 100 בדיקות Python ממוקדות, 8 תרחישי UI, תהליכי fixture שנקטעו,
+שחזור בעלות לאחר commit, ביטול/timeouts ויישוב בקשת העדכון. קבצי הבדיקות
+נכללים ב־`--checks`; בדיקות Node הרלוונטיות נוספו גם למסלול הריצה.
+השלב הבא הוא שלב 5: גילוי והשוואת ספקים. אין כאן קבלת התקנות אמיתיות.
 
 לאחר מכן: השלמת גילוי/השוואה, API/UI, חבילת בדיקות וגנרטור/אריזה,
 ורק אז קבלת משתמש אמיתית. T03/T04/T07 נשארות פתוחות. T05/T06 מחוץ לשלב זה.

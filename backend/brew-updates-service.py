@@ -2766,8 +2766,14 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                         raise unified_updates.PlanError("review_required", "Use the unified update list to approve new migrations")
                     result = mac_manager._migration_engine.approve(sys.modules[__name__], identifier,
                                                                     request_id=body.get("request_id"))
-                    return {"ok": True, "migration": result,
-                            "snapshot": compute_snapshot(False, enrich_details=False)}
+                    response = {"ok": True, "migration": result,
+                                "request": unified_updates.request_status(sys.modules[__name__], result["request_id"])
+                                           if result.get("request_id") else None}
+                    try:
+                        response["snapshot"] = compute_snapshot(False, enrich_details=False)
+                    except Exception as refresh_error:
+                        response["inventory_refresh_error"] = str(refresh_error)
+                    return response
                 result = macports_provider.privileged(sys.modules[__name__], "sync")
                 if result.code: raise RuntimeError(result.stderr)
                 mac_manager.catalog_refresh.mark_success(sys.modules[__name__])
@@ -2781,10 +2787,12 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
                                    completed_at=now_iso(), eta_seconds=None if sys.exc_info()[0] else 0)
         try:
             self._send_json(200, run_with_progress("migration", operation))
-        except BusyError as exc:
-            self._send_json(409, {"ok": False, "detail": str(exc)})
-        except unified_updates.PlanError as exc:
+        except (BusyError, operation_lock.OperationBusy) as exc:
+            self._send_json(409, {"ok": False, "error": "busy", "detail": str(exc)})
+        except (unified_updates.PlanError, mac_manager._migration_engine.MigrationConflict) as exc:
             self._send_json(409, {"ok": False, "error": exc.code, "detail": str(exc)})
+        except (mac_manager._migration_engine.routing.RoutingConflict, ValueError) as exc:
+            self._send_json(409, {"ok": False, "error": "recovery_conflict", "detail": str(exc)})
         except Exception as exc:
             self._send_json(400, {"ok": False, "detail": str(exc), "progress": getattr(exc, "operation_progress", None)})
         return True
@@ -2917,8 +2925,7 @@ class BrewUpdatesHandler(BaseHTTPRequestHandler):
             if not unified_updates.re_full_id(request_id):
                 self._send_json(400, {"ok": False, "error": "invalid_request_id"})
                 return
-            path = DATA_DIR / "update-requests" / (request_id + ".json")
-            journal = read_json(path)
+            journal = unified_updates.request_status(sys.modules[__name__], request_id)
             if journal:
                 transactions = []
                 for txn_path in (DATA_DIR / "migrations" / "transactions").glob("*/journal.json"):

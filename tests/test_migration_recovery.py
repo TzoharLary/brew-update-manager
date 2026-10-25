@@ -17,6 +17,7 @@ import unified_updates as unified
 
 REAL_ACTIVATE = engine.routing.activate
 REAL_RESTORE = engine.routing.restore
+REAL_REGISTER = engine._register_pixi_target
 
 
 class FixtureService:
@@ -82,7 +83,7 @@ class RecoveryTransactions(unittest.TestCase):
                 'commands': {'jq': str(self.s.keg / 'bin/jq')}},
             'target': {'provider': 'pixi', 'installation_id': 'pixi:jq',
                 'directory': str(self.root / 'target'), 'prefix': str(self.root / 'prefix'),
-                'candidate': {}, 'commands': {'jq': str(self.root / 'target/jq')}}}
+                'candidate': {'closure': []}, 'mapped_name': 'jq', 'version': '2.0', 'commands': {'jq': str(self.root / 'target/jq')}}}
         self.journal = {'schema_version': engine.SCHEMA, 'transaction_id': 'a'*32,
                         'plan': self.plan, 'phases': {}, 'status': 'running'}
         self.stack = ExitStack()
@@ -330,7 +331,7 @@ class RecoveryTransactions(unittest.TestCase):
         engine._write(self.s.TOOLS_ROOT/'migrations/routes.json', {
             'schema_version': 1, 'routes': [{'logical_id': 'jq', 'status': 'committed',
                 'transaction_id': 'a'*32}]})
-        with self.assertRaisesRegex(engine.MigrationConflict, 'ownership_requires_reconciliation'):
+        with self.assertRaisesRegex(ValueError, 'ownership_changed_independently'):
             self.recover('rollback')
         self.assertEqual(engine.ownership.load_routes(self.s.TOOLS_ROOT)['routes'][0]
                          ['transaction_id'], 'a'*32)
@@ -500,6 +501,107 @@ class RecoveryTransactions(unittest.TestCase):
         self.assertFalse(os.path.lexists(active))
         self.assertFalse(os.path.lexists(shim))
         self.assertEqual(self.s.commands, [])
+
+    def test_rollback_after_ownership_commit_restores_source_and_registry(self):
+        original_phase = engine._phase
+        def fail_after_commit(journal, directory, phase, state, **values):
+            if phase == 'ownership' and state == 'finished':
+                raise RuntimeError('after ownership commit')
+            return original_phase(journal, directory, phase, state, **values)
+        with patch.object(engine, '_phase', side_effect=fail_after_commit):
+            with self.assertRaises(RuntimeError):
+                self.run_transaction()
+        self.assertEqual(len(engine.ownership.load_routes(self.s.TOOLS_ROOT)['routes']), 1)
+        self.assertEqual(self.recover('rollback')['status'], 'rolled_back')
+        self.assertEqual(engine.ownership.load_routes(self.s.TOOLS_ROOT)['routes'], [])
+        self.assertEqual((self.s.keg/'bin/jq').read_text(), 'original command')
+
+    def test_cancel_at_each_forward_checkpoint_preserves_recoverable_state(self):
+        class Canceled(RuntimeError):
+            pass
+        # Fresh fixture per checkpoint; compensation itself must ignore cancel.
+        for checkpoint in range(1, 6):
+            with self.subTest(checkpoint=checkpoint):
+                case = RecoveryTransactions()
+                case.setUp()
+                try:
+                    count = 0
+                    def cancel():
+                        nonlocal count
+                        count += 1
+                        if count >= checkpoint:
+                            raise Canceled('cancel requested')
+                    case.s.raise_if_cancel_requested = cancel
+                    with self.assertRaises(Canceled):
+                        case.run_transaction()
+                    journal = case.stored()
+                    if checkpoint < 5:
+                        self.assertEqual(journal['status'], 'rolled_back')
+                        self.assertEqual(case.s.commands, [])
+                    else:
+                        self.assertEqual(journal['status'], 'needs_attention')
+                        self.assertEqual(case.recover('rollback')['status'], 'rolled_back')
+                        self.assertFalse(case.s.commands[-1][1]['cancellable'])
+                    self.assertEqual((case.s.keg/'bin/jq').read_text(), 'original command')
+                finally:
+                    case.doCleanups()
+
+    def test_timeout_during_partial_uninstall_requires_verified_rollback(self):
+        real_command = self.s.run_cmd
+        def timeout(argv, **kwargs):
+            if argv[1] == 'uninstall':
+                (self.s.keg/'bin/jq').unlink()
+                return SimpleNamespace(code=124, stdout='', stderr='command timed out')
+            return real_command(argv, **kwargs)
+        with patch.object(self.s, 'run_cmd', side_effect=timeout):
+            with self.assertRaisesRegex(engine.MigrationConflict, 'timed out'):
+                self.run_transaction()
+            self.assertEqual(self.stored()['status'], 'needs_attention')
+            self.assertEqual(self.recover('rollback')['status'], 'rolled_back')
+        self.assertEqual((self.s.keg/'bin/jq').read_text(), 'original command')
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'requires POSIX process isolation')
+    def test_metadata_process_exit_windows_can_rollback_from_disk(self):
+        import pixi_provider
+        for window in ('record-intent', 'record-write', 'route-intent', 'route-write', 'route-journal'):
+            with self.subTest(window=window):
+                case = RecoveryTransactions()
+                case.setUp()
+                try:
+                    original_write = engine.ownership.atomic_write_json
+                    pid = os.fork()
+                    if pid == 0:
+                        def crash(path, value):
+                            original_write(path, value)
+                            path = Path(path)
+                            hit = bool(window == 'record-intent' and path.name == 'journal.json'
+                                   and value.get('pixi_managed_record') and not value.get('pixi_managed_record_written'))
+                            hit |= window == 'record-write' and path.name == 'installed.json'
+                            hit |= bool(window == 'route-intent' and path.name == 'journal.json'
+                                    and value.get('ownership_pending_sha256') and not value.get('ownership_committed_sha256'))
+                            hit |= window == 'route-write' and path.name == 'routes.json'
+                            hit |= (window == 'route-journal' and path.name == 'journal.json'
+                                    and bool(value.get('ownership_committed_sha256')))
+                            if hit:
+                                os._exit(23)
+                        try:
+                            with patch.object(engine, '_register_pixi_target', wraps=REAL_REGISTER), \
+                                 patch.object(pixi_provider, 'installed_record', return_value={'name': 'jq'}), \
+                                 patch.object(pixi_provider, 'verify_generation'), \
+                                 patch.object(engine.ownership, 'atomic_write_json', side_effect=crash):
+                                case.run_transaction()
+                        except BaseException:
+                            os._exit(99)
+                        os._exit(98)
+                    _, status = os.waitpid(pid, 0)
+                    self.assertEqual(os.waitstatus_to_exitcode(status), 23)
+                    restarted = FixtureService(case.root, create_source=False)
+                    self.assertEqual(case.recover('rollback', restarted)['status'], 'rolled_back')
+                    self.assertEqual(engine.ownership.load_routes(case.s.TOOLS_ROOT)['routes'], [])
+                    self.assertNotIn('jq', case.s.read_json(case.s.TOOLS_ROOT/'installed.json') or {})
+                    self.assertEqual((case.s.keg/'bin/jq').read_text(), 'original command')
+                finally:
+                    case.doCleanups()
 
     def test_unified_request_replay_does_not_repeat_failed_migration(self):
         row = {'name': 'jq', 'kind': 'formula', 'provider': 'homebrew',

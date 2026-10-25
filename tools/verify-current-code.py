@@ -58,7 +58,9 @@ def main():
     commands = [('python-syntax', [sys.executable, str(Path(__file__).resolve()), '--syntax-only'], 60),
                 ('python-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py'], 600)]
     commands += [('syntax-' + str(p.relative_to(ROOT)).replace('/', '-'), [node, '--check', str(p)], 30) for p in js]
-    commands += [('http', [node, str(ROOT / 'tests/service-http.cjs')], 90),
+    commands += [('recovery-ui', [node, str(ROOT / 'tests/recovery-ui.cjs')], 30),
+                 ('stale-plan-ui', [node, str(ROOT / 'tests/stale-plan-ui.cjs')], 30),
+                 ('http', [node, str(ROOT / 'tests/service-http.cjs')], 90),
                  ('progress-ui', [str(electron), str(ROOT / 'tests/progress-ui.cjs')], 120),
                  ('operation-results-ui', [str(electron), str(ROOT / 'tests/operation-results-ui.cjs')], 120),
                  ('whitespace', ['git', 'diff', '--check'], 30)]

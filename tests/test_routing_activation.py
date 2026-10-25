@@ -53,6 +53,34 @@ class RoutingTests(unittest.TestCase):
                 route.restore(temp,out)
             self.assertEqual(shim.read_text(), "independent edit")
 
+    def test_multi_command_restore_is_idempotent_and_preserves_prior_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, target = self.setup_dirs(temp)
+            first = Path(temp)/'bin/first'
+            first.write_text('previous owned shim')
+            first.chmod(0o644)
+            commands = ('first', 'second', 'third')
+            out = route.activate(temp, 'jq', 'tx3',
+                {name: str(source) for name in commands},
+                {name: str(target) for name in commands},
+                owned_shims={'first': route.digest(first)})
+            route.restore(temp, out)
+            route.restore(temp, out)
+            self.assertEqual(first.read_text(), 'previous owned shim')
+            self.assertEqual(first.stat().st_mode & 0o777, 0o644)
+            self.assertFalse((Path(temp)/'bin/second').exists())
+            self.assertFalse((Path(temp)/'bin/third').exists())
+
+    def test_independent_shim_mode_change_blocks_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, target = self.setup_dirs(temp)
+            out = route.activate(temp, 'jq', 'tx4', {'shim': str(source)}, {'shim': str(target)})
+            shim = Path(temp)/'bin/shim'
+            shim.chmod(0o700)
+            with self.assertRaises(route.RoutingConflict):
+                route.restore(temp, out)
+            self.assertEqual(shim.stat().st_mode & 0o777, 0o700)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -135,9 +135,41 @@ def commit_route(root, route, journal_path, installed):
     digest = hashlib.sha256(json.dumps(target_state, sort_keys=True,
                                      default=str).encode()).hexdigest()
     journal = json.loads(journal_path.read_text())
+    journal.setdefault("ownership_before", previous)
+    journal["ownership_after"] = route
     journal["ownership_pending_sha256"] = digest
     atomic_write_json(journal_path, journal)
     atomic_write_json(root / "migrations" / "routes.json", target_state)
     journal["ownership_committed_sha256"] = digest
     atomic_write_json(journal_path, journal)
     return route
+
+
+def rollback_route(root, journal, *, check_only=False):
+    """Reverse exactly this transaction's registry entry, preserving other tools.
+
+    Both before/after values are journalled before commit. Accept either on retry,
+    including a process exit between registry replacement and journal update.
+    """
+    root = Path(root)
+    registry = load_routes(root)
+    if registry["error"]:
+        raise ValueError(registry["error"])
+    source_id = journal["plan"]["source"]["installation_id"]
+    logical_id = journal["plan"]["profile"]
+    current = [r for r in registry["routes"]
+               if r.get("source_installation_id") == source_id
+               or r.get("logical_id") == logical_id]
+    before = journal.get("ownership_before")
+    after = journal.get("ownership_after")
+    expected_before = [before] if before else []
+    if current == expected_before:
+        return
+    if not after or current != [after] or after.get("transaction_id") != journal["transaction_id"]:
+        raise ValueError("ownership_changed_independently")
+    if check_only:
+        return
+    kept = [r for r in registry["routes"] if r not in current]
+    if before:
+        kept.append(before)
+    atomic_write_json(root / "migrations" / "routes.json", dict(registry, routes=kept))

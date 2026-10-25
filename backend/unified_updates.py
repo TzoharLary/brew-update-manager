@@ -577,8 +577,8 @@ def execute(s, body, *, all_ready=False):
     """
     request_id = body.get("request_id") if isinstance(body, dict) else None
     path = _request_path(s, request_id) if isinstance(request_id, str) and re_full_id(request_id) else None
-    journal = s.read_json(path) if path else None
-    if journal and journal.get("status") == "completed":
+    journal = request_status(s, request_id) if path else None
+    if journal and journal.get("status") in ("completed", "recovered"):
         supplied = body.get("decisions")
         if supplied is None and body.get("decision_id"):
             supplied = [{"decision_id": body.get("decision_id"),
@@ -614,7 +614,7 @@ def execute(s, body, *, all_ready=False):
             _revalidate_migration(s, decision)
     journal = {"schema_version": 1, "request_id": request_id, "plan_id": plan["id"],
                "request_hash": signature, "status": "running", "results": [],
-               "started_at": s.now_iso()}
+               "approved_decisions": decisions, "started_at": s.now_iso()}
     provider_ownership.atomic_write_json(path, journal)
     try:
         for decision in decisions:
@@ -694,3 +694,61 @@ def execute(s, body, *, all_ready=False):
         journal["status"] = "needs_recovery"
         provider_ownership.atomic_write_json(path, journal)
         raise
+
+
+def request_status(s, request_id, *, transaction=None, persist=False):
+    """Project terminal recovery journals onto a batch, without replaying it.
+
+    GET uses a read-only projection so even a crash before batch reconciliation
+    cannot leave a resolved migration appearing perpetually in progress.
+    """
+    if not re_full_id(request_id):
+        raise PlanError("invalid_request_id")
+    path = _request_path(s, request_id)
+    request = s.read_json(path)
+    if not request or request.get("status") in ("completed", "recovered"):
+        return request
+    if (request.get("status") == "running" and transaction is None
+            and getattr(s, "read_current_operation", lambda: {})().get("running")):
+        return request
+    transactions = []
+    for candidate in (Path(s.DATA_DIR) / "migrations" / "transactions").glob("*/journal.json"):
+        row = s.read_json(candidate) or {}
+        if row.get("request_id") == request_id:
+            transactions.append(row)
+    if transaction and not any(t.get("transaction_id") == transaction.get("transaction_id")
+                               for t in transactions):
+        transactions.append(transaction)
+    if not transactions or any(t.get("status") not in ("completed", "rolled_back", "canceled")
+                               for t in transactions):
+        return request
+    decisions = request.get("approved_decisions")
+    if decisions is None:
+        # Historical requests lacked a decision snapshot. Do not invent full
+        # batch success when the number of approved actions is unknown.
+        decisions = []
+    results = list(request.get("results", []))
+    for txn in transactions:
+        plan = txn["plan"]
+        result = {"ok": txn["status"] == "completed", "name": plan["source"]["name"],
+                  "kind": "formula", "provider": plan["target"]["provider"],
+                  "action": "migrate", "transaction_id": txn["transaction_id"],
+                  "recovery_status": txn["status"],
+                  "code": 0 if txn["status"] == "completed" else 1,
+                  "stdout": "Migration verified" if txn["status"] == "completed" else "Source restored",
+                  "stderr": ""}
+        results = [r for r in results if r.get("transaction_id") != txn["transaction_id"]]
+        results.append(result)
+    complete = bool(decisions) and len(results) == len(decisions) and all(r.get("ok") for r in results)
+    request.update(status="completed" if complete else "recovered", results=results,
+                   recovered_at=s.now_iso())
+    request["result"] = {"ok": complete, "results": results, "request_id": request_id,
+        "updated_count": sum(bool(r.get("ok")) for r in results),
+        "migrated_count": sum(bool(r.get("ok")) and r.get("action") == "migrate" for r in results),
+        "failed_count": sum(not bool(r.get("ok")) for r in results),
+        "rolled_back_count": sum(r.get("recovery_status") == "rolled_back" for r in results),
+        "attempted_count": len(results), "deferred_count": max(0, len(decisions)-len(results)),
+        "skipped_count": 0, "remaining_count": max(0, len(decisions)-len(results))}
+    if persist:
+        provider_ownership.atomic_write_json(path, request)
+    return request

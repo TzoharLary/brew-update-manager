@@ -121,6 +121,7 @@ function renderMacManager() {
           const approve=document.createElement('button');
           approve.textContent=he?'אשר את פעולת ההתאוששות':'Approve this recovery';
           approve.onclick=async()=>{
+            if (approve.disabled || busyLoading || lastKnownOperationRunning) return;
             approve.disabled=true;
             setLoading(true,'message.loadingState');
             beginOperationRequest();
@@ -132,6 +133,9 @@ function renderMacManager() {
               await loadState({showLoader:false});
             } catch(error) {
               showMessage(error.message,true);
+              // Refresh journal state after a conflict or a lost response;
+              // never resend a mutation to find out whether it completed.
+              try { await loadState({showLoader:false}); } catch (_) { /* retain original error */ }
             } finally {
               await finishOperationRequest(result,generation);
               setLoading(false,'message.loadingState');
