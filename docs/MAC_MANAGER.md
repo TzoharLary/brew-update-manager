@@ -1,6 +1,7 @@
 # Mac Update Manager — implementation and product direction
 
-Updated 2026-10-20. Source version: 1.3.3. This documentation-only review did not
+Updated 2026-10-25. Development source: 1.3.4 at review base `0a0849b`.
+The 1.3.3 descriptions below are historical. This documentation-only review did not
 query a live service or rerun product tests. The installed build and package state
 must not be inferred from package.json alone.
 
@@ -8,6 +9,9 @@ Read [the product goal](PRODUCT_GOAL.md) for the user's current requirements and
 [the task record](MAC_MANAGER_TASKS.md) for status and acceptance criteria. Those
 decisions replace earlier designs requiring a separate approval for each migration
 or full test runs by the coding agent before handing the user a test script.
+
+See the [requirements and validation handoff](VALIDATION_HANDOFF.md) for the current
+implementation map, check command, report locations and remaining acceptance gaps.
 
 ## Current development source — 1.3.4, Stage 3 (2026-10-20)
 
